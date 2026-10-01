@@ -1,0 +1,14 @@
+/.tools/
+/agentic-ai-cv/
+/.env
+/.env.*
+/data/
+/state/
+/secrets/
+*.db
+*.sqlite
+*.sqlite3
+*.pdf
+*.csv
+*.xlsx
+
