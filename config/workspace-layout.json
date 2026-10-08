@@ -1,0 +1,31 @@
+{
+  "private_directories": [
+    "profile",
+    "documents/inbox",
+    "documents/contracts",
+    "documents/banking/statements",
+    "documents/tax",
+    "documents/insurance",
+    "documents/housing",
+    "documents/identity",
+    "documents/health",
+    "documents/academic/thesis",
+    "documents/academic/coursework",
+    "documents/career/cvs",
+    "documents/career/cover-letters",
+    "documents/career/applications",
+    "documents/work",
+    "documents/receipts",
+    "documents/archive",
+    "auth",
+    "exports",
+    "backups"
+  ],
+  "state_directories": [
+    "logs",
+    "runs",
+    "queue",
+    "connectors",
+    "cache"
+  ]
+}

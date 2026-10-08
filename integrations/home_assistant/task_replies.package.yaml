@@ -1,0 +1,59 @@
+# Merge as a Home Assistant package, not a replacement configuration.yaml.
+# Reuses the existing protected relay_authorization secret. No phone/view token
+# is accepted for writes. This only reacts to explicit replies to our task cards.
+rest_command:
+  assistant_notification_reply:
+    url: http://relay:8765/v1/notification-replies
+    method: POST
+    headers:
+      Authorization: !secret relay_authorization
+    content_type: application/json
+    timeout: 10
+    payload: >-
+      {{ {'event_id': event_id, 'action': reply_action, 'tag': reply_tag,
+          'reply_text': reply_text, 'time_fired': time_fired} | to_json }}
+
+automation:
+  - id: assistant_task_notification_reply
+    alias: Assistant task notification reply
+    mode: queued
+    max: 50
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.get('action', '').startswith('ASSISTANT_REPLY:')
+             and trigger.event.data.get('reply_text', '') | trim | length > 0 }}
+    actions:
+      - variables:
+          reply_event_id: "{{ trigger.event.context.id }}"
+          reply_action: "{{ trigger.event.data.action }}"
+          reply_tag: "{{ trigger.event.data.get('tag', '') }}"
+          reply_text: "{{ trigger.event.data.reply_text }}"
+          reply_time: "{{ trigger.event.time_fired.isoformat() }}"
+      # Repeated HTTP attempts reuse the exact event identity and envelope.
+      # The relay saves the follow-up while the laptop is asleep.
+      - repeat:
+          count: 3
+          sequence:
+            - action: rest_command.assistant_notification_reply
+              continue_on_error: true
+              data:
+                event_id: "{{ reply_event_id }}"
+                reply_action: "{{ reply_action }}"
+                reply_tag: "{{ reply_tag }}"
+                reply_text: "{{ reply_text }}"
+                time_fired: "{{ reply_time }}"
+              response_variable: reply_receipt
+            - if: "{{ reply_receipt is defined and reply_receipt.status in [200, 201] }}"
+              then:
+                - stop: Reply saved on the assistant queue
+            - delay:
+                seconds: 2
+      - action: persistent_notification.create
+        data:
+          notification_id: "assistant-reply-{{ reply_event_id }}"
+          title: Assistant reply could not be saved
+          message: Please resend your reply when the server connection returns.

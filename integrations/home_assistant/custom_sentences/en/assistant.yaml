@@ -1,0 +1,15 @@
+language: en
+intents:
+  AddCloudGroceries:
+    data:
+      - sentences:
+          - "[hey chat] [please] add {items} to [my|the] shopping list"
+          - "[please] put {items} on [my|the] shopping list"
+  AssistantConnectionStatus:
+    data:
+      - sentences:
+          - "is [my] laptop (connected|available|ready)"
+          - "[what is] [the] assistant connection status"
+lists:
+  items:
+    wildcard: true

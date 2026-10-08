@@ -1,0 +1,27 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$ASSISTANT_DOMAIN} {
+	encode gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
+	handle_path /relay/* {
+		reverse_proxy relay:8765
+	}
+	handle /groceries/* {
+		reverse_proxy relay:8765
+	}
+	handle /tasks/* {
+		reverse_proxy relay:8765
+	}
+	handle /companion/* {
+		reverse_proxy relay:8765
+	}
+	handle {
+		reverse_proxy homeassistant:8123
+	}
+}

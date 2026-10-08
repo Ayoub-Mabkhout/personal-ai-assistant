@@ -1,0 +1,8 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$ASSISTANT_DOMAIN} {
+	respond "Server setup is in progress. The owner must finish account setup before public access is enabled." 503
+}

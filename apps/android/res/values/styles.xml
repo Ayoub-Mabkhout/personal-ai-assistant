@@ -1,0 +1,5 @@
+<resources>
+<style name="AssistantLightTheme" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:colorAccent">#7254AA</item><item name="android:windowBackground">#F7F5F1</item><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">true</item><item name="android:windowLightNavigationBar">true</item><item name="android:windowActionModeOverlay">true</item></style>
+<style name="AssistantDarkTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:colorAccent">#C6B4F4</item><item name="android:windowBackground">#17131D</item><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item><item name="android:windowActionModeOverlay">true</item></style>
+<style name="AssistantTheme" parent="AssistantLightTheme"/>
+</resources>

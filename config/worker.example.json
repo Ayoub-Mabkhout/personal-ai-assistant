@@ -1,0 +1,16 @@
+{
+  "repository": "ABSOLUTE_REPOSITORY_PATH",
+  "python": "ABSOLUTE_REPOSITORY_PATH/.venv/Scripts/python.exe",
+  "calendar_db": "ABSOLUTE_EXISTING_CALENDAR_PATH",
+  "runtime_dir": "ABSOLUTE_PROTECTED_RUNTIME_DIRECTORY",
+  "relay_url": "https://YOUR_HOME_ASSISTANT_HOST/relay",
+  "worker_token_file": "ABSOLUTE_PROTECTED_RUNTIME_DIRECTORY/worker_token",
+  "submit_token_file": "ABSOLUTE_PROTECTED_RUNTIME_DIRECTORY/submit_token",
+  "homeassistant_url": "https://YOUR_HOME_ASSISTANT_HOST",
+  "homeassistant_auth_file": "ABSOLUTE_PROTECTED_RUNTIME_DIRECTORY/homeassistant-auth.json",
+  "notifications_enabled": false,
+  "timezone": "Europe/Berlin",
+  "poll_seconds": 4,
+  "lab_environment": "ABSOLUTE_PRIVATE_LAB_WORKSPACE/environment.json",
+  "mail_archive": "ABSOLUTE_PRIVATE_MAIL_ARCHIVE"
+}

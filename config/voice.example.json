@@ -1,0 +1,12 @@
+{
+  "key_file": "/data/openai-api-key",
+  "provider": "openai",
+  "transcription_model": "gpt-4o-mini-transcribe",
+  "live_model": "gpt-live-1",
+  "conversation_provider": "realtime",
+  "realtime_model": "gpt-realtime-2.1",
+  "max_realtime_seconds": 300,
+  "monthly_budget_usd": 8,
+  "max_live_seconds": 600,
+  "vocabulary": "Voice commands. Hey Chat. Shopping list. Calendar. REWE. Home Assistant."
+}

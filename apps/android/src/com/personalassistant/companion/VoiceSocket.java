@@ -1,0 +1,46 @@
+package com.personalassistant.companion;
+
+import android.content.Context;
+import android.util.Base64;
+import javax.net.ssl.*;
+import java.net.*;
+import java.io.*;
+import java.security.*;
+import java.util.*;
+import java.util.concurrent.*;
+import org.json.*;
+
+/** RFC6455 client, TLS host verification and paired-token header; no API key on phone. */
+final class VoiceSocket {
+    interface Listener{void event(JSONObject value);void closed(String message,boolean acknowledged);}
+    private final Context context;private final Listener listener;private final String id=UUID.randomUUID().toString();
+    // 100ms PCM packets, at most 60 seconds buffered; one extra slot is reserved for stop.
+    private static final int BATCH_SAMPLES=1600,MAX_QUEUED_SAMPLES=16000*60;
+    private final ArrayBlockingQueue<String> output=new ArrayBlockingQueue<>(601);
+    private final Object lifecycle=new Object();
+    private final short[] partial=new short[BATCH_SAMPLES];private int partialSize,queuedSamples;private boolean accepting=true;
+    private volatile boolean alive=true,ready;private SSLSocket socket;private InputStream input;private OutputStream wire;
+    VoiceSocket(Context context,Listener listener){this.context=context.getApplicationContext();this.listener=listener;}
+    boolean acknowledged(){return ready;}
+    void start(short[] preRoll){if(audio(preRoll,preRoll.length))new Thread(this::connect,"assistant-live-reader").start();}
+    static List<String> audioFrames(short[] pcm,int length)throws JSONException {if(length<0||length>pcm.length)throw new IllegalArgumentException("PCM length");List<String> frames=new ArrayList<>();for(int offset=0;offset<length;offset+=BATCH_SAMPLES){int count=Math.min(BATCH_SAMPLES,length-offset);frames.add(audioFrame(pcm,offset,count));}return frames;}
+    private static String audioFrame(short[] pcm,int offset,int count)throws JSONException {byte[] bytes=new byte[count*2];for(int i=0;i<count;i++){bytes[2*i]=(byte)pcm[offset+i];bytes[2*i+1]=(byte)(pcm[offset+i]>>>8);}return new JSONObject().put("type","audio").put("audio",Base64.encodeToString(bytes,Base64.NO_WRAP)).toString();}
+    double bufferedAudioSeconds(){synchronized(lifecycle){return queuedSamples/16000.0;}}
+    boolean audio(short[] pcm,int length){if(length<0||length>pcm.length)throw new IllegalArgumentException("PCM length");String error=null;synchronized(lifecycle){if(!alive||!accepting)return false;if(length>MAX_QUEUED_SAMPLES-queuedSamples)error="Voice connection too slow; session stopped";else try{queuedSamples+=length;int offset=0;while(offset<length){int count=Math.min(BATCH_SAMPLES-partialSize,length-offset);System.arraycopy(pcm,offset,partial,partialSize,count);partialSize+=count;offset+=count;if(partialSize==BATCH_SAMPLES){if(!output.offer(audioFrame(partial,0,partialSize))){error="Voice connection too slow; session stopped";break;}partialSize=0;}}}catch(JSONException invalid){error=invalid.getMessage();}}if(error!=null){fail(error);return false;}return true;}
+    private void consumed(String frame)throws JSONException {JSONObject value=new JSONObject(frame);if(!"audio".equals(value.optString("type")))return;String encoded=value.getString("audio");int padding=encoded.endsWith("==")?2:encoded.endsWith("=")?1:0;int samples=(encoded.length()/4*3-padding)/2;synchronized(lifecycle){queuedSamples=Math.max(0,queuedSamples-samples);}}
+    void connect(){try{if(!alive)return;
+        URI origin=new URI(Cloud.origin(Cloud.prefs(context).getString("origin","")));int port=origin.getPort()<0?443:origin.getPort();socket=(SSLSocket)SSLSocketFactory.getDefault().createSocket();socket.connect(new InetSocketAddress(origin.getHost(),port),10000);socket.setSoTimeout(15000);SSLParameters parameters=socket.getSSLParameters();parameters.setEndpointIdentificationAlgorithm("HTTPS");socket.setSSLParameters(parameters);socket.startHandshake();input=socket.getInputStream();wire=socket.getOutputStream();byte[] nonce=new byte[16];new SecureRandom().nextBytes(nonce);String key=Base64.encodeToString(nonce,Base64.NO_WRAP);
+        String request="GET /groceries/v1/mobile/voice/live HTTP/1.1\r\nHost: "+origin.getRawAuthority()+"\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: "+key+"\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer "+Cloud.prefs(context).getString("token","")+"\r\n\r\n";wire.write(request.getBytes("US-ASCII"));wire.flush();
+        ByteArrayOutputStream header=new ByteArrayOutputStream();int tail=0;while(tail!=0x0d0a0d0a){int b=input.read();if(b<0)throw new IOException("Voice server closed during connection");header.write(b);tail=(tail<<8)|b;if(header.size()>16384)throw new IOException("Voice handshake too large");}String[] lines=header.toString("US-ASCII").split("\r\n");if(!lines[0].matches("HTTP/1\\.[01] 101 .*"))throw new IOException("Live voice unavailable; try standard voice mode");Map<String,String> headers=new HashMap<>();for(String line:lines){int colon=line.indexOf(':');if(colon>0)headers.put(line.substring(0,colon).toLowerCase(Locale.ROOT),line.substring(colon+1).trim());}String accept=Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest((key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes("US-ASCII")),Base64.NO_WRAP);if(!accept.equals(headers.get("sec-websocket-accept"))||!"websocket".equalsIgnoreCase(headers.get("upgrade")))throw new IOException("Invalid voice WebSocket handshake");
+        send(1,new JSONObject().put("type","start").put("id",id).put("timezone",TimeZone.getDefault().getID()).put("sample_rate",16000).put("buffered_audio_seconds",bufferedAudioSeconds()).toString().getBytes("UTF-8"));socket.setSoTimeout(60000);
+        new Thread(()->{try{while(alive){if(!ready){Thread.sleep(20);continue;}String frame=output.poll(5,TimeUnit.SECONDS);if(frame!=null){send(1,frame.getBytes("UTF-8"));consumed(frame);if("stop".equals(new JSONObject(frame).optString("type"))){close();break;}}}}catch(Exception error){if(alive)fail("Live voice connection interrupted");}},"assistant-live-writer").start();
+        ByteArrayOutputStream fragmented=null;while(alive){int first=readByte(),second=readByte(),opcode=first&15;boolean fin=(first&128)!=0,masked=(second&128)!=0;long length=second&127;if(length==126)length=(readByte()<<8)|readByte();else if(length==127){length=0;for(int i=0;i<8;i++)length=(length<<8)|readByte();}if(length<0||length>2097152)throw new IOException("Live frame too large");byte[] mask=masked?readBytes(4):null,body=readBytes((int)length);if(masked)for(int i=0;i<body.length;i++)body[i]^=mask[i%4];if(opcode==8){fail("Live voice session ended");break;}if(opcode==9){send(10,body);continue;}if(opcode==10)continue;if(opcode==1&&!fin){fragmented=new ByteArrayOutputStream();fragmented.write(body);continue;}if(opcode==0&&fragmented!=null){fragmented.write(body);if(fragmented.size()>2097152)throw new IOException("Live message too large");if(!fin)continue;body=fragmented.toByteArray();fragmented=null;opcode=1;}if(opcode!=1)continue;JSONObject event=new JSONObject(new String(body,"UTF-8"));if("ready".equals(event.optString("type"))){synchronized(lifecycle){if(!alive)return;ready=true;}}if(!alive)return;listener.event(event);if("closed".equals(event.optString("type"))){fail("Live voice session ended");break;}}
+    }catch(Exception error){if(alive)fail(error.getMessage());}finally{close();}}
+    private int readByte()throws IOException{int value=input.read();if(value<0)throw new EOFException("Live voice disconnected");return value;}
+    private byte[] readBytes(int size)throws IOException{byte[] bytes=new byte[size];int offset=0;while(offset<size){int n=input.read(bytes,offset,size-offset);if(n<0)throw new EOFException("Live voice disconnected");offset+=n;}return bytes;}
+    private synchronized void send(int opcode,byte[] payload)throws IOException{if(wire==null)throw new IOException("Voice not connected");wire.write(128|opcode);int len=payload.length;if(len<126)wire.write(128|len);else if(len<65536){wire.write(128|126);wire.write(len>>>8);wire.write(len);}else{wire.write(128|127);for(int i=7;i>=0;i--)wire.write((int)(((long)len>>>(8*i))&255));}byte[] mask=new byte[4];new SecureRandom().nextBytes(mask);wire.write(mask);byte[] encoded=payload.clone();for(int i=0;i<len;i++)encoded[i]^=mask[i%4];wire.write(encoded);wire.flush();}
+    void stop(){String error=null;boolean preAck=false;synchronized(lifecycle){if(!alive||!accepting)return;accepting=false;if(!ready)preAck=true;else try{if(partialSize>0){if(!output.offer(audioFrame(partial,0,partialSize)))throw new IOException("Voice stop queue full");partialSize=0;}if(!output.offer("{\"type\":\"stop\"}"))throw new IOException("Voice stop queue full");}catch(Exception invalid){error=invalid.getMessage();}}if(preAck)close();else if(error!=null)fail(error);}
+    void disconnect(){close();}
+    private void fail(String message){boolean notify;synchronized(lifecycle){notify=alive;alive=false;}close();if(notify)listener.closed(message,ready);}
+    private void close(){synchronized(lifecycle){alive=false;accepting=false;partialSize=0;queuedSamples=0;output.clear();}try{if(socket!=null)socket.close();}catch(Exception ignored){}}
+}

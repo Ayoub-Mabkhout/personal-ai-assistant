@@ -1,0 +1,1 @@
+"""Cloud grocery list integration."""

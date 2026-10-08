@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "accounts": [],
+  "record_fields": ["id", "provider", "label", "purpose", "allowed_scopes", "credential_ref", "status", "last_verified_at"],
+  "notes": "Metadata only. Never put passwords, refresh tokens, QR sessions, or keys here. No account is connected by creating this file."
+}

@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "account": "YOUR_CONNECTED_GMAIL_ADDRESS",
+  "repository": "ABSOLUTE_REPOSITORY_PATH",
+  "worker_config": "ABSOLUTE_PRIVATE_WORKER_CONFIG",
+  "runtime": "ABSOLUTE_PRIVATE_RUNTIME/mail-automation",
+  "orchestrator_runtime": "ABSOLUTE_PRIVATE_RUNTIME/orchestrator",
+  "archive": "ABSOLUTE_PRIVATE_RUNTIME/mail",
+  "vault": "ABSOLUTE_PRIVATE_DOCUMENT_VAULT",
+  "policy": "ABSOLUTE_PRIVATE_ACCOUNT_METADATA",
+  "followups_db": "ABSOLUTE_PRIVATE_RUNTIME/mail/followups.sqlite3",
+  "interval_seconds": 21600,
+  "initial_days": 14,
+  "max_messages": 25,
+  "attachment_batch": 8
+}

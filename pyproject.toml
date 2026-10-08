@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-ai-assistant"
+version = "0.1.0"
+description = "Assistant-managed calendar and headless personal workflows"
+requires-python = ">=3.10"
+dependencies = ["tzdata==2026.4", "PyYAML==6.0.3"]
+
+[project.optional-dependencies]
+server = ["fastapi==0.142.2", "uvicorn==0.54.0", "websockets==16.0", "cryptography==50.0.2", "audioop-lts==0.2.2; python_version >= '3.13'"]
+test = ["httpx==0.28.1", "PyYAML==6.0.3"]
+
+[project.scripts]
+assistant-calendar = "personal_assistant.calendar:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

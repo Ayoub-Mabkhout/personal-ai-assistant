@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application' version '8.9.2'
+}
+
+// The CLI stages checksummed wake runtime and optional Firebase metadata outside
+// tracked files. The same project can also be opened by Android Studio.
+def staged = file(providers.gradleProperty('assistantInputs').getOrElse('../../state/android-gradle-inputs'))
+def buildRoot = file(providers.gradleProperty('assistantBuildRoot').getOrElse('../../state/android-gradle'))
+layout.buildDirectory.set(buildRoot)
+def sourceManifest = new XmlSlurper(false, false).parse(file('AndroidManifest.xml'))
+
+android {
+    namespace 'com.personalassistant.companion'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'com.personalassistant.companion'
+        minSdk 26
+        targetSdk 35
+        versionCode sourceManifest.'@android:versionCode'.text().toInteger()
+        versionName sourceManifest.'@android:versionName'.text()
+        def runtimeAbis = new File(staged, 'jniLibs').listFiles()?.findAll { it.isDirectory() }?.collect { it.name }
+        if (runtimeAbis) ndk.abiFilters.addAll(runtimeAbis)
+    }
+    sourceSets {
+        main {
+            manifest.srcFile new File(staged, 'AndroidManifest.xml')
+            java.srcDirs = ['src']
+            res.srcDirs = ['res', new File(staged, 'res')]
+            assets.srcDirs = [new File(staged, 'assets')]
+            jniLibs.srcDirs = [new File(staged, 'jniLibs')]
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            debuggable sourceManifest.application.'@android:debuggable'.text() == 'true'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    packaging {
+        resources.excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES']
+        jniLibs.useLegacyPackaging = false
+    }
+    buildFeatures { buildConfig false }
+}
+
+dependencies {
+    implementation 'com.google.firebase:firebase-messaging:25.0.1'
+    implementation fileTree(dir: new File(staged, 'jars'), include: ['*.jar'])
+}

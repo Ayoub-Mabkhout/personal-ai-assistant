@@ -1,0 +1,122 @@
+name: personal-assistant
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "3"
+
+services:
+  proxy:
+    image: library/caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: unless-stopped
+    environment:
+      ASSISTANT_DOMAIN: ${ASSISTANT_DOMAIN:?Set the public DNS hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the certificate contact email}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./${ASSISTANT_CADDY_CONFIG:-Caddyfile.bootstrap}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      backend:
+        ipv4_address: 172.30.0.2
+    depends_on:
+      homeassistant:
+        condition: service_healthy
+      relay:
+        condition: service_healthy
+    logging: *logging
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant@sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76
+    restart: unless-stopped
+    environment:
+      TZ: ${ASSISTANT_TIMEZONE:-Europe/Berlin}
+      HA_EXTERNAL_URL: https://${ASSISTANT_DOMAIN}
+    volumes:
+      - ${ASSISTANT_DATA_DIR:?Set the private server data directory}/homeassistant:/config
+    ports:
+      - "127.0.0.1:8123:8123"
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8123/', timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    logging: *logging
+
+  relay:
+    build:
+      context: ../..
+      dockerfile: infra/server/Dockerfile
+    restart: unless-stopped
+    environment:
+      ASSISTANT_QUEUE_DB: /data/queue.sqlite3
+      ASSISTANT_SUBMIT_TOKEN_FILE: /run/secrets/submit_token
+      ASSISTANT_WORKER_TOKEN_FILE: /run/secrets/worker_token
+      ASSISTANT_GROCERIES_TOKEN_FILE: /run/secrets/groceries_token
+      ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE: /data/release-publish-token
+    secrets: [submit_token, worker_token, groceries_token]
+    volumes:
+      - ${ASSISTANT_DATA_DIR}/relay:/data
+    ports:
+      - "127.0.0.1:8765:8765"
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=5).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  whisper:
+    image: rhasspy/wyoming-whisper@sha256:ba6fcb6056ebe237d15a325381763a80af2fc8fcedaa04f6a714a7375eb20d80
+    profiles: [voice]
+    restart: unless-stopped
+    command: ["--model", "${ASSISTANT_WHISPER_MODEL:-base-int8}", "--language", "auto",
+              "--cpu-threads", "2", "--beam-size", "5", "--vad-filter",
+              "--initial-prompt", "Voice commands: add items to my shopping list, ask my assistant, check my calendar, find an email."]
+    volumes:
+      - whisper_data:/data
+    networks: [backend]
+    logging: *logging
+
+  piper:
+    image: rhasspy/wyoming-piper@sha256:7d39aafac409c2b6b09d999ed04d84c311d632e558b35baa60fad6aac722af7a
+    profiles: [voice]
+    restart: unless-stopped
+    command: ["--voice", "en_US-lessac-medium"]
+    volumes:
+      - piper_data:/data
+    networks: [backend]
+    logging: *logging
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25
+
+secrets:
+  submit_token:
+    file: ${ASSISTANT_SECRET_DIR:?Set the private credential directory}/submit_token
+  worker_token:
+    file: ${ASSISTANT_SECRET_DIR}/worker_token
+  groceries_token:
+    file: ${ASSISTANT_SECRET_DIR}/groceries_token
+
+volumes:
+  caddy_data:
+  caddy_config:
+  whisper_data:
+  piper_data:
