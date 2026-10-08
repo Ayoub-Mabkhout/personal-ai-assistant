@@ -62,7 +62,7 @@ class EmailWorkflowTests(unittest.TestCase):
         files=self.prepare_original()
         result=files.save(self.account,'original','actual-provider-id','contracts','The Issuer','rental-agreement','Ref/123')
         target=Path(result['path'])
-        self.assertEqual(target.parent,self.root/'vault/contracts')
+        self.assertTrue(target.parent.samefile(self.root/'vault/contracts'))
         self.assertEqual(target.read_bytes(),b'%PDF-test-original')
         self.assertTrue(target.name.startswith('2026-10-06__the-issuer__rental-agreement__ref-123__'))
         self.assertEqual(result['provenance']['date_basis'],'source_mail_date_fallback')

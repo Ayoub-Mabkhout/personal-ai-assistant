@@ -43,7 +43,9 @@ class CalendarTests(unittest.TestCase):
                                     env=environment, capture_output=True, text=True, check=True)
             return json.loads(result.stdout)
         initialized = invoke([str(root / 'assistant_calendar.py'), 'init', '--timezone', 'Europe/Berlin'])
-        self.assertEqual(Path(initialized['database']), relocated / 'calendar.sqlite3')
+        # Hosted Windows temp paths can use an 8.3 alias while the CLI resolves
+        # the same directory to its long name. Compare the actual file identity.
+        self.assertTrue(Path(initialized['database']).samefile(relocated / 'calendar.sqlite3'))
         added = invoke(['-m', 'personal_assistant.calendar', 'add', '--title', 'Isolated event',
                         '--start', '2030-01-15T10:00', '--end', '2030-01-15T11:00'])
         agenda = invoke([str(root / 'assistant_calendar.py'), 'agenda',

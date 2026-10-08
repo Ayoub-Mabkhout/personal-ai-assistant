@@ -54,7 +54,7 @@ class MailAutomationTests(unittest.TestCase):
         self.assertEqual(Path(first['originals_filed'][0]['path']).read_bytes(),b'%PDF-one')
         with self.archive.db() as db: self.assertEqual(db.execute('SELECT COUNT(*) FROM objects').fetchone()[0],1)
         manifest['documents'][0]['quote']='Invented category evidence'
-        result=ingest(self.config,manifest,[trace]);self.assertEqual(Path(result['originals_filed'][0]['path']).parent,self.root/'vault/inbox')
+        result=ingest(self.config,manifest,[trace]);self.assertTrue(Path(result['originals_filed'][0]['path']).parent.samefile(self.root/'vault/inbox'))
 
     def test_followups_source_validation_closed_item_stays_closed(self):
         self.archive.save_message('owner@example.com',message('deadline','Please reply by 15 October 2026.'))
