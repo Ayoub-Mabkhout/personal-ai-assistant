@@ -32,9 +32,9 @@ public final class ReplayVoiceService extends VoiceService {
     @Override protected void speakReply(String reply){
         if(!Cloud.prefs(this).getBoolean("voice_replay_mode_probe",false)){super.speakReply(reply);return;}
         // Count authoritative receipts without a TTS engine or external API.
-        Cloud.prefs(this).edit().putInt("voice_replay_spoken_replies",Cloud.prefs(this).getInt("voice_replay_spoken_replies",0)+1).putString("voice_replay_last_reply",reply).commit();
+        int completed=Cloud.prefs(this).getInt("voice_replay_spoken_replies",0)+1;
         afterReply();
-        try{java.lang.reflect.Field followup=VoiceService.class.getDeclaredField("followup");followup.setAccessible(true);Cloud.prefs(this).edit().putBoolean("voice_replay_followup",followup.getBoolean(this)).commit();}
+        try{java.lang.reflect.Field followup=VoiceService.class.getDeclaredField("followup");followup.setAccessible(true);Cloud.prefs(this).edit().putBoolean("voice_replay_followup",followup.getBoolean(this)).putString("voice_replay_last_reply",reply).putInt("voice_replay_spoken_replies",completed).commit();}
         catch(Exception error){throw new IllegalStateException(error);}
     }
     @Override protected int readMicrophone(short[] frame){
