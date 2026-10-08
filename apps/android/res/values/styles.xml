@@ -1,5 +1,120 @@
 <resources>
-<style name="AssistantLightTheme" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:colorAccent">#7254AA</item><item name="android:windowBackground">#F7F5F1</item><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">true</item><item name="android:windowLightNavigationBar">true</item><item name="android:windowActionModeOverlay">true</item></style>
-<style name="AssistantDarkTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:colorAccent">#C6B4F4</item><item name="android:windowBackground">#17131D</item><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item><item name="android:windowActionModeOverlay">true</item></style>
+<style name="AssistantLightTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:colorAccent">#5B35D5</item>
+    <item name="android:colorControlActivated">#5B35D5</item>
+    <item name="android:colorControlNormal">#8E829E</item>
+    <item name="android:colorControlHighlight">#1F5B35D5</item>
+    <item name="android:colorBackground">#FAF5EC</item>
+    <item name="android:windowBackground">#FAF5EC</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:textColorPrimary">#231A2E</item>
+    <item name="android:textColorSecondary">#675C73</item>
+    <item name="android:textColorHint">#675C73</item>
+    <item name="android:textColorHighlight">#475B35D5</item>
+    <item name="android:textColorLink">#5B35D5</item>
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:windowLightNavigationBar">true</item>
+    <item name="android:windowActionModeOverlay">true</item>
+    <item name="android:windowSplashScreenBackground">#FAF5EC</item>
+    <item name="android:alertDialogTheme">@style/AssistantLightDialog</item>
+    <item name="android:dialogTheme">@style/AssistantLightDialog</item>
+</style>
+<style name="AssistantDarkTheme" parent="android:style/Theme.Material.NoActionBar">
+    <item name="android:colorAccent">#B39CFF</item>
+    <item name="android:colorControlActivated">#B39CFF</item>
+    <item name="android:colorControlNormal">#8479A3</item>
+    <item name="android:colorControlHighlight">#33B39CFF</item>
+    <item name="android:colorBackground">#130E1C</item>
+    <item name="android:windowBackground">#130E1C</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:textColorPrimary">#F5F0FB</item>
+    <item name="android:textColorSecondary">#ADA3BF</item>
+    <item name="android:textColorHint">#ADA3BF</item>
+    <item name="android:textColorHighlight">#66B39CFF</item>
+    <item name="android:textColorLink">#B39CFF</item>
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+    <item name="android:windowActionModeOverlay">true</item>
+    <item name="android:windowSplashScreenBackground">#130E1C</item>
+    <item name="android:alertDialogTheme">@style/AssistantDarkDialog</item>
+    <item name="android:dialogTheme">@style/AssistantDarkDialog</item>
+</style>
 <style name="AssistantTheme" parent="AssistantLightTheme"/>
+
+<style name="AssistantLightDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+    <item name="android:windowBackground">@drawable/dialog_background_light</item>
+    <item name="android:windowAnimationStyle">@style/AssistantDialogAnimation</item>
+    <item name="android:colorAccent">#5B35D5</item>
+    <item name="android:colorControlActivated">#5B35D5</item>
+    <item name="android:colorControlNormal">#8E829E</item>
+    <item name="android:colorBackground">#FFFEFB</item>
+    <item name="android:textColorPrimary">#231A2E</item>
+    <item name="android:textColorSecondary">#675C73</item>
+    <item name="android:textColorHint">#675C73</item>
+    <item name="android:textColorHighlight">#475B35D5</item>
+    <item name="android:backgroundDimAmount">0.5</item>
+    <item name="android:windowTitleStyle">@style/AssistantDialogTitle</item>
+    <item name="android:buttonBarButtonStyle">@style/AssistantLightDialogButton</item>
+    <item name="android:buttonBarPositiveButtonStyle">@style/AssistantLightDialogButton</item>
+    <item name="android:buttonBarNegativeButtonStyle">@style/AssistantLightDialogButton</item>
+    <item name="android:buttonBarNeutralButtonStyle">@style/AssistantLightDialogButton</item>
+</style>
+<style name="AssistantDarkDialog" parent="android:style/Theme.Material.Dialog.Alert">
+    <item name="android:windowBackground">@drawable/dialog_background_dark</item>
+    <item name="android:windowAnimationStyle">@style/AssistantDialogAnimation</item>
+    <item name="android:colorAccent">#B39CFF</item>
+    <item name="android:colorControlActivated">#B39CFF</item>
+    <item name="android:colorControlNormal">#8479A3</item>
+    <item name="android:colorBackground">#1D1729</item>
+    <item name="android:textColorPrimary">#F5F0FB</item>
+    <item name="android:textColorSecondary">#ADA3BF</item>
+    <item name="android:textColorHint">#ADA3BF</item>
+    <item name="android:textColorHighlight">#66B39CFF</item>
+    <item name="android:backgroundDimAmount">0.62</item>
+    <item name="android:windowTitleStyle">@style/AssistantDialogTitle</item>
+    <item name="android:buttonBarButtonStyle">@style/AssistantDarkDialogButton</item>
+    <item name="android:buttonBarPositiveButtonStyle">@style/AssistantDarkDialogButton</item>
+    <item name="android:buttonBarNegativeButtonStyle">@style/AssistantDarkDialogButton</item>
+    <item name="android:buttonBarNeutralButtonStyle">@style/AssistantDarkDialogButton</item>
+</style>
+<style name="AssistantDialogTitle" parent="android:TextAppearance.Material.DialogWindowTitle">
+    <item name="android:textSize">22sp</item>
+    <item name="android:textStyle">bold</item>
+    <item name="android:letterSpacing">-0.0125</item>
+</style>
+<style name="AssistantLightDialogButton" parent="android:Widget.Material.Light.Button.Borderless">
+    <item name="android:textColor">@color/dialog_button_light</item>
+    <item name="android:textAllCaps">false</item>
+    <item name="android:textSize">15sp</item>
+    <item name="android:textStyle">bold</item>
+    <item name="android:minHeight">48dp</item>
+</style>
+<style name="AssistantDarkDialogButton" parent="android:Widget.Material.Button.Borderless">
+    <item name="android:textColor">@color/dialog_button_dark</item>
+    <item name="android:textAllCaps">false</item>
+    <item name="android:textSize">15sp</item>
+    <item name="android:textStyle">bold</item>
+    <item name="android:minHeight">48dp</item>
+</style>
+<style name="AssistantLightSheet" parent="AssistantLightTheme">
+    <item name="android:windowAnimationStyle">@style/AssistantSheetAnimation</item>
+    <item name="android:windowSoftInputMode">adjustResize</item>
+</style>
+<style name="AssistantDarkSheet" parent="AssistantDarkTheme">
+    <item name="android:windowAnimationStyle">@style/AssistantSheetAnimation</item>
+    <item name="android:windowSoftInputMode">adjustResize</item>
+</style>
+<style name="AssistantDialogAnimation" parent="android:style/Animation.Dialog">
+    <item name="android:windowEnterAnimation">@anim/dialog_enter</item>
+    <item name="android:windowExitAnimation">@anim/dialog_exit</item>
+</style>
+<!-- Full-screen sheets: dialog.getWindow().setWindowAnimations(R.style.AssistantSheetAnimation). -->
+<style name="AssistantSheetAnimation" parent="android:style/Animation.Dialog">
+    <item name="android:windowEnterAnimation">@anim/sheet_enter</item>
+    <item name="android:windowExitAnimation">@anim/sheet_exit</item>
+</style>
 </resources>
