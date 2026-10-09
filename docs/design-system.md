@@ -121,6 +121,7 @@ page keeps the same constants next to its theme code.
 - Android draws everything with framework Views, `GradientDrawable`, and
   Canvas shaders. No extra libraries, fonts or bitmaps, because the release APK
   must stay below the 50 MiB bootstrap limit.
-- Web pages carry the same tokens as CSS custom properties, follow
-  `prefers-color-scheme` unless the user picked a theme, and stay
-  self-contained under each page's CSP (no external fonts or scripts).
+- Web pages carry the same tokens as CSS custom properties, resolve their theme
+  from the stored mode before first paint (Sunrise & sunset by default;
+  System follows `prefers-color-scheme`), and stay self-contained under each
+  page's CSP (no external fonts or scripts).

@@ -61,4 +61,6 @@ class GroceryTests(unittest.TestCase):
             self.assertEqual(response.json()['names'],['bananas','sparkling water'])
             self.assertEqual(len(self.store.snapshot()['items']),2)
             self.assertEqual(client.get('/groceries/index-secret').status_code,404)
+            for name in ('app.js','theme.js','style.css','sw.js','manifest.webmanifest','icon.svg'):
+                self.assertEqual(client.get('/groceries/'+name).status_code,200,name)
         self.assertEqual(split_items('mac and cheese, bananas'),['mac and cheese','bananas'])

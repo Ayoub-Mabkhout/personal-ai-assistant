@@ -1,3 +1,96 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Task details</title><link rel="stylesheet" href="/tasks/style.css"><script src="/tasks/app.js" defer></script></head>
-<body><main><header><nav><a href="/tasks/">Task history</a> <a href="/">Home Assistant</a></nav><button id="signin">Sign in</button></header><p class="eyebrow">Assistant task</p><h1 id="status">Task details</h1><p id="connection" role="status">Open a task from its notification.</p><section id="task-history-section" hidden><label for="history-search">Search tasks</label><input id="history-search" type="search" maxlength="300" placeholder="Search requests and answers"><div id="task-history-list"></div><button id="history-more" hidden>Load more</button></section><div id="task-detail-content"><section><h2>Request</h2><p id="request">—</p></section><section id="result-section" hidden><h2 id="result-title">Result</h2><pre id="result"></pre></section><section id="turns-section" hidden><h2>Follow-ups</h2><div id="turns"></div></section><section id="followup-section" hidden><h2>Continue this task</h2><form id="followup-form"><label for="instruction">New instruction</label><textarea id="instruction" maxlength="4096" rows="4" required placeholder="What should happen next?"></textarea><button id="send-followup" type="submit">Send instruction</button><p id="followup-status" role="status" aria-live="polite"></p></form></section><section><h2>Activity</h2><ol id="history"></ol></section><footer id="task-id"></footer></div></main></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#FAF5EC" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#130E1C" media="(prefers-color-scheme: dark)"><title>Task details</title><script src="/tasks/theme.js"></script><link rel="stylesheet" href="/tasks/style.css"><script src="/tasks/app.js" defer></script></head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false">
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.8a8 8 0 0 1-11.6 7.1L4 20l1.1-4.5a8 8 0 1 1 15.4-3.7z"/></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5.5 13.5H11l-.5 7.5 8-11H13z"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.8v4.7h4.7M12 7.5V12l3 2"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5M6 9.8V19a1 1 0 0 0 1 1h3.5v-5h3v5H17a1 1 0 0 0 1-1V9.8"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-arc" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.4l2.6 2.6 5-5.4"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.8v5.2M12 16.2h.01"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12h7"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="3"/><path d="M15.5 8.5V7A2.5 2.5 0 0 0 13 4.5H7A2.5 2.5 0 0 0 4.5 7v6A2.5 2.5 0 0 0 7 15.5h1.5"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.3-5.4"/><path d="M19.5 4.5v4.2h-4.2"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.2A8 8 0 019.8 4 8 8 0 1020 14.2z"/></symbol>
+<symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2.5"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="i-sunrise" viewBox="0 0 24 24"><path d="M7 17a5 5 0 0 1 10 0M12 6.5v2.2M5.3 10.3l1.5 1.5M18.7 10.3l-1.5 1.5M3 17h18M8 21h8"/></symbol>
+<symbol id="i-art" viewBox="0 0 96 80"><rect x="12" y="16" width="72" height="52" rx="14" opacity=".35"/><rect x="20" y="10" width="56" height="48" rx="13"/><path d="M31 27h24M31 37h34M31 47h16"/><path d="M72 4l1.9 5.1L79 11l-5.1 1.9L72 18l-1.9-5.1L65 11l5.1-1.9z"/></symbol>
+</svg>
+<main>
+<header class="topbar">
+<a class="brand" href="/tasks/"><i aria-hidden="true"></i><span>Assistant</span></a>
+<div class="actions">
+<button id="theme" class="icon-btn" type="button" aria-label="Colour mode: Sunrise &amp; sunset. Change."><svg class="i" aria-hidden="true"><use href="#i-sunrise"/></svg></button>
+<button id="signin" class="btn tonal" type="button">Sign in</button>
+</div>
+<span id="theme-status" class="sr-only" role="status"></span>
+</header>
+<nav class="pillnav" aria-label="Task pages">
+<a id="nav-task" href="/tasks/" aria-current="page" hidden><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg><span>Task</span></a>
+<a id="nav-history" href="/tasks/"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg><span>Task history</span></a>
+<a href="/"><svg class="i" aria-hidden="true"><use href="#i-home"/></svg><span>Home Assistant</span></a>
+</nav>
+<div class="titles"><p class="eyebrow" id="eyebrow">Assistant task</p><h1 id="page-title">Task details</h1></div>
+<div id="connection" class="note s-info" role="status" hidden><svg class="i" aria-hidden="true"><use id="connection-icon" href="#i-clock"/></svg><span id="connection-text"></span></div>
+<section id="notice" class="card notice" hidden>
+<svg class="i art" aria-hidden="true"><use href="#i-art"/></svg>
+<h2 class="n-title"></h2><p class="n-text"></p>
+<button class="btn primary n-action" type="button" hidden></button>
+</section>
+<section id="loading" class="card skeleton" aria-hidden="true"><i class="sk"></i><i class="sk"></i><i class="sk"></i></section>
+<section id="task-history-section" class="page" hidden>
+<label class="search"><span class="sr-only">Search tasks</span><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="history-search" type="search" maxlength="300" placeholder="Search requests and answers" autocomplete="off"></label>
+<section id="history-empty" class="card notice" hidden>
+<svg class="i art" aria-hidden="true"><use href="#i-art"/></svg>
+<h2 class="n-title"></h2><p class="n-text"></p>
+<button class="btn primary n-action" type="button" hidden></button>
+</section>
+<ul id="task-history-list" class="cards"></ul>
+<button id="history-more" class="btn tonal" type="button" hidden>Load more</button>
+</section>
+<div id="task-detail-content" class="page" hidden>
+<section id="hero" class="hero card s-info" aria-label="Task status">
+<div class="hero-top">
+<span id="status-chip" class="chip s-info"><svg class="i" aria-hidden="true"><use id="status-icon" href="#i-clock"/></svg><span id="status">Queued</span></span>
+<p id="updated" class="meta"></p>
+</div>
+<p id="state-note" class="state-note" role="status"></p>
+<div id="activity-bar" class="bar" hidden aria-hidden="true"><i></i></div>
+</section>
+<section class="convo" aria-label="Conversation">
+<p class="daysep"><time id="day"></time></p>
+<div class="msg you"><div class="bubble"><p id="request">Loading</p></div><p class="meta" id="request-meta"></p></div>
+<div id="result-section" class="msg bot" hidden>
+<div class="bubble rich">
+<div class="bubble-head"><h2 id="result-title">Result</h2><button id="copy-result" class="btn ghost" type="button" aria-label="Copy result"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+<div id="result" class="prose"></div>
+</div>
+<div class="status-row"><span id="result-chip" class="chip s-success" hidden></span><p class="meta" id="result-meta"></p></div>
+</div>
+<div id="turns-section" hidden><h2 class="sr-only">Follow-ups</h2><div id="turns" class="convo"></div></div>
+</section>
+<section id="activity-section" class="activity" aria-labelledby="activity-title" hidden>
+<h2 id="activity-title" class="label">Activity</h2>
+<ol id="history" class="timeline card"></ol>
+</section>
+<footer id="task-id"></footer>
+<section id="followup-section" class="composer" aria-labelledby="followup-title" hidden>
+<h2 id="followup-title">Continue this task</h2>
+<form id="followup-form">
+<label for="instruction" class="sr-only">New instruction</label>
+<textarea id="instruction" maxlength="4096" rows="1" required placeholder="What should happen next?"></textarea>
+<button id="send-followup" class="send" type="submit"><svg class="i" aria-hidden="true"><use id="send-icon" href="#i-up"/></svg><span class="lbl">Send instruction</span></button>
+</form>
+<p id="followup-status" role="status" aria-live="polite"></p>
+</section>
+</div>
+</main>
+</body></html>

@@ -1,5 +1,215 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link WhatsApp</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:40px auto;padding:0 24px;max-width:660px;background:#19191f;color:#f2efe9}h1{letter-spacing:-1px}a{color:#b9a1ec}#qr{display:block;width:360px;max-width:100%;margin:24px auto;background:white;border-radius:12px}#state{color:#d7c7eb}#remaining{color:#aba5b2;font-size:13px}[hidden]{display:none}</style><body><a href="/#profile">← Profile</a><h1>Link WhatsApp</h1><p>On your phone: <strong>WhatsApp → Settings → Linked devices → Link a device</strong>.</p><p id="state" role="status">Getting a fresh pairing code…</p><img id="qr" alt="Live WhatsApp linked-device QR code" hidden><p id="remaining"></p><p>The code refreshes automatically. Scan the code on this page.</p><script>
-const token='__DASHBOARD_TOKEN__';let expires=0,current='',busy=false;const state=document.getElementById('state'),qr=document.getElementById('qr'),remaining=document.getElementById('remaining');
-async function refresh(){if(busy)return;busy=true;try{const response=await fetch('/api/connections',{headers:{'X-Dashboard-Token':token}});if(!response.ok)throw Error('Please reload this page.');const {whatsapp}=await response.json();expires=Date.parse(whatsapp.qr_expires_at||'')||0;const labels={pairing:'Scan this code with your phone.',paired:'Phone linked. Establishing connection…',connected:'WhatsApp is connected.',disconnected:'Disconnected. Reconnecting…',pairing_expired:'Getting a new code…',pairing_failed:'Linking failed. Preparing another attempt…',connecting:'Connecting…',not_started:'Receiver is not running.'};state.textContent=labels[whatsapp.state]||'Preparing the connection…';const valid=whatsapp.state==='pairing'&&(!expires||expires>Date.now());if(valid){const image=await fetch('/api/whatsapp/qr',{headers:{'X-Dashboard-Token':token}});if(image.ok){const next=URL.createObjectURL(await image.blob());qr.src=next;qr.hidden=false;if(current)URL.revokeObjectURL(current);current=next}else qr.hidden=true}else qr.hidden=true;}catch(error){state.textContent=error.message;qr.hidden=true}finally{busy=false}}
-setInterval(()=>{const seconds=Math.max(0,Math.ceil((expires-Date.now())/1000));remaining.textContent=!qr.hidden&&expires?'New code in '+seconds+' seconds.':'';if(expires&&seconds===0)qr.hidden=true},500);refresh();setInterval(refresh,1500);
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Link WhatsApp</title>
+<meta name="theme-color" content="#FAF5EC">
+<script>
+// Follows the dashboard's saved colour mode. Sunrise & sunset is computed here for Munich: no network, no geolocation.
+(()=>{
+const KEY='personal-theme',MODES=['sun','system','light','dark'],MUNICH={ lat: 48.137, lon: 11.575 };
+// Sunrise and sunset for a latitude/longitude from the standard solar-position equations
+// (upper limb at -0.833 degrees incl. refraction). Returns epoch milliseconds.
+function sunTimes(ms, lat, lon) {
+  const rad = Math.PI / 180, day = 86400000, J1970 = 2440588, J2000 = 2451545, J0 = 0.0009;
+  const d = ms / day - 0.5 + J1970 - J2000;
+  const lw = -lon * rad, phi = lat * rad;
+  const n = Math.round(d - J0 - lw / (2 * Math.PI));
+  const ds = J0 + lw / (2 * Math.PI) + n;
+  const M = rad * (357.5291 + 0.98560028 * ds);
+  const C = rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+  const L = M + C + rad * 102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(L) * Math.sin(rad * 23.4397));
+  const transit = J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
+  const cosW = (Math.sin(-0.833 * rad) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec));
+  if (cosW >= 1) return { rise: null, set: null, polar: 'night' };
+  if (cosW <= -1) return { rise: null, set: null, polar: 'day' };
+  const w = Math.acos(cosW);
+  const set = J2000 + J0 + (w + lw) / (2 * Math.PI) + n + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
+  const rise = transit - (set - transit);
+  const toMs = j => (j + 0.5 - J1970) * day;
+  return { rise: toMs(rise), set: toMs(set) };
+}
+// Dark between sunset and the next sunrise; also returns when the answer next changes.
+function sunPhase(ms, place) {
+  const t = sunTimes(ms, place.lat, place.lon);
+  if (t.polar) return { dark: t.polar === 'night', next: ms + 3600000 };
+  if (ms < t.rise) return { dark: true, next: t.rise };
+  if (ms < t.set) return { dark: false, next: t.set };
+  const tomorrow = sunTimes(ms + 86400000, place.lat, place.lon);
+  return { dark: true, next: tomorrow.rise || ms + 3600000 };
+}
+const root=document.documentElement,meta=document.querySelector('meta[name=theme-color]'),system=matchMedia('(prefers-color-scheme: dark)');
+function stored(){try{const v=localStorage.getItem(KEY);return MODES.includes(v)?v:'sun'}catch{return 'sun'}}
+let mode=stored(),timer=0;
+function apply(){
+  clearTimeout(timer);
+  const phase=mode==='sun'?sunPhase(Date.now(),MUNICH):null;
+  const theme=phase?(phase.dark?'dark':'light'):mode==='system'?(system.matches?'dark':'light'):mode;
+  if(root.dataset.theme!==theme)root.dataset.theme=theme;
+  if(meta)meta.content=theme==='dark'?'#130E1C':'#FAF5EC';
+  if(phase)timer=setTimeout(apply,Math.max(phase.next-Date.now(),250));
+}
+apply();
+system.addEventListener('change',()=>{if(mode==='system')apply()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)apply()});
+addEventListener('focus',apply);
+addEventListener('pageshow',apply);
+addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply()}});
+})();
+</script>
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:#FAF5EC;--surface:#FFFEFB;--surface-alt:#F3ECE4;--text:#231A2E;--muted:#675C73;
+  --accent:#5B35D5;--accent-soft:#ECE5FF;--stroke:#E7DDD3;
+  --success:#17784A;--success-soft:#E0F2E7;--warning:#965800;--warning-soft:#FFEFCF;
+  --danger:#B3263E;--danger-soft:#FCE3E7;--info:#3D52CC;--info-soft:#E3E8FF;
+  --g1-rgb:91,53,213;--g2-rgb:162,59,198;--g3-rgb:204,63,120;--peri-rgb:142,162,255;
+  --glass:rgba(255,255,255,0);
+  --e1:0 1px 0 rgba(255,255,255,.9) inset,0 2px 8px rgba(70,40,100,.07),0 16px 34px -16px rgba(91,53,213,.3);
+  --e2:0 1px 0 rgba(255,255,255,.9) inset,0 4px 12px rgba(70,40,100,.08),0 20px 40px -14px rgba(91,53,213,.4);
+  --wash:radial-gradient(92% 62% at 50% -4%,rgba(142,162,255,.4),rgba(142,162,255,0) 72%),radial-gradient(60% 40% at 104% 10%,rgba(204,63,120,.16),rgba(204,63,120,0) 70%),radial-gradient(56% 40% at -4% 14%,rgba(91,53,213,.12),rgba(91,53,213,0) 70%);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#130E1C;--surface:#1D1729;--surface-alt:#281F38;--text:#F5F0FB;--muted:#ADA3BF;
+  --accent:#B39CFF;--accent-soft:#2E2357;--stroke:#322849;
+  --success:#74DFA5;--success-soft:#173A2A;--warning:#FFC766;--warning-soft:#3E2D10;
+  --danger:#FF8FA0;--danger-soft:#44192A;--info:#A4B5FF;--info-soft:#232B5C;
+  --g1-rgb:142,107,255;--g2-rgb:196,108,240;--g3-rgb:240,143,196;--peri-rgb:143,168,255;
+  --glass:rgba(255,255,255,.055);
+  --e1:0 1px 0 rgba(255,255,255,.07) inset,0 14px 30px -14px rgba(0,0,0,.75),0 0 0 .5px rgba(142,107,255,.14);
+  --e2:0 1px 0 rgba(255,255,255,.08) inset,0 22px 44px -14px rgba(0,0,0,.85),0 0 28px -8px rgba(142,107,255,.28);
+  --wash:radial-gradient(92% 62% at 50% -6%,rgba(142,107,255,.34),rgba(142,107,255,0) 72%),radial-gradient(56% 38% at 104% 10%,rgba(240,143,196,.14),rgba(240,143,196,0) 70%),radial-gradient(56% 38% at -4% 14%,rgba(143,168,255,.12),rgba(143,168,255,0) 70%);
+}}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --bg:#130E1C;--surface:#1D1729;--surface-alt:#281F38;--text:#F5F0FB;--muted:#ADA3BF;
+  --accent:#B39CFF;--accent-soft:#2E2357;--stroke:#322849;
+  --success:#74DFA5;--success-soft:#173A2A;--warning:#FFC766;--warning-soft:#3E2D10;
+  --danger:#FF8FA0;--danger-soft:#44192A;--info:#A4B5FF;--info-soft:#232B5C;
+  --g1-rgb:142,107,255;--g2-rgb:196,108,240;--g3-rgb:240,143,196;--peri-rgb:143,168,255;
+  --glass:rgba(255,255,255,.055);
+  --e1:0 1px 0 rgba(255,255,255,.07) inset,0 14px 30px -14px rgba(0,0,0,.75),0 0 0 .5px rgba(142,107,255,.14);
+  --e2:0 1px 0 rgba(255,255,255,.08) inset,0 22px 44px -14px rgba(0,0,0,.85),0 0 28px -8px rgba(142,107,255,.28);
+  --wash:radial-gradient(92% 62% at 50% -6%,rgba(142,107,255,.34),rgba(142,107,255,0) 72%),radial-gradient(56% 38% at 104% 10%,rgba(240,143,196,.14),rgba(240,143,196,0) 70%),radial-gradient(56% 38% at -4% 14%,rgba(143,168,255,.12),rgba(143,168,255,0) 70%);
+}
+
+*{box-sizing:border-box}
+html{background:var(--bg);-webkit-text-size-adjust:100%}
+body{margin:0;font:15px/22px system-ui,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0 0 auto;height:520px;background:var(--wash);z-index:-1;pointer-events:none}
+h1,p{margin:0}
+h1{margin:16px 0 8px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-.6px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+[hidden]{display:none!important}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.wrap{max-width:560px;margin:0 auto;padding:max(24px,env(safe-area-inset-top)) 20px max(48px,env(safe-area-inset-bottom))}
+.back{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:0 18px 0 14px;border-radius:24px;background:var(--surface);border:1px solid var(--stroke);box-shadow:var(--e1);color:var(--accent);font-weight:700;text-decoration:none;transition:transform 160ms}
+.back:active{transform:scale(.97);transition-duration:90ms}
+.lede{color:var(--muted)}
+.lede strong{color:var(--text);font-weight:700}
+.card{position:relative;margin-top:24px;padding:24px;border-radius:28px;background:linear-gradient(180deg,var(--glass),rgba(255,255,255,0) 46%),var(--surface);border:1px solid var(--stroke);box-shadow:var(--e2)}
+.status{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:20px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px 0 7px;border-radius:12px;background:var(--surface-alt);color:var(--muted);font-size:12px;line-height:16px;font-weight:700;white-space:nowrap}
+.chip .i{width:14px;height:14px}
+.chip.success{background:var(--success-soft);color:var(--success)}
+.chip.warning{background:var(--warning-soft);color:var(--warning)}
+.chip.danger{background:var(--danger-soft);color:var(--danger)}
+.chip.info{background:var(--info-soft);color:var(--info)}
+#state{font-weight:500}
+.frame{width:min(100%,320px);aspect-ratio:1;margin:0 auto;border-radius:24px}
+.frame.has-qr{padding:14px;background:#fff;box-shadow:var(--e1);border:1px solid var(--stroke)}
+.frame img{display:block;width:100%;height:100%}
+.placeholder{display:grid;place-items:center;width:100%;height:100%;border-radius:24px;background:var(--surface-alt) linear-gradient(100deg,transparent 30%,rgba(var(--peri-rgb),.22) 50%,transparent 70%) 100% 0/300% 100%;color:var(--muted);animation:shimmer 1.4s ease-in-out infinite}
+.placeholder .i{width:44px;height:44px}
+.placeholder.ok{background:var(--success-soft);color:var(--success);animation:none}
+.placeholder.error{background:var(--danger-soft);color:var(--danger);animation:none}
+#remaining{display:block;width:fit-content;margin:16px auto 0;padding:4px 12px;border-radius:14px;background:var(--surface-alt);font-size:13px;line-height:18px;font-weight:500;color:var(--muted)}
+#remaining:empty{display:none}
+.hint{margin-top:20px;text-align:center;font-size:13px;line-height:18px;color:var(--muted)}
+.swap{animation:swap 150ms ease}
+@keyframes swap{from{opacity:0}to{opacity:1}}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.placeholder{animation:none}}
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+<symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></symbol>
+<symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 9.5"/></symbol>
+<symbol id="i-alert-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-3.5L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.5 3.5L20 15"/><path d="M20 20v-5h-5"/></symbol>
+<symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></symbol>
+</defs></svg>
+<main class="wrap">
+<a class="back" href="/#profile"><svg class="i" aria-hidden="true"><use href="#i-arrow-left"/></svg>Profile</a>
+<h1>Link WhatsApp</h1>
+<p class="lede">On your phone: <strong>WhatsApp → Settings → Linked devices → Link a device</strong>.</p>
+<section class="card">
+  <div class="status"><span id="chip"></span><p id="state" role="status">Getting a fresh pairing code…</p></div>
+  <div class="frame" id="frame"><img id="qr" alt="Live WhatsApp linked-device QR code" hidden><div id="placeholder" class="placeholder"><svg class="i" aria-hidden="true"><use href="#i-phone"/></svg></div></div>
+  <p id="remaining"></p>
+</section>
+<p class="hint">The code refreshes automatically. Scan the code on this page.</p>
+</main>
+<script>
+const token='__DASHBOARD_TOKEN__';let expires=0,current='',busy=false,shown='';
+const frame=document.getElementById('frame'),state=document.getElementById('state'),qr=document.getElementById('qr'),remaining=document.getElementById('remaining'),placeholder=document.getElementById('placeholder'),chip=document.getElementById('chip');
+const NS='http://www.w3.org/2000/svg';
+function showQr(on){qr.hidden=!on;placeholder.hidden=on;frame.classList.toggle('has-qr',on)}
+const icon=name=>{const s=document.createElementNS(NS,'svg'),u=document.createElementNS(NS,'use');s.setAttribute('class','i');s.setAttribute('aria-hidden','true');u.setAttribute('href','#i-'+name);s.append(u);return s};
+const STATES={
+  pairing:['Scan this code with your phone.','Ready to scan','info','phone'],
+  paired:['Phone linked. Establishing connection…','Phone linked','info','check-circle'],
+  connected:['WhatsApp is connected.','Connected','success','check-circle'],
+  disconnected:['Disconnected. Reconnecting…','Reconnecting','warning','refresh'],
+  pairing_expired:['Getting a new code…','New code','info','refresh'],
+  pairing_failed:['Linking failed. Preparing another attempt…','Linking failed','danger','alert-circle'],
+  connecting:['Connecting…','Connecting','info','clock'],
+  not_started:['Receiver is not running.','Not running','danger','alert-circle'],
+};
+function paint(text,label,tone,symbol,mode){
+  if(shown!==text){
+    shown=text;state.textContent=text;
+    const n=document.createElement('span');n.className='chip '+tone;n.append(icon(symbol),Object.assign(document.createElement('span'),{textContent:label}));
+    chip.replaceChildren(n);
+    for(const node of [state,chip])node.classList.remove('swap'),void node.offsetWidth,node.classList.add('swap');
+  }
+  placeholder.className='placeholder'+(mode?' '+mode:'');
+  placeholder.replaceChildren(icon(mode==='ok'?'check-circle':mode==='error'?'alert-circle':'phone'));
+}
+async function refresh(){
+  if(busy)return;busy=true;
+  try{
+    const response=await fetch('/api/connections',{headers:{'X-Dashboard-Token':token}});
+    if(!response.ok)throw Error('Please reload this page.');
+    const {whatsapp}=await response.json();
+    expires=Date.parse(whatsapp.qr_expires_at||'')||0;
+    const known=STATES[whatsapp.state]||['Preparing the connection…','Preparing','info','clock'];
+    paint(known[0],known[1],known[2],known[3],whatsapp.state==='connected'?'ok':whatsapp.state==='not_started'||whatsapp.state==='pairing_failed'?'error':'');
+    const valid=whatsapp.state==='pairing'&&(!expires||expires>Date.now());
+    if(valid){
+      const image=await fetch('/api/whatsapp/qr',{headers:{'X-Dashboard-Token':token}});
+      if(image.ok){const next=URL.createObjectURL(await image.blob());qr.src=next;showQr(true);if(current)URL.revokeObjectURL(current);current=next}
+      else showQr(false);
+    }else showQr(false);
+  }catch(error){
+    paint(error instanceof TypeError?'The dashboard service is not reachable.':error.message,'Unavailable','danger','alert-circle','error');showQr(false);
+  }finally{busy=false}
+}
+setInterval(()=>{
+  const seconds=Math.max(0,Math.ceil((expires-Date.now())/1000));
+  remaining.textContent=!qr.hidden&&expires?'New code in '+seconds+' seconds.':'';
+  if(expires&&seconds===0)showQr(false)
+},500);
+refresh();setInterval(refresh,1500);
+</script>
+</body>
+</html>

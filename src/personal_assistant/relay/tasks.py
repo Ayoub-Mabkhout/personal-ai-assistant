@@ -115,6 +115,6 @@ def task_router(queues,ha_url,assets,user_verifier=None,task_links=None):
 
     @api.get('/{filename}')
     def asset(filename:str):
-        if filename not in ('app.js','style.css'): raise HTTPException(404)
+        if filename not in ('app.js','style.css','theme.js'): raise HTTPException(404)
         return FileResponse(Path(assets)/filename,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
     return api

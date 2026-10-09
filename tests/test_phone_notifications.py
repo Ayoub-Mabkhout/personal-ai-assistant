@@ -96,6 +96,19 @@ class PhoneNotificationTests(unittest.TestCase):
             self.assertEqual(response.json()['summary'],'Done')
             self.assertNotIn('private-path',response.text)
 
+    def test_task_page_serves_only_its_whitelisted_assets(self):
+        app=FastAPI();assets=Path(__file__).resolve().parents[1]/'apps/tasks'
+        app.include_router(task_router({'agent':self.queue,'command':self.queue},'https://ha.example.com',assets))
+        with TestClient(app) as client:
+            for name in ('app.js','theme.js','style.css'):
+                response=client.get('/tasks/'+name)
+                self.assertEqual(response.status_code,200,name)
+                self.assertEqual(response.content,(assets/name).read_bytes())
+            index=client.get('/tasks/agent/task-test-123')
+            self.assertIn('/tasks/theme.js',index.text)
+            self.assertIn("script-src 'self'",index.headers['content-security-policy'])
+            self.assertEqual(client.get('/tasks/index.html').status_code,404)
+
     def test_notification_link_opens_only_its_task_and_cannot_mutate_queue(self):
         from personal_assistant.relay.task_links import TaskLinks
         from personal_assistant.relay.api import create_app

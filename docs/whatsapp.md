@@ -9,7 +9,7 @@ is required.
 With `whatsapp_binary` and `whatsapp_runtime` in the protected local service
 configuration, the bridge presents a rotating QR in Profile → Connected accounts.
 Open `/whatsapp` on the local dashboard for a direct live pairing page with an
-expiry countdown. A Link WhatsApp control is also visible in the dashboard header.
+expiry countdown. A Link WhatsApp control is also available in the dashboard sidebar (and in the top bar on narrow screens).
 Use WhatsApp → Settings → Linked devices → Link a device. QR images and device
 session databases stay outside OneDrive in a directory restricted to the user
 and SYSTEM. QR values are not printed to logs or hosted publicly.

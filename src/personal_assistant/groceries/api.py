@@ -153,7 +153,7 @@ def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=
 
     @api.get('/{filename}')
     def asset(filename: str):
-        if filename not in ('app.js','style.css','sw.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png'):
+        if filename not in ('app.js','theme.js','style.css','sw.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png'):
             raise HTTPException(404)
         response = FileResponse(Path(assets)/filename, headers={'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff'})
         if filename == 'manifest.webmanifest':
