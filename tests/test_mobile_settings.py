@@ -5,7 +5,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 from personal_assistant.relay.api import create_app
-from personal_assistant.relay.mobile_settings import MobileSettings
+from personal_assistant.relay.mobile_settings import MobileSettings, SettingsUnreadable
 
 
 class MobileSettingsTests(unittest.TestCase):
@@ -21,15 +21,17 @@ class MobileSettingsTests(unittest.TestCase):
                        {'daylight': {'latitude': 91, 'longitude': 0}},
                        {'daylight': {'latitude': 0, 'longitude': -181}},
                        {'daylight': {'latitude': float('nan'), 'longitude': 0}},
-                       {'daylight': {'latitude': 0, 'longitude': float('inf')}}]
-            for value in invalid:
-                with self.subTest(value=value):
-                    path.write_text(json.dumps(value), encoding='utf-8')
-                    self.assertEqual(store.snapshot(), {'daylight': None})
-            path.write_text('{broken', encoding='utf-8')
-            self.assertEqual(store.snapshot(), {'daylight': None})
-            path.write_bytes(b' ' * 4097)
-            self.assertEqual(store.snapshot(), {'daylight': None})
+                       {'daylight': {'latitude': 0, 'longitude': float('inf')}},
+                       {'daylight': {'latitude': 10 ** 400, 'longitude': 0}}]
+            with self.assertLogs(level='WARNING'):
+                for value in invalid:
+                    with self.subTest(value=value):
+                        path.write_text(json.dumps(value), encoding='utf-8')
+                        self.assertEqual(store.snapshot(), {'daylight': None})
+                path.write_text('{broken', encoding='utf-8')
+                self.assertEqual(store.snapshot(), {'daylight': None})
+                path.write_bytes(b' ' * 4097)
+                self.assertEqual(store.snapshot(), {'daylight': None})
 
     def test_whitelist_reload_and_zero_coordinates_do_not_disclose_other_config(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -85,3 +87,60 @@ class MobileSettingsTests(unittest.TestCase):
             self.assertEqual(response.json(), {'daylight': {'latitude': 10, 'longitude': -20}})
             self.assertNotIn(str(override), response.text)
             self.assertFalse((root / 'companion-preferences.json').exists())
+
+    def test_unreadable_file_is_distinguished_from_not_configured_without_leaking_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'companion-preferences.json'
+            store = MobileSettings(path)
+            with self.assertNoLogs(level='WARNING'):
+                self.assertEqual(store.snapshot(), {'daylight': None})
+                self.assertEqual(store.snapshot(strict=True), {'daylight': None})
+            path.mkdir()
+            with self.assertLogs(level='WARNING') as logged:
+                self.assertEqual(store.snapshot(), {'daylight': None})
+                with self.assertRaises(SettingsUnreadable):
+                    store.snapshot(strict=True)
+            self.assertEqual(len(logged.records), 2)
+            for line in logged.output:
+                self.assertIn('unreadable', line)
+                self.assertNotIn(directory, line)
+            path.rmdir()
+            path.write_text(json.dumps({'daylight': {'latitude': -20.5, 'longitude': 130.25}}))
+            self.assertEqual(store.snapshot(strict=True), {'daylight': {'latitude': -20.5, 'longitude': 130.25}})
+
+    def test_unusable_configuration_is_logged_by_reason_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'companion-preferences.json'
+            store = MobileSettings(path)
+            marker = 'synthetic-private-marker'
+            unusable = [
+                (json.dumps({'daylight': {'latitude': marker, 'longitude': 0}}).encode(), 'invalid'),
+                (json.dumps({'daylight': {'latitude': 91, 'longitude': 0}, 'note': marker}).encode(), 'invalid'),
+                (b'{"daylight": {"latitude": 0, "longitude": 0}, "note": "' + marker.encode() + b'\xe4"}', 'invalid'),
+                (b'{"note": "' + marker.encode() + b'", ' + b'"pad": "' + b'x' * 4100 + b'"}', 'oversized'),
+            ]
+            for raw, reason in unusable:
+                with self.subTest(reason=reason, size=len(raw)):
+                    path.write_bytes(raw)
+                    with self.assertLogs(level='WARNING') as logged:
+                        self.assertEqual(store.snapshot(strict=True), {'daylight': None})
+                    self.assertEqual(len(logged.records), 1)
+                    self.assertIn(reason, logged.output[0])
+                    self.assertNotIn(marker, logged.output[0])
+                    self.assertNotIn(directory, logged.output[0])
+            for raw in (b'{}', b'{"daylight": null}', b'{"other": 1}'):
+                with self.subTest(unset=raw):
+                    path.write_bytes(raw)
+                    with self.assertNoLogs(level='WARNING'):
+                        self.assertEqual(store.snapshot(), {'daylight': None})
+
+    def test_valid_file_encodings_written_by_windows_editors_are_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'companion-preferences.json'
+            store = MobileSettings(path)
+            text = '{\r\n  "daylight": {"latitude": -20.5, "longitude": 130.25}\r\n}\r\n'
+            expected = {'daylight': {'latitude': -20.5, 'longitude': 130.25}}
+            for encoding in ('utf-8', 'utf-8-sig', 'utf-16'):
+                with self.subTest(encoding=encoding):
+                    path.write_bytes(text.encode(encoding))
+                    self.assertEqual(store.snapshot(), expected)

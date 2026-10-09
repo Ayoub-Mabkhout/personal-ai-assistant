@@ -99,8 +99,14 @@ def create_app(config):
 
     @app.get('/api/preferences')
     def preferences():
-        from personal_assistant.relay.mobile_settings import MobileSettings
-        return MobileSettings(config.get('mobile_settings_file',runtime/'companion-preferences.json')).snapshot()
+        from personal_assistant.relay.mobile_settings import MobileSettings, SettingsUnreadable
+        configured=config.get('mobile_settings_file')
+        path=Path(configured).expanduser() if configured else runtime/'companion-preferences.json'
+        try:
+            return MobileSettings(path).snapshot(strict=True)
+        except SettingsUnreadable:
+            # A transient read failure must not look like "no place configured": the page would clear its cached place.
+            raise HTTPException(503,'Daylight preferences are temporarily unreadable.') from None
 
     @app.get('/api/profile')
     def profile_data():
