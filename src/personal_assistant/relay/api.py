@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from .delivery import build_sender, delivery_status, fcm_provider
 from .store import Conflict, Missing, Queue
 
 
@@ -90,23 +91,18 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
     agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications),
                         **({'clock':clock} if clock else {}))
-    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None
+    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None
     if groceries:
         from personal_assistant.groceries.mobile import Devices
-        from .mobile_push import MobileEventStore,MobilePushPump,FcmPush
+        from .mobile_push import MobileEventStore,MobilePushPump
         mobile_events=MobileEventStore(Devices(Path(groceries['path']).with_name('phones.sqlite3'),**({'clock':clock} if clock else {})))
-        push_config=(notifications or {}).get('companion_push')
-        native_provider=(notifications or {}).get('native_provider') or (FcmPush(push_config) if push_config else None)
+        native_provider=fcm_provider(notifications)
         native_pump=MobilePushPump(mobile_events,native_provider)
     if notifications:
-        from .notifications import HomeAssistantPush,NotificationPump
-        if notifications.get('provider')=='companion':
-            if not mobile_events:raise ValueError('Native notifications require Companion pairing.')
-            from .mobile_push import CompanionSender
-            sender=CompanionSender(mobile_events)
-        else:sender=notifications.get('sender') or HomeAssistantPush(notifications)
+        from .notifications import NotificationPump
+        mode,sender=build_sender(notifications,mobile_events,native_provider)
         pump=NotificationPump({'command':queue,'agent':agent_queue},sender,notifications['public_url'],
-            visibility=notifications.get('visibility','private'),task_links=task_links)
+            visibility=notifications.get('visibility','private'),task_links=task_links,max_age=3600 if mode=='native' else None)
         from .reminders import ReminderStore,ReminderPump
         reminder_store=ReminderStore(Path(path).with_name('reminders.sqlite3'),**({'clock':clock} if clock else {}))
         reminder_pump=ReminderPump(reminder_store,sender,visibility=notifications.get('visibility','private'))
@@ -124,6 +120,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             if native_pump: native_pump.close()
     app = FastAPI(title='Personal assistant relay', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
     app.state.notification_pump=pump
+    app.state.reminder_pump=reminder_pump
     app.state.native_push_pump=native_pump
     app.state.mobile_events=mobile_events
     app.add_middleware(BodyLimit)
@@ -132,6 +129,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         groceries_api=router(**groceries,phone_sender=sender, mobile_settings_file=mobile_settings_file)
         app.include_router(groceries_api)
         release_pump=groceries_api.release_pump
+        app.state.release_pump=release_pump
         app.state.release_feed=groceries_api.release_feed
         if release_publish_token_file:
             from .release_upload import release_upload_router
@@ -189,6 +187,10 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     @app.get('/v1/status', dependencies=[Depends(submit)])
     def status():
         return queue.status()
+
+    @app.get('/v1/notifications/status', dependencies=[Depends(submit)])
+    def notification_status():
+        return delivery_status(mode,native_provider,mobile_events)
 
     @app.post('/v1/commands', dependencies=[Depends(submit)])
     def add(command: Command):

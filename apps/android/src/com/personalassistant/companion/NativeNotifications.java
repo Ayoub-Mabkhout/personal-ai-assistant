@@ -2,6 +2,8 @@ package com.personalassistant.companion;
 import android.app.*;
 import android.content.*;
 import android.os.Build;
+import java.util.HashSet;
+import java.util.Set;
 import org.json.*;
 
 /** In-app task notification targets; no browser or Home Assistant dependency. */
@@ -9,25 +11,40 @@ final class NativeNotifications {
     static synchronized void sync(Context c)throws Exception{
         long cursor=Cloud.prefs(c).getLong("push_cursor",0);
         JSONObject response=(JSONObject)Cloud.call(c,"events?cursor="+cursor,null,true);JSONArray events=response.optJSONArray("items");if(events==null)return;
-        long next=cursor;
+        long next=cursor;boolean more=response.optBoolean("more",false),held=false;
+        Set<String> shown=Cloud.prefs(c).getStringSet("push_shown",new HashSet<String>()),kept=new HashSet<String>();
         for(int i=0;i<events.length();i++){
-            JSONObject event=events.getJSONObject(i);long sequence=event.getLong("sequence");JSONObject body=event.getJSONObject("payload");body.put("created",event.optDouble("created",System.currentTimeMillis()/1000.0));
+            JSONObject event=events.getJSONObject(i);long sequence=event.getLong("sequence");String id=event.getString("id");JSONObject body=event.getJSONObject("payload");body.put("created",event.optDouble("created",System.currentTimeMillis()/1000.0));
             if(event.optDouble("expires",Double.MAX_VALUE)>System.currentTimeMillis()/1000.0){
-                if("release".equals(body.optString("type"))){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}
-                else show(c,event.getString("id"),body);
+                boolean release="release".equals(body.optString("type"));
+                // A blocked card stays unreceived so the server reports it and it shows once unblocked. A full page is never held:
+                // the server would keep serving the same 100 events and nothing behind them, reminders included, would arrive.
+                if(!release&&!more&&blocked(c,body))held=true;
+                else{
+                    if(!shown.contains(id)){if(release){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}else show(c,id,body);}
+                    if(held)kept.add(id);
+                }
             }
-            next=Math.max(next,sequence);
+            if(!held)next=Math.max(next,sequence);
         }
+        Cloud.prefs(c).edit().putStringSet("push_shown",kept).commit();
         if(next>cursor){
             // Receipt is idempotent. If network fails, the same tagged card is replaced on retry.
             Cloud.call(c,"events/receipt",new JSONObject().put("cursor",next),true);
             if(!Cloud.prefs(c).edit().putLong("push_cursor",next).commit())throw new Exception("Phone storage failed");
         }
         if(events.length()>0)NativeTasks.changed(c);
-        Cloud.prefs(c).edit().putBoolean("push_more",response.optBoolean("more",false)).commit();
+        Cloud.prefs(c).edit().putBoolean("push_more",more).commit();
+    }
+    static String channel(String type){return type.equals("reminder")?"calendar_reminders":type.equals("alarm")?"phone_actions":"task_updates";}
+    static boolean blocked(Context c,JSONObject body){
+        NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if(!manager.areNotificationsEnabled())return true;
+        NotificationChannel channel=manager.getNotificationChannel(channel(body.optString("type","task")));
+        return channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE;
     }
     static void show(Context c,String identifier,JSONObject body)throws Exception{
-        String channel="task_updates",type=body.optString("type","task");if(type.equals("reminder"))channel="calendar_reminders";else if(type.equals("alarm"))channel="phone_actions";
+        String type=body.optString("type","task"),channel=channel(type);
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         manager.createNotificationChannel(new NotificationChannel(channel,channel.equals("task_updates")?"Task updates":channel.equals("calendar_reminders")?"Calendar reminders":"Phone actions",NotificationManager.IMPORTANCE_HIGH));
         String kind=body.optString("task_kind","agent"),task=body.optString("task_id");

@@ -1,7 +1,13 @@
 {
   "enabled": false,
+  "delivery_mode": "homeassistant",
   "ha_url": "http://homeassistant:8123",
   "auth_file": "/data/ha-notifications-auth.json",
   "mobile_service": "mobile_app_YOUR_DEVICE",
-  "public_url": "https://YOUR_ASSISTANT_HOST"
+  "public_url": "https://YOUR_ASSISTANT_HOST",
+  "visibility": "private",
+  "companion_push": {
+    "project_id": "YOUR_FIREBASE_PROJECT_ID",
+    "service_account_file": "/data/firebase-service-account.json"
+  }
 }

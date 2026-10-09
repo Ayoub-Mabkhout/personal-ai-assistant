@@ -143,6 +143,8 @@ The legacy `--launch` option requests an immediate app launch using HA Companion
 apps** to the official HA Companion in Android settings. Android lock-screen,
 background-activity and manufacturer restrictions can still affect launching.
 The button path does not require granting that background-launch permission.
+The native Companion cannot be launched this way: with native delivery `--launch`
+still produces the tap-to-set-alarm card.
 
 An alarm request remains valid for ten minutes. If the phone is offline longer,
 it expires rather than unexpectedly setting the next day's alarm. A cloud

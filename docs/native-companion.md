@@ -8,7 +8,7 @@ existing Home Assistant channel; this is a migration step, not a permanent
 dependency. Home Assistant's server and legacy browser pages remain available.
 
 The native client/server paths and isolated delivery/recovery tests are
-implemented for version 0.6. Firebase Android client configuration, protected
+implemented for version 0.7. Firebase Android client configuration, protected
 server credentials, phone registration and actual notification receipt/Reply are
 deployment and handset acceptance steps. An APK build or fake-provider test does
 not establish that this channel is configured or working on a phone.
@@ -58,29 +58,168 @@ missed hints; these periodic jobs are not described as push. An authenticated
 WebSocket event stream is also available for foreground clients. No wake listener
 or always-on application socket is required for FCM notification delivery.
 
+## Delivery modes
+
+The relay's private `/data/notifications.json` chooses which phone app delivers task,
+reminder, alarm and release updates with `delivery_mode`:
+
+| Mode | Behaviour |
+|---|---|
+| `homeassistant` (default) | Home Assistant app only, exactly as before native delivery existed. |
+| `dual` | Each update is journaled for the native Companion, then sent through Home Assistant. Both cards appear by design. A Home Assistant failure propagates, so producers retry; a native journal failure is logged by class name and never blocks the Home Assistant card. |
+| `native` | Native Companion only; Home Assistant is not called. |
+
+The legacy `"provider": "companion"` setting still means `native`; `delivery_mode`
+takes precedence when both are present, and other legacy `provider` values stay
+Home Assistant. The relay logs the effective mode at startup and the owner status
+reports it. The file is read once at startup.
+
+Startup validates the file instead of degrading silently. An unknown `delivery_mode`
+is an error. `dual` and `native` additionally require Companion pairing (the groceries
+service) and `companion_push` credentials. `homeassistant` stays lenient: a
+`companion_push` block is optional, but when present its service-account file is
+loaded at startup.
+
+Delivery semantics:
+
+- `native` with no active paired phone raises instead of reporting success, so
+  producers keep retrying: task updates with bounded backoff, reminders until they
+  expire, release hints hourly. Final task states older than one hour are
+  discarded rather than delivered, so a first pairing does not backfill old
+  completed tasks; queued and running tasks always deliver their current state.
+  `dual` ignores a missing phone, because Home Assistant still delivers.
+- `dual` has its own fingerprint namespace. Entering it re-sends the queued and
+  running tasks once so the native journal catches up; leaving it for `native` adds
+  no journal events for unchanged content.
+- The journal collapses producer retries of a tag's newest content, but a task that
+  returns to an earlier state (for example offline, ready, offline) is delivered
+  again. `POST /v1/agent/prompts/TASK_ID/notify` (and the command equivalent)
+  delivers an unchanged card once more, also natively.
+- Provider acceptance, handset receipt and display stay separate facts. The app
+  does not post the events receipt while notifications are disabled for it or the
+  event's channel is blocked, so such events stay unreceived on the server, which
+  reports their count and age, and they display once unblocked. Events behind a
+  blocked card still display. A backlog of a full page (100 events) is no longer
+  held, so a long-blocked channel cannot delay later reminders and alarms; its
+  events are then receipted without a card.
+
+## FCM errors
+
+Sending failures are reduced to a fixed code and recorded per phone in
+`native_push_health`, with the last success time. Response bodies are never kept or
+logged, because they can echo registration tokens. `UNREGISTERED` deletes the dead
+token row; the phone's next token refresh or re-pairing registers it again, and until
+then it only gets events on app open and its periodic sync. Other FCM codes
+(`INVALID_ARGUMENT`, `SENDER_ID_MISMATCH`, `PERMISSION_DENIED`, `QUOTA_EXCEEDED`,
+`UNAVAILABLE`, ...) keep the registration and the bounded retry. Google token-endpoint
+failures carry an `OAUTH_` prefix (`OAUTH_INVALID_GRANT`, `OAUTH_UNREACHABLE`,
+`OAUTH_CREDENTIAL`), which separates a bad service account or clock from an FCM
+rejection.
+
+## Owner status
+
+`GET /relay/v1/notifications/status` with the submit bearer token, the same
+credential as the calendar-reminder status, so it works while Home Assistant is
+down. It returns the effective mode, whether FCM credentials are configured, the
+non-revoked paired phones (opaque ID, created and last-seen times, whether a push
+token is registered and since when, last accepted hint, last receipt, count and
+age of unreceived unexpired events, last FCM error code and time), and the same
+totals across phones. It contains no task text, names or tokens.
+
+A hint accepted by FCM with no receipt means the phone has not fetched the event.
+Opening the app fetches and receipts too, so test push delivery with the app closed.
+The last error code is cleared when a later hint is accepted.
+
 ## Deployment configuration
 
-Keep Firebase service-account JSON in the server's protected secret store, outside
-the checkout. Configure the relay's private notifications file with:
+Keep the Firebase service-account JSON outside the checkout and OneDrive. The stock
+relay container sees only its `/data` volume and the three service tokens, so
+place the file in the relay data directory on the server (for example
+`/opt/personal-assistant/data/relay/firebase-service-account.json`, owner
+`10001:10001`, mode `0600`) and reference it as `/data/firebase-service-account.json`.
+It must belong to the Firebase project that the installed Companion build was
+configured with, and the FCM HTTP v1 API must be enabled for it.
 
 ```json
 {
   "enabled": true,
-  "provider": "companion",
-  "public_url": "https://assistant.example.com",
+  "delivery_mode": "dual",
+  "ha_url": "http://homeassistant:8123",
+  "auth_file": "/data/ha-notifications-auth.json",
+  "mobile_service": "mobile_app_YOUR_DEVICE",
+  "public_url": "https://YOUR_ASSISTANT_HOST",
   "visibility": "private",
   "companion_push": {
-    "project_id": "your-firebase-project",
-    "service_account_file": "/protected/firebase-service-account.json"
+    "project_id": "YOUR_FIREBASE_PROJECT_ID",
+    "service_account_file": "/data/firebase-service-account.json"
   }
 }
 ```
 
-Android builds receive the Firebase project/app metadata as build configuration
-and include the Firebase Messaging runtime. This public SDK metadata is distinct
-from the private service account, pairing credential and voice API key. No secret,
-device token, personal hostname or identity belongs in public source. A clone can
-deploy its own server and Firebase project.
+Keep the Home Assistant keys in `native` mode too: they are ignored there and make
+rollback a one-line edit. Android builds receive the Firebase project/app metadata
+as build configuration and include the Firebase Messaging runtime. This public SDK
+metadata is distinct from the private service account, pairing credential and voice
+API key. No secret, device token, personal hostname or identity belongs in public
+source. A clone can deploy its own server and Firebase project.
+
+### Preflight
+
+`python -m personal_assistant.relay.preflight` runs in the relay image against the
+real `/data/notifications.json`. `scripts/deploy_server.sh` runs it with
+`docker compose run --rm --no-deps` after building the image and before `up -d`, so
+a bad file fails the deploy while the running relay stays up instead of crash-looping
+tasks, groceries and voice. It checks the mode and its requirements, the Home
+Assistant keys and public URL, loads the service account, performs the OAuth token
+exchange and sends an FCM `validate_only` dry run to a topic. Nothing is delivered
+and no secret is printed. Credential, project and permission rejections fail. Google
+being unreachable, unavailable or rate limiting the token exchange, and any other
+dry-run outcome, only warn, so a Firebase-side change or outage cannot block a
+deploy. A config-only edit is not covered by the
+deploy script, so run the same command by hand before restarting:
+
+```sh
+cd infra/server
+docker compose --env-file /opt/personal-assistant/.env --profile voice run --rm --no-deps -T relay python -m personal_assistant.relay.preflight
+```
+
+## Cutover from Home Assistant
+
+1. Deploy the build that contains delivery modes with `scripts/deploy_server.sh`.
+   The default mode is unchanged. Prefer a moment with no queued or running task:
+   cards that Home Assistant posted before the deploy are not tracked.
+2. Stage the service account and add `companion_push` (mode still `homeassistant`).
+   Run the preflight, then `docker compose --env-file /opt/personal-assistant/.env
+   --profile voice restart relay`. `up -d` does not recreate the container for a
+   config-only change, and the file is only read at startup.
+3. Install or open a Companion build newer than 0.7.1 (one that includes the receipt
+   guard) once, with notifications allowed.
+   Check the owner status: `fcm_configured` is true and the phone is `registered`.
+   Revoke stale or emulator phones (`scripts/phone_actions.py phones`, then
+   `POST /groceries/v1/mobile/phones/PHONE_ID/revoke`); they would otherwise receive
+   events and count as unreceived.
+4. Set `delivery_mode` to `dual` and restart the relay. Use real tasks, a real
+   calendar reminder (no sample appointments in the live store), Snooze, Reply, an
+   alarm and a release hint. Check in Android settings that notifications are on and
+   the Task updates, Calendar reminders and Phone actions channels are not blocked.
+   The Android receipt guard has no automated test, so block the Task updates channel
+   once: a task update must show as unreceived in the status and no card must appear,
+   and after unblocking the channel the card must appear on the next sync.
+5. Handset idle test: lock the screen, leave the phone idle for 30 minutes or more
+   without opening the app, then run a task. The card must appear and the status
+   must show a receipt shortly after the accepted hint, with `unreceived` back at 0.
+   Repeat for a reminder. Unreceived events or an FCM error code mean it is not
+   ready.
+6. Set `delivery_mode` to `native` and restart. Keep the laptop worker's
+   `notifications_enabled` false (and `mobile_notify_service` unset) in its config,
+   or it posts duplicate Home Assistant notifications. Dismiss any Home Assistant
+   cards left over from dual mode.
+
+Rollback: set `delivery_mode` back to `dual` or `homeassistant` (or remove it and the
+legacy `provider`) and run the `restart relay` command above. Journal rows stay unused
+and tasks active at the flip are re-sent once by the new mode. Reverting the image
+is also safe: the new health data lives in a new table, and no existing table was
+altered.
 
 Verify the provider using an isolated paired test device before changing the
 notification provider. Verify the actual handset receives and opens native task

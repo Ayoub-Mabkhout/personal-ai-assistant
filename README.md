@@ -89,7 +89,11 @@ and runtime evidence in the ignored private workspace.
       provider acceptance and phone receipt are separate records.
 - [x] Firebase client/server provisioning and real background FCM delivery with
       authenticated receipts and native Details opening verified on an emulator.
+- [x] Delivery modes for the Home Assistant to native handover (`homeassistant`,
+      `dual`, `native`), FCM error health, owner notification status and a deploy
+      preflight; see [native delivery](docs/native-companion.md#delivery-modes).
 - [ ] Verify native notification display and Reply end to end on the handset.
+- [ ] Complete the production cutover: validate `dual` on the handset, then `native`.
 - [ ] Task cancellation/retry and attachment access from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
 - [ ] Finish attachment backfill and establish complete historical coverage.
