@@ -1,14 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.personalassistant.companion" android:versionCode="13" android:versionName="0.8.4">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.personalassistant.companion" android:versionCode="15" android:versionName="0.8.6">
 <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>
 <uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/><uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-<uses-permission android:name="android.permission.RECORD_AUDIO"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/><uses-permission android:name="android.permission.WAKE_LOCK"/>
+<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+<uses-permission android:name="android.permission.TURN_SCREEN_ON"/>
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/><uses-permission android:name="android.permission.RECORD_AUDIO"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/><uses-permission android:name="android.permission.WAKE_LOCK"/>
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 <uses-permission android:name="android.permission.VIBRATE"/>
 <uses-permission android:name="com.termux.permission.RUN_COMMAND"/>
 <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE"/>
-<queries><package android:name="com.termux"/><intent><action android:name="android.intent.action.SET_ALARM"/></intent></queries>
+<queries><package android:name="com.termux"/><intent><action android:name="android.intent.action.SET_ALARM"/></intent><intent><action android:name="android.intent.action.SET_TIMER"/></intent></queries>
 <application android:label="Assistant Companion" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@style/AssistantTheme" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
+<activity android:name=".TimerActivity" android:exported="false" android:excludeFromRecents="true"/>
+<receiver android:name=".TimerReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/><action android:name="android.intent.action.MY_PACKAGE_REPLACED"/><action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"/></intent-filter></receiver>
 <activity android:name=".VoiceEntryActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" android:showWhenLocked="true" android:turnScreenOn="true"/>
 <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter><intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="personalassistant" android:host="sync"/></intent-filter><intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="text/plain"/></intent-filter></activity>
 <receiver android:name=".ShoppingWidget" android:label="Shopping list" android:description="@string/widget_description" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/shopping_widget"/></receiver>
@@ -19,7 +23,6 @@
 <receiver android:name=".TermuxResultReceiver" android:exported="false"/>
 <service android:name=".TermuxSyncJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
 <provider android:name=".UpdateProvider" android:authorities="com.personalassistant.companion.updates" android:exported="false" android:grantUriPermissions="true"/>
-<receiver android:name=".UpdateReceiver" android:exported="true"><intent-filter><action android:name="com.personalassistant.companion.RELEASE_PUBLISHED"/></intent-filter></receiver>
 <service android:name=".VoiceService" android:foregroundServiceType="microphone" android:exported="false"/>
 <service android:name=".MicrophoneTile" android:label="Assistant microphone" android:icon="@drawable/ic_tile_mic" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true"><intent-filter><action android:name="android.service.quicksettings.action.QS_TILE"/></intent-filter></service>
 <service android:name=".VoiceRetryJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>

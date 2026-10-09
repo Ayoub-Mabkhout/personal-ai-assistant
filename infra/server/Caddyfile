@@ -22,6 +22,6 @@
 		reverse_proxy relay:8765
 	}
 	handle {
-		reverse_proxy homeassistant:8123
+		reverse_proxy relay:8765
 	}
 }

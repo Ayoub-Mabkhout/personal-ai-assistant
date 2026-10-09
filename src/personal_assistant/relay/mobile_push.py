@@ -220,13 +220,13 @@ class CompanionSender:
         tag = data.get('tag', '')
         body = {'title': payload.get('title', 'Assistant'), 'message': payload.get('message', ''),
                 'tag': tag, 'created': self.store.clock(), 'visibility': data.get('visibility', 'private')}
-        if payload.get('message') == 'command_broadcast_intent':
+        if payload.get('type') == 'release':
             body = {'type': 'release', 'tag': 'companion-release',
                     'version_code': data.get('version_code'), 'sha256': data.get('sha256')}
         elif tag.startswith('assistant-calendar-'):
             body['type'] = 'reminder'
             body['reminder_id'] = tag.removeprefix('assistant-calendar-')
-        elif tag.startswith('assistant-alarm-') or payload.get('message') == 'command_activity':
+        elif tag.startswith('assistant-alarm-'):
             body['type'] = 'alarm'
             body['action_id'] = data.get('action_id', tag.removeprefix('assistant-alarm-'))
             if not tag:

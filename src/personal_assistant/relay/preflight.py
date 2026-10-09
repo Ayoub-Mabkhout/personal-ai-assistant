@@ -10,7 +10,7 @@ import sys
 
 # Rejections that mean the credential, project or permission is wrong, as opposed to a transient or unexpected reply.
 BLOCKING = {'UNAUTHENTICATED', 'PERMISSION_DENIED', 'NOT_FOUND', 'THIRD_PARTY_AUTH_ERROR'}
-# Token-endpoint failures that say nothing about the service account; FCM is unused in homeassistant mode, so a Google outage must not stop a deploy.
+# Transient token-endpoint failures do not invalidate the configured service account.
 TRANSIENT = {'OAUTH_UNREACHABLE', 'OAUTH_UNAVAILABLE', 'OAUTH_QUOTA_EXCEEDED'}
 
 

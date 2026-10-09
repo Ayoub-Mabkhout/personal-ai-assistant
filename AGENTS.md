@@ -21,7 +21,7 @@ before answering agenda questions. Do not substitute a Google/Microsoft calendar
 as its primary store. Keep runtime entries under ignored `state/`; never insert
 sample/test appointments in the live store. Consult private continuity for actual
 phone connection and delivery status. A clone does not inherit an owner's configuration. Native Companion
-is the selected phone interface; Home Assistant integrations support legacy migration.
+is the selected phone interface; the former Home Assistant integrations are retired.
 Preserve known working wake detection and buffering. Verify calendar reminder
 projection and handset delivery separately; record evidence in private continuity.
 

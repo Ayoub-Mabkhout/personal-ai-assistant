@@ -14,12 +14,12 @@ def check(url):
     base = url.rstrip('/')
     with urlopen(base + '/', timeout=20) as response:
         frontend = response.read(1000000).decode('utf-8')
-        if response.status != 200 or 'Home Assistant' not in frontend:
-            raise ValueError('Home Assistant frontend did not respond successfully.')
+        if response.status != 200 or 'Shopping' not in frontend and 'shopping' not in frontend:
+            raise ValueError('Assistant frontend did not respond successfully.')
     with urlopen(base + '/relay/healthz', timeout=20) as response:
         if response.status != 200 or json.load(response).get('ok') is not True:
             raise ValueError('Relay health check failed.')
-    return {'https': True, 'home_assistant_frontend': True, 'relay': True,
+    return {'https': True, 'assistant_frontend': True, 'relay': True,
             'phone_url': base, 'voice_and_login_tested': False}
 
 

@@ -23,7 +23,7 @@ class HistoryParity(unittest.TestCase):
             if index == 1:
                 now[0] += 1
         app = FastAPI()
-        app.include_router(task_router(self.queues, 'https://ha.example.com', root, user_verifier=self.verify))
+        app.include_router(task_router(self.queues, root, user_verifier=self.verify))
         self.client = TestClient(app)
         self.headers = {'Authorization': 'Bearer valid'}
         self.addCleanup(self.directory.cleanup)

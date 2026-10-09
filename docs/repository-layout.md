@@ -8,8 +8,7 @@ scanner. Separate private originals, credential references, and machine state.
 src/personal_assistant/       Calendar, relay, worker, mail, lab and dashboard
 apps/android/                Native phone companion
 apps/dashboard/              Generic HTML; private facts loaded at runtime
-integrations/home_assistant/ Voice/relay configuration
-infra/server/                Deployed Home Assistant, relay, HTTPS and speech stack
+infra/server/                Relay and HTTPS deployment
 skills/                      Portable agent skills, one folder per capability
 scripts/                     Executable maintenance and common routines
 config/                      Public templates and layout
@@ -35,7 +34,7 @@ state/                       Entire runtime tree ignored
   connectors/ cache/         Sync cursors and rebuildable intermediates
 ```
 
-The native Android companion and relay/HA/HTTPS/voice deployment files are
+The native Android companion and relay/HTTPS/voice deployment files are
 implemented; handset verification and wake-model quality remain separate checks.
 See docs/server-deployment.md for validation and host setup.
 Worker, mail connectors, lab and dashboard modules are implemented. Service data,

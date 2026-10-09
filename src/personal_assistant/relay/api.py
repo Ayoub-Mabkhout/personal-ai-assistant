@@ -1,4 +1,4 @@
-"""Relay API. Service credentials are distinct from Home Assistant user login."""
+"""Relay API. Service credentials and standalone owner sessions."""
 
 import os
 import json
@@ -87,14 +87,18 @@ class Result(BaseModel):
     result: dict
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
     agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications),
                         **({'clock':clock} if clock else {}))
-    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None
+    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
     if groceries:
+        if groceries.get('retailer_check', {}).get('enabled'):
+            from personal_assistant.groceries.store import Groceries
+            from personal_assistant.groceries.rewe import RetailerCheck
+            retailer_check=RetailerCheck(Groceries(groceries['path']), groceries['retailer_check'])
         from personal_assistant.groceries.mobile import Devices
         from .mobile_push import MobileEventStore,MobilePushPump
         mobile_events=MobileEventStore(Devices(Path(groceries['path']).with_name('phones.sqlite3'),**({'clock':clock} if clock else {})))
@@ -114,21 +118,31 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         if reminder_pump: reminder_pump.start()
         if release_pump: release_pump.start()
         if native_pump: native_pump.start()
+        if retailer_check: retailer_check.start()
         try: yield
         finally:
             if pump: pump.close()
             if reminder_pump: reminder_pump.close()
             if release_pump: release_pump.close()
             if native_pump: native_pump.close()
+            if retailer_check: retailer_check.close()
     app = FastAPI(title='Personal assistant relay', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
     app.state.notification_pump=pump
     app.state.reminder_pump=reminder_pump
     app.state.native_push_pump=native_pump
     app.state.mobile_events=mobile_events
     app.add_middleware(BodyLimit)
+    from .owner_auth import OwnerAuth
+    owner_auth=OwnerAuth(Path(path).with_name('owner-sessions.sqlite3'),owner_credentials_file or Path(path).with_name('owner-login.json'),submit_token)
+    app.state.owner_auth=owner_auth
+    app.include_router(owner_auth.router())
+    from fastapi.responses import RedirectResponse
+    @app.get('/')
+    def landing(): return RedirectResponse('/groceries/')
     if groceries:
         from personal_assistant.groceries.api import router
-        groceries_api=router(**groceries,phone_sender=sender, mobile_settings_file=mobile_settings_file)
+        groceries_api=router(**groceries,owner_auth=owner_auth,phone_sender=sender, mobile_settings_file=mobile_settings_file,shopping_config=voice)
+        app.state.shopping_ai=groceries_api.shopping_ai
         app.include_router(groceries_api)
         release_pump=groceries_api.release_pump
         app.state.release_pump=release_pump
@@ -140,12 +154,12 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             from .voice import VoiceService,voice_router
             from personal_assistant.groceries.store import Groceries
             voice_service=VoiceService(Path(path).with_name('voice.sqlite3'),groceries_api.devices,
-                Groceries(groceries['path']),agent_queue,queue,config=voice)
+                Groceries(groceries['path']),agent_queue,queue,config=voice,shopping=groceries_api.shopping_ai)
             app.state.voice=voice_service
             app.include_router(voice_router(voice_service))
         from .tasks import task_router
-        app.include_router(task_router({'command':queue,'agent':agent_queue},groceries['ha_url'],
-            Path(groceries['assets']).parent/'tasks',task_links=task_links,
+        app.include_router(task_router({'command':queue,'agent':agent_queue},
+            Path(groceries['assets']).parent/'tasks',task_links=task_links,owner_auth=owner_auth,
             mobile_settings_file=mobile_settings_file or Path(groceries['path']).with_name('companion-preferences.json')))
         from .mobile_tasks import mobile_task_router
         from .mobile_push import mobile_push_router
@@ -293,9 +307,9 @@ def from_environment():
         grocery_config = {
             'path': os.environ.get('ASSISTANT_GROCERIES_DB', '/data/groceries.sqlite3'),
             'internal_token': credential('ASSISTANT_GROCERIES_TOKEN_FILE'),
-            'ha_url': 'http://homeassistant:8123',
             'assets': '/app/apps/groceries',
             'store_info': json.loads(Path('/data/grocery-store.json').read_text()) if Path('/data/grocery-store.json').is_file() else {},
+            'retailer_check': json.loads(Path('/data/rewe-check.json').read_text()) if Path('/data/rewe-check.json').is_file() else {},
         }
     notification_path=Path(os.environ.get('ASSISTANT_NOTIFICATIONS_CONFIG','/data/notifications.json'))
     notifications=json.loads(notification_path.read_text()) if notification_path.is_file() else None
@@ -310,4 +324,5 @@ def from_environment():
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
-                      mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'))
+                      mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
+                      owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'))

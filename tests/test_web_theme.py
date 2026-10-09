@@ -103,7 +103,7 @@ class TaskWebPreferenceTests(unittest.TestCase):
             links=TaskLinks(b'x'*32)
             def authorize(token):
                 if token!='synthetic-owner': raise OSError('Rejected')
-            app=FastAPI();app.include_router(task_router({'agent':queue,'command':queue},'https://example.com',ROOT/'apps/tasks',
+            app=FastAPI();app.include_router(task_router({'agent':queue,'command':queue},ROOT/'apps/tasks',
                 user_verifier=authorize,task_links=links,mobile_settings_file=settings))
             with TestClient(app) as client:
                 endpoint='/tasks/v1/preferences'

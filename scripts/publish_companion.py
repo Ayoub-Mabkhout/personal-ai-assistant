@@ -11,7 +11,7 @@ import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
-from personal_assistant.worker.notifications import HomeAssistantNotifier
+from personal_assistant.relay.client import OwnerClient
 
 
 def publish(apk,host,key,known_hosts,config):
@@ -51,7 +51,7 @@ if old.exists():
     finally:
         remote('rm -f -- '+shlex.quote(stage+'.apk')+' '+shlex.quote(stage+'.json'))
     settings=json.loads(Path(config).read_text(encoding='utf-8-sig'))
-    receipt=HomeAssistantNotifier(settings).call('/groceries/v1/mobile/release/published',
+    receipt=OwnerClient(settings).call('/groceries/v1/mobile/release/published',
         {'version_code':release['version_code'],'sha256':release['sha256']})
     return {'version_name':release['version_name'],'size':len(payload),'publication':receipt}
 

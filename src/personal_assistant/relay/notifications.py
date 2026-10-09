@@ -1,4 +1,4 @@
-"""Cloud-owned durable task notifications. HA acceptance is not handset receipt."""
+"""Cloud-owned durable task notifications. Provider acceptance is not handset receipt."""
 import hashlib
 import json
 import logging
@@ -12,7 +12,7 @@ import urllib.request
 
 
 ACTIVE={'queued','running'}
-# Home Assistant tints the card and swaps its status-bar icon; the native Companion ignores these keys.
+# Shared notification presentation metadata.
 COLOR='#7B58E8'
 ICONS={'queued':'mdi:clock-outline','running':'mdi:progress-clock','completed':'mdi:check-circle-outline',
     'failed':'mdi:alert-circle-outline','needs_input':'mdi:message-question-outline','cancelled':'mdi:cancel','expired':'mdi:clock-alert-outline'}
@@ -44,35 +44,6 @@ def notification(kind,job,connection,public_url,visibility='private',task_links=
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs): return None
-
-
-class HomeAssistantPush:
-    def __init__(self,config):
-        self.base=config['ha_url'].rstrip('/');parsed=urllib.parse.urlsplit(self.base)
-        if (parsed.scheme!='https' and self.base!='http://homeassistant:8123') or parsed.username or parsed.password or parsed.path:
-            raise ValueError('Invalid Home Assistant origin.')
-        self.service=config['mobile_service']
-        if not re.fullmatch(r'mobile_app_[a-z0-9_]+',self.service): raise ValueError('Select one Companion notification service.')
-        self.auth_file=Path(config['auth_file']);self.token=None;self.expires=0
-        self.opener=urllib.request.build_opener(NoRedirect)
-
-    def call(self,path,payload,authenticated=True):
-        if authenticated and time.monotonic()>=self.expires:
-            auth=json.loads(self.auth_file.read_text(encoding='utf-8-sig'))
-            fresh=self.call('/auth/token',{'grant_type':'refresh_token','refresh_token':auth['refresh_token'],'client_id':auth['client_id']},False)
-            self.token=fresh['access_token'];self.expires=time.monotonic()+fresh['expires_in']-60
-        body=json.dumps(payload).encode() if authenticated else urllib.parse.urlencode(payload).encode()
-        headers={'Content-Type':'application/json' if authenticated else 'application/x-www-form-urlencoded'}
-        if authenticated: headers['Authorization']='Bearer '+self.token
-        try:
-            with self.opener.open(urllib.request.Request(self.base+path,data=body,headers=headers),timeout=10) as response:
-                return json.load(response)
-        except urllib.error.HTTPError as error:
-            if error.code==401: self.expires=0
-            raise
-
-    def __call__(self,payload):
-        self.call('/api/services/notify/'+self.service,payload)
 
 
 class NotificationPump:

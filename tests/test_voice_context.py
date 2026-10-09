@@ -50,7 +50,7 @@ class ContextTests(unittest.TestCase):
     def test_failed_paid_attempts_have_distinct_budget_reservations(self):
         key=Path(self.tmp.name)/'dummy-key';key.write_text('not-an-api-key')
         transcriber=Transcriber({'key_file':str(key)},self.service.ledger)
-        with patch('urllib.request.urlopen',side_effect=OSError('isolated failure')),patch.object(transcriber,'local',side_effect=OSError('local unavailable')):
+        with patch('urllib.request.urlopen',side_effect=OSError('isolated failure')):
             for _ in range(2):
                 with self.assertRaises(OSError):transcriber(self.audio,.25,'same-command')
         with self.service.ledger.db() as db:

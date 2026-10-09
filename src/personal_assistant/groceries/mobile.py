@@ -170,11 +170,8 @@ def mobile_router(store,owner_auth,grocery_store,change,sender=None,apk=None):
         action,created=store.enqueue(body.id,body.phone,{'type':'alarm','hour':body.hour,'minute':body.minute,'label':body.label})
         accepted=False
         if sender and action['state']=='queued':
-            if body.launch:
-                payload={'message':'command_activity','data':{'phone_id':body.phone,'action_id':body.id,'intent_action':'android.intent.action.VIEW','intent_uri':'personalassistant://sync','intent_package_name':'com.personalassistant.companion','ttl':600,'priority':'high'}}
-            else:
-                payload={'title':'Phone alarm request','message':f'{body.hour:02}:{body.minute:02} · {body.label}',
-                    'data':{'phone_id':body.phone,'action_id':body.id,'tag':'assistant-alarm-'+body.id,'clickAction':'deep-link://personalassistant://sync','ttl':600,'color':'#7B58E8','notification_icon':'mdi:alarm','priority':'high','actions':[{'action':'URI','title':'Set alarm','uri':'deep-link://personalassistant://sync'}]}}
+            payload={'title':'Phone alarm request','message':f'{body.hour:02}:{body.minute:02} · {body.label}',
+                'data':{'phone_id':body.phone,'action_id':body.id,'tag':'assistant-alarm-'+body.id,'ttl':600,'priority':'high'}}
             try:sender(payload);accepted=True
             except OSError:pass
         return {'id':body.id,'created':created,'state':action['state'],'push_api_accepted':accepted,'clock_registration_verified':False}

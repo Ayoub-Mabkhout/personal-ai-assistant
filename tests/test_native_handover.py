@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from personal_assistant.groceries.mobile import Devices
 from personal_assistant.relay.api import create_app
-from personal_assistant.relay.delivery import DualSender, resolve_mode
+from personal_assistant.relay.delivery import resolve_mode
 from personal_assistant.relay.mobile_push import CompanionSender, FcmError, FcmPush, MobileEventStore, MobilePushPump, fcm_code
 from personal_assistant.relay.notifications import NotificationPump, notification
 from personal_assistant.relay.preflight import check, main as preflight
@@ -51,13 +51,11 @@ class Fixture(unittest.TestCase):
         return self.now[0]
 
     def config(self, **values):
-        return {'enabled': True, 'public_url': 'https://assistant.example.test', 'ha_url': 'http://homeassistant:8123',
-                'auth_file': '/protected/ha-auth.json', 'mobile_service': 'mobile_app_test_phone',
-                'sender': self.legacy.append, 'native_provider': lambda row: self.hints.append(row['id']), **values}
+        return {'enabled': True, 'public_url': 'https://assistant.example.test', 'native_provider': lambda row: self.hints.append(row['id']), **values}
 
     def app(self, notifications, groceries=True):
         extra = {'groceries': {'path': self.root/'groceries.sqlite3', 'internal_token': 'g' * 40,
-                               'ha_url': 'http://homeassistant:8123', 'assets': self.root}} if groceries else {}
+                               'assets': self.root}} if groceries else {}
         return create_app(self.root/'queue.sqlite3', OWNER, 'w' * 40, clock=self.clock, notifications=notifications, **extra)
 
     def phone(self, app, token=TOKEN):
@@ -84,142 +82,8 @@ class Fixture(unittest.TestCase):
         return FcmPush({'service_account_file': str(account)}, requester=requester, signer=signer, clock=self.clock)
 
 
-class DeliveryModeTests(Fixture):
-    def status(self, app):
-        return TestClient(app).get('/v1/notifications/status', headers={'Authorization': 'Bearer ' + OWNER}).json()
-
-    def test_default_mode_is_home_assistant_and_never_journals(self):
-        app = self.app(self.config())
-        phone = self.phone(app)
-        client = TestClient(app)
-        self.submit(client)
-        app.state.notification_pump.tick()
-        self.assertEqual(len(self.legacy), 1)
-        self.assertEqual(self.events(app, phone), [])
-        self.assertEqual(self.status(app)['mode'], 'homeassistant')
-
-    def test_legacy_provider_maps_to_native_and_logs_the_effective_mode(self):
-        with self.assertLogs(level='WARNING') as logs:
-            app = self.app(self.config(provider='companion'))
-        self.assertIn('native (from legacy provider setting)', logs.output[0])
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        app.state.notification_pump.tick()
-        self.assertEqual(self.legacy, [])
-        self.assertEqual(self.events(app, phone)[0]['payload']['type'], 'task')
-        self.assertEqual(self.status(app)['mode'], 'native')
-
-    def test_delivery_mode_wins_over_the_legacy_provider_and_dual_sends_both(self):
-        self.assertEqual(self.status(self.app(self.config(provider='companion', delivery_mode='homeassistant')))['mode'], 'homeassistant')
-        app = self.app(self.config(delivery_mode='dual'))
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        app.state.notification_pump.tick()
-        self.assertEqual(len(self.legacy), 1)
-        self.assertEqual(len(self.events(app, phone)), 1)
-        self.assertTrue(self.status(app)['fcm_configured'])
-
-    def test_unknown_mode_and_missing_native_requirements_fail_startup_clearly(self):
-        with self.assertRaisesRegex(ValueError, 'delivery_mode must be one of'):
-            self.app(self.config(delivery_mode='Native'))
-        for mode in ('dual', 'native'):
-            with self.assertRaisesRegex(ValueError, 'require Companion pairing'):
-                self.app(self.config(delivery_mode=mode), groceries=False)
-            with self.assertRaisesRegex(ValueError, 'require companion_push credentials'):
-                self.app({**self.config(delivery_mode=mode), 'native_provider': None})
-        with self.assertRaisesRegex(ValueError, 'require companion_push credentials'):
-            self.app({**self.config(provider='companion'), 'native_provider': None})
-
-    def test_home_assistant_mode_and_unknown_legacy_provider_stay_lenient(self):
-        status = self.status(self.app({**self.config(), 'native_provider': None}, groceries=False))
-        self.assertEqual((status['mode'], status['fcm_configured']), ('homeassistant', False))
-        self.assertEqual(resolve_mode({'provider': 'Companion'}), 'homeassistant')
-        self.assertEqual(resolve_mode({}), 'homeassistant')
-
-    def test_native_mode_starts_without_home_assistant_settings(self):
-        config = self.config(delivery_mode='native')
-        for key in ('sender', 'ha_url', 'auth_file', 'mobile_service'):
-            del config[key]
-        app = self.app(config)
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        app.state.notification_pump.tick()
-        self.assertEqual(len(self.events(app, phone)), 1)
-
-    def test_age_cap_applies_only_in_native_mode(self):
-        for mode, cap in (('homeassistant', None), ('dual', None), ('native', 3600)):
-            self.assertEqual(self.app(self.config(delivery_mode=mode)).state.notification_pump.max_age, cap, mode)
-
-    def test_credentials_are_loaded_from_companion_push_for_native_modes(self):
-        missing = {**self.config(delivery_mode='native'), 'native_provider': None,
-                   'companion_push': {'project_id': 'demo-project', 'service_account_file': str(self.root/'absent.json')}}
-        with self.assertRaises(FileNotFoundError):
-            self.app(missing)
-
-    def test_status_requires_the_submit_bearer_and_no_home_assistant(self):
-        client = TestClient(self.app(self.config(delivery_mode='native')))
-        self.assertEqual(client.get('/v1/notifications/status').status_code, 401)
-        self.assertEqual(client.get('/v1/notifications/status', headers={'Authorization': 'Bearer ' + 'w' * 40}).status_code, 401)
-        self.assertEqual(client.get('/v1/notifications/status', headers={'Authorization': 'Bearer ' + OWNER}).status_code, 200)
-        self.assertEqual(self.status(self.app(None))['mode'], 'disabled')
 
 
-class DualSenderTests(Fixture):
-    def test_native_is_journaled_before_home_assistant(self):
-        order = []
-        DualSender(lambda payload: order.append('native'), lambda payload: order.append('legacy'))({})
-        self.assertEqual(order, ['native', 'legacy'])
-
-    def test_home_assistant_failure_propagates_and_retries_do_not_duplicate_the_journal(self):
-        app = self.app(self.config(delivery_mode='dual'))
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        fail = [True]
-        def flaky(payload):
-            if fail[0]:
-                raise OSError('Offline')
-            self.legacy.append(payload)
-        app.state.notification_pump.sender.legacy = flaky
-        app.state.notification_pump.tick()
-        self.assertEqual(Queue(self.root/'agent-queue.sqlite3', clock=self.clock).notification_rows()[0]['attempts'], 1)
-        fail[0] = False
-        self.now[0] += 6
-        app.state.notification_pump.tick()
-        self.assertEqual(len(self.legacy), 1)
-        self.assertEqual(len(self.events(app, phone)), 1)
-
-    def test_native_failure_never_blocks_home_assistant_and_logs_only_the_class(self):
-        def broken(payload):
-            raise OSError('registration-token-leak')
-        sent = []
-        with self.assertLogs(level='WARNING') as logs:
-            DualSender(broken, sent.append)({'title': 'x'})
-        self.assertEqual(sent, [{'title': 'x'}])
-        self.assertIn('OSError', logs.output[0])
-        self.assertNotIn('leak', logs.output[0])
-
-    def test_dual_has_its_own_namespace_and_a_later_flip_to_native_adds_no_history(self):
-        app = self.app(self.config(delivery_mode='dual'))
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        pump = app.state.notification_pump
-        pump.tick()
-        self.assertNotIn(pump.sender.fingerprint_namespace, ('', CompanionSender(None).fingerprint_namespace))
-        native = NotificationPump(pump.queues, CompanionSender(app.state.mobile_events), 'https://assistant.example.test')
-        native.tick()
-        self.assertEqual(len(self.events(app, phone)), 1)
-        self.assertEqual(len(self.legacy), 1)
-
-    def test_entering_dual_sends_the_queued_task_once_more_so_the_journal_catches_up(self):
-        app = self.app(self.config())
-        phone = self.phone(app)
-        self.submit(TestClient(app))
-        app.state.notification_pump.tick()
-        self.assertEqual((len(self.legacy), len(self.events(app, phone))), (1, 0))
-        app = self.app(self.config(delivery_mode='dual'))
-        for _ in range(2):
-            app.state.notification_pump.tick()
-        self.assertEqual((len(self.legacy), len(self.events(app, phone))), (2, 1))
 
 
 class ModeWiringTests(Fixture):
@@ -252,9 +116,6 @@ class ModeWiringTests(Fixture):
         app.state.release_pump.tick()
         return sorted(event['payload']['type'] for event in self.events(app, phone))
 
-    def test_dual_mode_delivers_reminders_alarms_and_release_hints_through_both_channels(self):
-        self.assertEqual(self.deliver_everything('dual'), ['alarm', 'release', 'reminder'])
-        self.assertEqual(len(self.legacy), 3)
 
     def test_native_mode_delivers_reminders_alarms_and_release_hints_only_natively(self):
         self.assertEqual(self.deliver_everything('native'), ['alarm', 'release', 'reminder'])
@@ -272,7 +133,7 @@ class NativeBacklogTests(Fixture):
         sender = CompanionSender(self.store())
         for payload in ({'title': 'Calendar reminder', 'message': 'x', 'data': {'tag': 'assistant-calendar-abc'}},
                         {'title': 'Phone alarm request', 'message': 'x', 'data': {'tag': 'assistant-alarm-abc', 'phone_id': 'absent'}},
-                        {'message': 'command_broadcast_intent', 'data': {'version_code': 1, 'sha256': '1' * 64}}):
+                        {'type': 'release', 'data': {'version_code': 1, 'sha256': '1' * 64}}):
             with self.assertRaisesRegex(OSError, 'No active paired Companion'):
                 sender(payload)
 
@@ -342,16 +203,6 @@ class NativeBacklogTests(Fixture):
         pump.tick()
         self.assertEqual([event['payload']['active'] for event in store.events(phone['id'])['items']], [True, False])
 
-    def test_without_a_cap_old_final_cards_are_still_delivered(self):
-        queue, devices, store = self.setup_queue()
-        pump = NotificationPump({'agent': queue}, CompanionSender(store), 'https://assistant.example.test')
-        queue.submit({'id': 'task-old-final', 'command': 'Old', 'timezone': 'UTC'})
-        queue.cancel('task-old-final')
-        pump.tick()
-        self.now[0] += 7200
-        phone = devices.exchange(devices.pairing()['code'], 'Phone')
-        pump.tick()
-        self.assertEqual(len(store.events(phone['id'])['items']), 1)
 
 
 class JournalTests(Fixture):
@@ -418,29 +269,6 @@ class JournalTests(Fixture):
         store.enqueue(payload)
         self.assertEqual(len(store.events(phone['id'])['items']), 2)
 
-    def test_notify_again_delivers_unchanged_content_once_even_when_retried(self):
-        app = self.app(self.config(delivery_mode='dual'))
-        phone = self.phone(app)
-        client = TestClient(app)
-        self.submit(client)
-        pump = app.state.notification_pump
-        pump.tick()
-        pump.tick()
-        self.assertEqual((len(self.legacy), len(self.events(app, phone))), (1, 1))
-        fail = [True]
-        def flaky(payload):
-            if fail[0]:
-                raise OSError('Offline')
-            self.legacy.append(payload)
-        pump.sender.legacy = flaky
-        self.assertEqual(client.post('/v1/agent/prompts/task-handover-1/notify', headers={'Authorization': 'Bearer ' + OWNER}).status_code, 200)
-        pump.tick()
-        self.assertEqual(len(self.events(app, phone)), 2)
-        fail[0] = False
-        self.now[0] += 6
-        pump.tick()
-        pump.tick()
-        self.assertEqual((len(self.legacy), len(self.events(app, phone))), (2, 2))
 
     def test_notify_again_works_in_native_mode(self):
         app = self.app(self.config(delivery_mode='native'))
@@ -650,7 +478,7 @@ class PushHealthTests(Fixture):
 
 class StatusTests(Fixture):
     def test_status_reports_facts_without_content_tokens_or_names(self):
-        app = self.app(self.config(delivery_mode='dual'))
+        app = self.app(self.config(delivery_mode='native'))
         client = TestClient(app)
         phone = self.phone(app)
         stale = self.phone(app, token=None)
@@ -664,7 +492,7 @@ class StatusTests(Fixture):
         for private in ('Sentinel request text', TOKEN, phone['token'], 'Phone', revoked['id']):
             self.assertNotIn(private, text)
         status = json.loads(text)
-        self.assertEqual((status['mode'], status['fcm_configured'], status['unreceived']), ('dual', True, 2))
+        self.assertEqual((status['mode'], status['fcm_configured'], status['unreceived']), ('native', True, 2))
         self.assertEqual(status['oldest_unreceived_age'], 120)
         self.assertEqual(status['last_accepted'], self.now[0] - 120)
         self.assertIsNone(status['last_receipt'])
@@ -754,7 +582,7 @@ class PreflightTests(Fixture):
         return self.provider(request)
 
     def test_valid_configuration_and_credential_pass(self):
-        ok, lines = self.run_check({**self.config(delivery_mode='dual'), 'native_provider': self.fake()})
+        ok, lines = self.run_check({**self.config(delivery_mode='native'), 'native_provider': self.fake()})
         self.assertTrue(ok, lines)
         self.assertEqual([line[:4] for line in lines], ['ok  '] * 3)
 
@@ -766,18 +594,17 @@ class PreflightTests(Fixture):
         self.assertNotIn('token', bodies[0]['message'])
 
     def test_configuration_errors_fail_with_a_readable_reason(self):
-        for notifications, reason in (({**self.config(delivery_mode='native '), 'native_provider': None}, 'delivery_mode must be one of'),
+        for notifications, reason in (({**self.config(delivery_mode='native '), 'native_provider': None}, 'delivery is retired'),
                                       ({**self.config(delivery_mode='native'), 'native_provider': None}, 'companion_push credentials'),
-                                      ({'enabled': True, 'public_url': 'https://assistant.example.test'}, "missing setting 'ha_url'"),
+                                      ({'enabled': True, 'public_url': 'https://assistant.example.test'}, 'companion_push credentials'),
                                       ({**self.config(), 'public_url': 'http://assistant.example.test'}, 'public HTTPS origin')):
             ok, lines = self.run_check(notifications)
             self.assertFalse(ok)
             self.assertIn(reason, lines[0])
-        ok, lines = self.run_check(self.config(delivery_mode='dual'), paired=False)
+        ok, lines = self.run_check(self.config(delivery_mode='native'), paired=False)
         self.assertIn('require Companion pairing', lines[0])
         ok, lines = self.run_check({'enabled': True, 'public_url': 'https://assistant.example.test', 'companion_push': {
-            'project_id': 'demo-project', 'service_account_file': str(self.root/'absent.json')}, 'sender': print, 'ha_url': 'http://homeassistant:8123',
-            'auth_file': 'x', 'mobile_service': 'mobile_app_test_phone'})
+            'project_id': 'demo-project', 'service_account_file': str(self.root/'absent.json')}})
         self.assertFalse(ok)
         self.assertIn('FileNotFoundError', lines[0])
 
@@ -788,7 +615,7 @@ class PreflightTests(Fixture):
         self.assertEqual(len(lines), 2)
 
     def test_a_google_outage_only_warns_in_every_mode_and_skips_the_dry_run(self):
-        for mode in ('homeassistant', 'dual', 'native'):
+        for mode in ('native',):
             for failure, code in ((urllib.error.URLError('network down'), 'OAUTH_UNREACHABLE'), (http_error(503), 'OAUTH_UNAVAILABLE'),
                                   (http_error(429), 'OAUTH_QUOTA_EXCEEDED')):
                 ok, lines = self.run_check({**self.config(delivery_mode=mode), 'native_provider': self.fake(token=failure)})
@@ -851,9 +678,9 @@ class PreflightTests(Fixture):
         self.assertEqual(preflight(environ, lines.append), 1)
         self.assertIn('require Companion pairing', lines[-1])
         (self.root/'notifications.json').write_text(json.dumps({'enabled': True, 'public_url': 'https://assistant.example.test',
-            'ha_url': 'http://homeassistant:8123', 'auth_file': '/data/ha.json', 'mobile_service': 'mobile_app_test_phone'}))
-        self.assertEqual(preflight(environ, lines.append), 0)
-        self.assertIn('delivery mode homeassistant', lines[-2])
+}))
+        self.assertEqual(preflight(environ, lines.append), 1)
+        self.assertIn('Companion pairing', lines[-1])
 
     def test_deploy_script_runs_the_preflight_before_replacing_the_relay(self):
         script = (Path(__file__).resolve().parents[1]/'scripts/deploy_server.sh').read_text()

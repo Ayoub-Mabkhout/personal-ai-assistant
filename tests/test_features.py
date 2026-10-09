@@ -76,7 +76,7 @@ class RelayFeatureTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.app = create_app(root/'queue.sqlite3', 's'*40, 'w'*40,
             groceries={'path': root/'groceries.sqlite3', 'internal_token': 'g'*40,
-                       'ha_url': 'http://homeassistant:8123', 'assets': root})
+                       'assets': root})
         devices = self.app.state.mobile_events.devices
         self.phone = devices.exchange(devices.pairing()['code'], 'Synthetic phone')
         self.devices = devices

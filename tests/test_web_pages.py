@@ -69,7 +69,7 @@ class WebPageContracts(unittest.TestCase):
         shell = {re.sub(r'\?.*', '', ref).removeprefix('/groceries/') for ref in page('groceries').refs}
         self.assertLessEqual(shell, precache, 'the offline shell would miss a file the page loads')
         with tempfile.TemporaryDirectory() as raw, TestClient(create_app(Path(raw) / 'q.sqlite3', 's' * 48, 'w' * 48, groceries={
-                'path': Path(raw) / 'g.sqlite3', 'internal_token': 'g' * 48, 'ha_url': 'http://unused', 'assets': root,
+                'path': Path(raw) / 'g.sqlite3', 'internal_token': 'g' * 48, 'assets': root,
                 'user_verifier': lambda token: None})) as client:
             for name in sorted(precache | {'sw.js'}):
                 self.assertEqual(client.get('/groceries/' + name).status_code, 200, name)
@@ -80,7 +80,7 @@ class WebPageContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             queue = Queue(Path(raw) / 'agent.sqlite3')
             app = FastAPI()
-            app.include_router(task_router({'agent': queue, 'command': queue}, 'https://ha.example.com', APPS / 'tasks'))
+            app.include_router(task_router({'agent': queue, 'command': queue}, APPS / 'tasks'))
             with TestClient(app) as client:
                 refs = sorted(ref for ref in page('tasks').refs if ref.startswith('/tasks/'))
                 self.assertTrue(refs)
