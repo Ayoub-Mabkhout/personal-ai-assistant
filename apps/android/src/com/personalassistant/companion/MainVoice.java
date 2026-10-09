@@ -53,7 +53,7 @@ final class MainVoice {
         AppUi.Pill tune=ui.chip("Adjust sensitivity","waveform",a::sensitivity);tune.setTag("test_sensitivity");test.addView(tune,MainParts.params(ui,-2,-2,-3,0,0,0));
         LinearLayout.LayoutParams tp=MainParts.params(ui,-1,-2,0,0,0,16);testCard=test;page.addView(test,tp);
 
-        TextView heading=ui.heading("Conversation");page.addView(heading,MainParts.params(ui,-2,-2,4,4,0,10));chat=new ChatTimeline(ui);page.addView(chat.rows);
+        MainParts.conversationLabel(ui,page);chat=new ChatTimeline(ui);page.addView(chat.rows);
     }
 
     /** Whether the latest chat entry is a recent assistant answer; cached until the chat file changes. */

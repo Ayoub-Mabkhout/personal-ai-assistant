@@ -34,16 +34,23 @@ final class TaskViews {
         if(Build.VERSION.SDK_INT<33)Toast.makeText(context,"Copied",Toast.LENGTH_SHORT).show();
     }
 
+    /** Same bubble as the voice chat: right-aligned accent-soft for the user, left-aligned surface with the aurora avatar for the assistant. */
     static LinearLayout bubble(AppUi ui,String text,boolean user,String label,long at,View badge){
         if(text==null||text.isEmpty())return null;
-        LinearLayout item=ui.column();item.setGravity(user?Gravity.END:Gravity.START);LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-1,-2);ip.bottomMargin=ui.dp(14);item.setLayoutParams(ip);
-        LinearLayout box=ui.column();box.setPadding(ui.dp(16),ui.dp(11),ui.dp(16),ui.dp(12));box.setBackground(ui.bubble(user));
-        TextView words=ui.body(text);words.setMaxWidth(Math.min(Math.round(ui.context.getResources().getDisplayMetrics().widthPixels*.84f),ui.dp(520))-ui.dp(32));box.addView(words);
+        LinearLayout item=ui.column();item.setGravity(user?Gravity.END:Gravity.START);
+        LinearLayout box=ui.column();box.setPadding(ui.dp(14),ui.dp(10),ui.dp(14),ui.dp(11));box.setBackground(ui.bubble(user));
+        TextView words=ui.body(text);words.setMaxWidth(Math.min(Math.round(ui.context.getResources().getDisplayMetrics().widthPixels*.84f),ui.dp(520))-ui.dp(28)-(user?0:ui.dp(36)));box.addView(words);
         box.setLongClickable(true);box.setOnLongClickListener(v->{copy(ui.context,text);return true;});
         item.addView(box,new LinearLayout.LayoutParams(-2,-2));
         String stamp=when(at);TextView meta=ui.type(stamp.isEmpty()?label:label+" · "+stamp,12,16,500,0,ui.muted);meta.setPadding(ui.dp(6),0,ui.dp(6),0);LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(-2,-2);mp.topMargin=ui.dp(5);item.addView(meta,mp);
         if(badge!=null){LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);bp.topMargin=ui.dp(6);item.addView(badge,bp);}
-        return item;
+        LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(-1,-2);op.bottomMargin=ui.dp(14);
+        if(user){item.setLayoutParams(op);return item;}
+        LinearLayout outer=ui.row();outer.setGravity(Gravity.START|Gravity.TOP);outer.setLayoutParams(op);
+        ImageView avatar=new ImageView(ui.context);avatar.setImageDrawable(ui.glyph("star",ui.onAccent,14));avatar.setScaleType(ImageView.ScaleType.CENTER);avatar.setBackground(ui.aurora(-1,130,false));avatar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(28),ui.dp(28));ap.topMargin=ui.dp(4);outer.addView(avatar,ap);
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.leftMargin=ui.dp(8);outer.addView(item,cp);
+        return outer;
     }
 
     static View separator(AppUi ui,long at){

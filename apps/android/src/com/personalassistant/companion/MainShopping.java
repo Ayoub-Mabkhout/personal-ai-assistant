@@ -52,6 +52,11 @@ final class MainShopping {
         catch(Exception error){note(error.getMessage(),"warning","alert");}
     }
 
+    void focusAdd(){
+        input.requestFocus();input.setSelection(input.getText().length());
+        android.view.inputmethod.InputMethodManager keyboard=a.getSystemService(android.view.inputmethod.InputMethodManager.class);if(keyboard!=null)keyboard.showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+    }
+
     void note(String message,String tone,String glyph){int[] c=ui.toneColors(tone);status.setTextColor(c[0]);syncGlyph.color(c[0]);syncGlyph.kind(glyph);AppUi.update(status,message);}
 
     private JSONObject find(String id){try{JSONArray items=Cloud.pendingList(a).optJSONArray("items");if(items!=null)for(int i=0;i<items.length();i++)if(items.getJSONObject(i).optString("id").equals(id))return items.getJSONObject(i);}catch(Exception ignored){}return null;}

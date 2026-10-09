@@ -30,7 +30,7 @@ public final class VoiceEntryActivity extends Activity {
         detail=ui.detail("");detail.setGravity(Gravity.CENTER);hero.addView(detail,new LinearLayout.LayoutParams(-1,-2));
         meter=new AppUi.Meter(this,ui);LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(ui.dp(150),ui.dp(25));mp.topMargin=ui.dp(14);mp.bottomMargin=ui.dp(16);hero.addView(meter,mp);
         Button stop=ui.stopButton("Stop microphone",()->{Cloud.prefs(this).edit().putBoolean("wake_enabled",false).putBoolean("voice_listening_test",false).apply();stopService(new Intent(this,VoiceService.class));refresh();});hero.addView(stop,new LinearLayout.LayoutParams(-1,-2));box.addView(hero);ui.space(box,24);
-        ui.label(box,"CONVERSATION");chat=new ChatTimeline(ui);box.addView(chat.rows);
+        MainParts.conversationLabel(ui,box);chat=new ChatTimeline(ui);box.addView(chat.rows);
         box.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));ui.space(box,12);
         box.addView(ui.ghostButton("Close",this::finish),new LinearLayout.LayoutParams(-1,-2));ui.space(box,2);TextView note=ui.detail("Close hides this screen. Stop microphone ends listening.");note.setTextSize(13);note.setGravity(Gravity.CENTER);box.addView(note,new LinearLayout.LayoutParams(-1,-2));
         ScrollView scroll=new ScrollView(this);scroll.setFitsSystemWindows(true);scroll.setFillViewport(true);scroll.setBackground(ui.pageBackground());scroll.addView(box);setContentView(scroll);

@@ -16,19 +16,19 @@ import java.util.*;
 public class MainActivity extends Activity {
     private AppUi ui;private LinearLayout body;
     private final LinearLayout[] pages=new LinearLayout[4];private AppUi.NavBar navBar;private boolean orbLive;
-    private MainVoice voice;private MainShopping shopping;private MainReceipts receipts;private MainSettings settings;private boolean resumed,themePending;
+    private MainVoice voice;private MainShopping shopping;private MainReceipts receipts;private MainSettings settings;private boolean resumed,themePending,addPending;
     private int selected;private boolean registered,refreshQueued,pairBusy,syncBusy,updateBusy;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final Runnable themeCheck=this::checkTheme;
     private final SharedPreferences.OnSharedPreferenceChangeListener prefsListener=(p,key)->{if("voice_level".equals(key)){if(voice!=null){voice.meter.value(AppUi.level(this),AppUi.micActive(this));voice.talk.level(AppUi.level(this),orbLive&&AppUi.micActive(this));}return;}if(!refreshQueued){refreshQueued=true;handler.postDelayed(()->{refreshQueued=false;if(!isDestroyed())show();},80);}};
     private final BroadcastReceiver receiver=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent intent){show();if("com.personalassistant.companion.GROCERY_STATE".equals(intent.getAction()))renderList();}};
-    @Override public void onCreate(Bundle saved){AppUi.theme(this);super.onCreate(saved);ui=new AppUi(this);ui.window();build();if(saved!=null){selected=saved.getInt("tab",0);shopping.input.setText(saved.getString("draft",""));settings.server.setText(saved.getString("server",settings.server.getText().toString()));settings.code.setText(saved.getString("code",""));}select(selected);if(Intent.ACTION_SEND.equals(getIntent().getAction())){select(1);share(getIntent().getStringExtra(Intent.EXTRA_TEXT));}if(paired()){sync();PushRegistration.start(this);TaskSyncJob.schedule(this,true);}checkUpdates(false);openTaskIntent(getIntent());}
+    @Override public void onCreate(Bundle saved){AppUi.theme(this);super.onCreate(saved);ui=new AppUi(this);ui.window();build();if(saved!=null){selected=saved.getInt("tab",0);shopping.input.setText(saved.getString("draft",""));settings.server.setText(saved.getString("server",settings.server.getText().toString()));settings.code.setText(saved.getString("code",""));}select(selected);if(Intent.ACTION_SEND.equals(getIntent().getAction())){select(1);share(getIntent().getStringExtra(Intent.EXTRA_TEXT));}else openShoppingIntent(getIntent());if(paired()){sync();PushRegistration.start(this);TaskSyncJob.schedule(this,true);}checkUpdates(false);openTaskIntent(getIntent());}
     @Override public void onSaveInstanceState(Bundle state){state.putInt("tab",selected);state.putString("draft",shopping.input.getText().toString());state.putString("server",settings.server.getText().toString());state.putString("code",settings.code.getText().toString());super.onSaveInstanceState(state);}
-    @Override public void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(Intent.ACTION_SEND.equals(intent.getAction())){select(1);share(intent.getStringExtra(Intent.EXTRA_TEXT));}else if(!openTaskIntent(intent))select(0);if(paired())sync();}
+    @Override public void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(Intent.ACTION_SEND.equals(intent.getAction())){select(1);share(intent.getStringExtra(Intent.EXTRA_TEXT));}else if(!openShoppingIntent(intent)&&!openTaskIntent(intent))select(0);if(paired())sync();}
     @Override public void onStart(){super.onStart();IntentFilter filter=new IntentFilter("com.personalassistant.companion.VOICE_STATE");filter.addAction("com.personalassistant.companion.GROCERY_STATE");filter.addAction("com.personalassistant.companion.TASK_STATE");if(Build.VERSION.SDK_INT>=33)registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(receiver,filter);registered=true;Cloud.prefs(this).registerOnSharedPreferenceChangeListener(prefsListener);show();}
     @Override public void onResume(){super.onResume();resumed=true;if(ui!=null){ui.window();show();settings.refreshNow(paired());checkUpdates(false);if(paired())TaskSyncJob.schedule(this,false);checkTheme();}}
     @Override public void onPause(){resumed=false;handler.removeCallbacks(themeCheck);if(shopping!=null)shopping.commit(false);super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null){ui.window();if(themePending)checkTheme();}}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null){ui.window();if(themePending)checkTheme();focusAdd();}}
     @Override public void onBackPressed(){if(selected!=0){select(0);return;}super.onBackPressed();}
     @Override public void onDestroy(){NativeTaskScreens.close(this);Updates.dismissPrompt(this);super.onDestroy();}
     @Override public void onStop(){if(shopping!=null)shopping.commit(false);if(registered){unregisterReceiver(receiver);registered=false;}Cloud.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener);super.onStop();}
@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
 
     private void build(){
         LinearLayout root=ui.column();root.setFitsSystemWindows(true);root.setBackground(ui.backgroundDrawable());body=ui.column();FrameLayout stage=new FrameLayout(this);stage.addView(body,new FrameLayout.LayoutParams(-1,-1));View fade=new View(this);fade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);fade.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,new int[]{AppUi.alpha(ui.background,0f),ui.background}));stage.addView(fade,new FrameLayout.LayoutParams(-1,ui.dp(28),Gravity.BOTTOM));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
-        for(int i=0;i<4;i++){ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);pages[i]=ui.column();pages[i].setPadding(ui.dp(20),ui.dp(i==0?10:20),ui.dp(20),ui.dp(24));scroll.addView(pages[i]);body.addView(scroll,new LinearLayout.LayoutParams(-1,-1));}
+        for(int i=0;i<4;i++){ScrollView scroll=new ScrollView(this){@Override protected float getBottomFadingEdgeStrength(){return 0;}};scroll.setFillViewport(true);scroll.setVerticalFadingEdgeEnabled(true);scroll.setFadingEdgeLength(ui.dp(24));pages[i]=ui.column();pages[i].setPadding(ui.dp(20),ui.dp(i==0?10:20),ui.dp(20),ui.dp(24));scroll.addView(pages[i]);body.addView(scroll,new LinearLayout.LayoutParams(-1,-1));}
         voice=new MainVoice(this,ui,pages[0]);shopping=new MainShopping(this,ui,pages[1]);receipts=new MainReceipts(this,ui,pages[2]);settings=new MainSettings(this,ui,pages[3]);
         navBar=ui.navBar(new String[]{"Voice","Shopping","Activity","Settings"},new String[]{"voice","shopping","activity","settings"},new String[]{"nav_voice","nav_shopping","nav_activity","nav_settings"},this::select);root.addView(navBar,navBar.params());setContentView(root);
     }
@@ -90,6 +90,13 @@ public class MainActivity extends Activity {
     void taskHistory(){if(!paired()){needPairing();return;}NativeTaskScreens.history(this);}
     void openTask(String id){NativeTaskScreens.detail(this,"agent",id);}
     private boolean openTaskIntent(Intent intent){String id=intent.getStringExtra("task_id");if(id==null||id.isEmpty())return false;select(2);handler.post(()->NativeTaskScreens.detail(this,intent.getStringExtra("task_kind")==null?"agent":intent.getStringExtra("task_kind"),id));intent.removeExtra("task_id");return true;}
+    /** Widget "Add": open Shopping and, once the window has focus, put the cursor in the add field with the keyboard up. */
+    private boolean openShoppingIntent(Intent intent){
+        if(!"shopping".equals(intent.getStringExtra(ShoppingWidget.EXTRA_TAB)))return false;
+        addPending=intent.getBooleanExtra(ShoppingWidget.EXTRA_FOCUS_ADD,false);intent.removeExtra(ShoppingWidget.EXTRA_TAB);intent.removeExtra(ShoppingWidget.EXTRA_FOCUS_ADD);
+        select(1);if(addPending)handler.post(this::focusAdd);return true;
+    }
+    private void focusAdd(){if(!addPending||shopping==null||!hasWindowFocus()||isFinishing()||isDestroyed())return;addPending=false;shopping.focusAdd();}
     void toggleConversation(){if(!paired()){needPairing();return;}boolean active=Cloud.prefs(this).getBoolean("voice_conversation_mode",false);if(checkSelfPermission("android.permission.RECORD_AUDIO")!=PackageManager.PERMISSION_GRANTED){requestMic(false);return;}if(Cloud.prefs(this).getBoolean("voice_listening_test",false))finishTest();startForegroundService(new Intent(this,VoiceService.class).setAction(active?VoiceService.END_CONVERSATION:VoiceService.START_CONVERSATION));show();}
     void openWeb(String path){if(!paired()){needPairing();return;}try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(Cloud.prefs(this).getString("origin","")+path)));}catch(Exception error){Toast.makeText(this,"No browser is available",Toast.LENGTH_LONG).show();}}
     void recipes(){RecipeLibrary.show(this,this::sync,this::share,()->openWeb("/groceries/"));}

@@ -20,6 +20,9 @@ final class MainParts {
         return chip.glyph(icon,ui.accent,18);
     }
 
+    /** Section label above the chat timeline; shared by the Voice tab and the locked entry, with room before the first bubble. */
+    static void conversationLabel(AppUi ui,LinearLayout parent){parent.addView(ui.label("Conversation"),params(ui,-1,-2,4,12,0,14));}
+
     static AppUi.Icon icon(AppUi ui,String kind,int color){return new AppUi.Icon(ui.context,kind,color);}
 
     /** Rounded tinted panel with a glyph, a title and a detail line; the whole panel is the tap target. */
