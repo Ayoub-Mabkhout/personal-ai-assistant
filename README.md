@@ -7,8 +7,7 @@ workspace share this checkout.
 The selected phone interface is the native Assistant Companion, backed by an
 always-on HTTPS relay and an outbound laptop worker. It provides local wake
 capture, offline queues, shopping, task history and same-session follow-ups.
-Home Assistant remains available for legacy voice, browser access and migration
-delivery. Phone access works over the internet; shared LAN discovery is
+Standalone relay login and native notifications replace the retired Home Assistant stack. Phone access works over the internet; shared LAN discovery is
 unnecessary. Host details, provider configuration and credentials stay outside
 public source files. A clone does not inherit a deployed owner's connections.
 
@@ -49,7 +48,7 @@ and runtime evidence in the ignored private workspace.
 
 ### Working
 
-- [x] Remote HTTPS phone access, including the established legacy Home Assistant path.
+- [x] Remote HTTPS phone access through the standalone relay.
 - [x] Durable cloud queues: programmatic commands and agent prompts stay separate.
 - [x] Laptop startup, reconnect, readiness reporting and interrupted-task recovery.
 - [x] Persistent Luna dispatcher chooses worker model/effort and reviews results.
@@ -72,8 +71,7 @@ and runtime evidence in the ignored private workspace.
 
 ### Next priorities
 
-- [x] Upgrade Home Assistant recognition to base Whisper with tuned decoding and
-      speech filtering; server and HA transcription pipeline verified.
+- [x] Native voice capture and configured cloud transcription.
 - [ ] Test recognition accuracy/latency with the actual phone in public places.
 - [ ] File semantic search: text extraction, OCR, exact filters, embeddings,
       source excerpts and incremental indexing.
@@ -91,11 +89,10 @@ and runtime evidence in the ignored private workspace.
       provider acceptance and phone receipt are separate records.
 - [x] Firebase client/server provisioning and real background FCM delivery with
       authenticated receipts and native Details opening verified on an emulator.
-- [x] Delivery modes for the Home Assistant to native handover (`homeassistant`,
-      `dual`, `native`), FCM error health, owner notification status and a deploy
-      preflight; see [native delivery](docs/native-companion.md#delivery-modes).
+- [x] Native Companion notification delivery, FCM error health, owner notification status and a deploy
+      preflight; see [native delivery](docs/native-companion.md#native-delivery).
 - [ ] Verify native notification display and Reply end to end on the handset.
-- [ ] Complete the production cutover: validate `dual` on the handset, then `native`.
+- [x] Standalone relay authentication and native-only service deployment; see the retirement runbook.
 - [ ] Task cancellation/retry and attachment access from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
 - [ ] Finish attachment backfill and establish complete historical coverage.

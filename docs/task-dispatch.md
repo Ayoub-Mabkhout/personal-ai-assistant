@@ -10,24 +10,10 @@ calendar queries. Shopping mutations remain immediate cloud transactions.
 General agent prompts are sent to `/relay/v1/agent/prompts`. The existing
 programmatic endpoint remains `/relay/v1/commands`; today its laptop executor is
 the calendar reader. Submit/read/cancel/history use the owner submit credential;
-claim/renew/results use the separate worker credential. Home Assistant's Personal
-assistant and built-in Home Assistant pipelines use `conversation.assistant_dispatch`: programmed/native
-behavior runs first, and unmatched utterances or unresolved native targets go
-directly to the agent inbox. A broad native sentence match with no matching device
-must not swallow an ordinary request such as following up on email threads.
-No `ask my assistant` or `queue` prefix is required. The exact utterance is retained.
-Known programmed-action failures and responses with attempted target results are
-returned without a second execution path.
-The local dashboard's Requests form submits directly to the same inbox. Received
-WhatsApp messages do not execute tasks.
-
-`scripts/configure_homeassistant_dispatch.py` applies this routing through the
-authenticated pipeline API, backing up the prior settings and retaining pipeline
-IDs, languages and speech providers. It also disables `prefer_local_intents`,
-because the dispatcher already runs native behavior first. A cached phone
-selection of the built-in pipeline must not bypass Luna. The voice setup script
-uses this same configuration; rerunning it must not restore a native-only agent.
-Pipelines deliberately using another conversation provider are left unchanged.
+claim/renew/results use the separate worker credential. Native voice programmed
+actions run first; unmatched utterances enter the agent inbox with their original
+text. The local dashboard Requests form uses the same inbox. Received WhatsApp
+messages do not execute tasks.
 
 Cloud-owned phone status notifications update one tagged card per task, including
 queued requests while the laptop is unavailable. The card's Details link opens the

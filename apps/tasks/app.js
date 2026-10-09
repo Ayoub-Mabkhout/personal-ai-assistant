@@ -5,9 +5,8 @@ function read(key,store=local){try{return JSON.parse(store().getItem(key)||'null
 function write(key,value,store=local){try{store().setItem(key,JSON.stringify(value))}catch{}}
 function remove(key,store=local){try{store().removeItem(key)}catch{}}
 const validTarget=value=>/^(agent|command)\/[A-Za-z0-9_-]{8,64}$/.test(value||'');
-let target=params.get('task')||(location.pathname.startsWith('/tasks/agent/')||location.pathname.startsWith('/tasks/command/')?location.pathname.slice(7):location.hash.slice(1))||'',tokens=read('task-login')||read('task-login',session),busy=false,followupToken=null,sending=false;
+let target=params.get('task')||(location.pathname.startsWith('/tasks/agent/')||location.pathname.startsWith('/tasks/command/')?location.pathname.slice(7):location.hash.slice(1))||'',tokens=null,busy=false,followupToken=null,sending=false;
 let viewToken=params.get('view')||read('task-view:'+target);
-if(tokens){write('task-login',tokens);remove('task-login',session)}
 if(validTarget(target))write('task-target',target,session);
 if(params.get('view')&&validTarget(target)){write('task-view:'+target,viewToken);history.replaceState(null,'','/tasks/'+target)}
 
@@ -38,17 +37,14 @@ const when=seconds=>{const date=new Date(seconds*1000);return dayLabel(date)+', 
 function timeNode(seconds,timeOnly){const date=new Date(seconds*1000),node=el('time','',timeOnly?clock.format(date):when(seconds));node.dateTime=date.toISOString();node.title=date.toLocaleString();return node}
 
 const authButton=()=>{$('signin').hidden=!!viewToken;$('signin').textContent=tokens?'Sign out':'Sign in'};
-function signIn(){const state=crypto.randomUUID();write('task-oauth-state:'+state,{state,target,time:Date.now()});const redirect=client+(validTarget(target)?'?task='+encodeURIComponent(target):'');location.href=location.origin+'/auth/authorize?'+new URLSearchParams({client_id:client,redirect_uri:redirect,response_type:'code',state})}
-async function exchange(body){const response=await fetch('/auth/token',{method:'POST',body:new URLSearchParams({...body,client_id:client})});if(!response.ok){tokens=null;remove('task-login');authButton();throw fatal('Sign in again to view this task.')}const next=await response.json();tokens={...next,refresh_token:next.refresh_token||body.refresh_token,expires_at:Date.now()+next.expires_in*1000};write('task-login',tokens)}
-let accessRefresh=null;
-async function access(){if(!tokens)throw fatal('Sign in with your Home Assistant account to view this task.');if(tokens.expires_at<Date.now()+60000){if(!accessRefresh)accessRefresh=exchange({grant_type:'refresh_token',refresh_token:tokens.refresh_token}).finally(()=>accessRefresh=null);await accessRefresh}return tokens.access_token}
-let preferencesLoaded=false,preferencesLoading=false;
-async function loadPreferences(){if(preferencesLoaded||preferencesLoading||!tokens)return;preferencesLoading=true;try{const r=await fetch('/tasks/v1/preferences',{headers:{Authorization:'Bearer '+await access()},cache:'no-store',signal:timeout()});if(r.ok){AssistantDaylight.configure((await r.json()).daylight);preferencesLoaded=true}}catch{}finally{preferencesLoading=false}}
+function signIn(){location.href='/auth/login?next='+encodeURIComponent(validTarget(target)?'/tasks/'+target:'/tasks/')}
+async function access(){if(!tokens)throw fatal('Sign in to Assistant to view this task.');return ''}
+async function loadPreferences(){if(preferencesLoaded||preferencesLoading||!tokens)return;preferencesLoading=true;try{const r=await fetch('/tasks/v1/preferences',{headers:{},cache:'no-store',signal:timeout()});if(r.ok){AssistantDaylight.configure((await r.json()).daylight);preferencesLoaded=true}}catch{}finally{preferencesLoading=false}}
 async function taskResponse(){
   loadPreferences();
-  const headers=viewToken?{'X-Task-View':viewToken}:{Authorization:'Bearer '+await access()};
+  const headers=viewToken?{'X-Task-View':viewToken}:{};
   let response=await fetch('/tasks/v1/'+target,{headers,cache:'no-store',signal:timeout()});
-  if(response.status===401&&viewToken){remove('task-view:'+target);viewToken=null;authButton();if(tokens)response=await fetch('/tasks/v1/'+target,{headers:{Authorization:'Bearer '+await access()},cache:'no-store',signal:timeout()})}
+  if(response.status===401&&viewToken){remove('task-view:'+target);viewToken=null;authButton();if(tokens)response=await fetch('/tasks/v1/'+target,{headers:{},cache:'no-store',signal:timeout()})}
   if(response.status===401){tokens=null;remove('task-login');authButton();throw fatal('This task link is unavailable. Sign in to view the answer.')}
   return response;
 }
@@ -228,7 +224,7 @@ async function sendPending(){
   sending=true;$('send-followup').disabled=true;$('followup-status').className='';
   try{
     const headers={'Content-Type':'application/json'};
-    if(followupToken)headers['X-Task-Followup']=followupToken;else headers.Authorization='Bearer '+await access();
+    if(followupToken)headers['X-Task-Followup']=followupToken;else await access();
     const response=await fetch('/tasks/v1/'+page+'/followups',{method:'POST',headers,body:JSON.stringify(pending)});
     if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(typeof error.detail==='string'?error.detail:'Could not save the instruction. Try again.')}
     await response.json();remove('task-followup-pending:'+page);
@@ -263,7 +259,7 @@ async function loadHistory(mode='fresh'){
     if(!tokens)throw fatal('Sign in to view your task history.');
     const query=new URLSearchParams({q:$('history-search').value,limit:'30'});
     if(mode==='more')query.set('cursor',historyCursor);
-    const response=await fetch('/tasks/v1/history?'+query,{headers:{Authorization:'Bearer '+await access()},cache:'no-store',signal:timeout()});
+    const response=await fetch('/tasks/v1/history?'+query,{headers:{},cache:'no-store',signal:timeout()});
     if(!response.ok)throw response.status===401?fatal('Sign in to view your task history.'):soft('Task history is temporarily unavailable.');
     const data=await response.json();
     if(seq!==historySeq)return;
@@ -274,7 +270,7 @@ async function loadHistory(mode='fresh'){
     historyLoaded=true;historyStamp=Date.now();setConnection('');renderHistory();
   }catch(error){
     if(seq!==historySeq)return;
-    if(error.final){historyLoaded=false;historyRows.clear();setConnection('');signInNotice('Sign in to see your tasks','Use your Home Assistant account to browse recent tasks and their answers.')}
+    if(error.final){historyLoaded=false;historyRows.clear();setConnection('');signInNotice('Sign in to see your tasks','Use your Assistant owner account to browse recent tasks and their answers.')}
     else if(!historyLoaded)showNotice({title:'Could not load your tasks',text:describe(error),action:'Try again',run:()=>loadHistory('fresh')});
     else setConnection(describe(error),'warning');
   }finally{if(seq===historySeq){historyBusy=false;$('history-more').disabled=false;$('task-history-list').classList.remove('busy');authButton()}}
@@ -324,8 +320,9 @@ if(themeApi){
   showMode();
 }else $('theme').hidden=true;
 
-$('signin').onclick=()=>{
+$('signin').onclick=async()=>{
   if(!tokens)return signIn();
+  try{const response=await fetch('/auth/logout',{method:'POST'});if(!response.ok)throw Error();}catch{setConnection('Sign out could not be confirmed. Please try again.','warning');return}
   tokens=null;remove('task-login');clearTimeout(pollTimer);authButton();
   historyRows.clear();historyNodes.clear();$('task-history-list').replaceChildren();historyLoaded=false;historyCursor=null;
   $('history').replaceChildren();$('turns').replaceChildren();$('result').replaceChildren();$('followup-section').hidden=true;
@@ -337,13 +334,8 @@ window.addEventListener('online',()=>{setConnection('');refresh();sendPending()}
 window.addEventListener('offline',()=>setConnection('You are offline. This page updates again when you reconnect.','warning'));
 (async()=>{
   authButton();setMode();showView('loading');
-  if(params.has('code')){
-    const state=params.get('state'),expected=read('task-oauth-state:'+state)||read('task-oauth-state',session);
-    if(validTarget(params.get('task')||expected?.target))target=params.get('task')||expected.target;
-    history.replaceState(null,'',validTarget(target)?'/tasks/'+target:'/tasks/');remove('task-oauth-state:'+state);remove('task-oauth-state',session);
-    try{if(!expected||expected.state!==state||Date.now()-expected.time>600000)throw Error('Sign-in session expired.');await exchange({grant_type:'authorization_code',code:params.get('code')})}
-    catch(error){setConnection(error.message,'danger')}
-    setMode();
-  }
+  remove('task-login');remove('task-login',session);
+  try{tokens=(await fetch('/auth/session',{cache:'no-store'})).ok?{}:null}catch{}
+  authButton();
   await refresh();sendPending();
 })();

@@ -79,25 +79,10 @@ credentials stay on the laptop; queued payloads and private state stay out of Gi
 
 ## Voice feasibility
 
-The target is an Android phone; its model belongs in the private profile.
-Voice while locked and low battery use require device-specific validation.
-
-[Home Assistant Assist on Android](https://www.home-assistant.io/voice_control/android/)
-is an open-source reference for lock-screen/default-assistant and local
-microWakeWord support. Its experimental wake-word feature uses more battery than
-Google's hardware-assisted path. Measure overnight battery drain and wake
-reliability before committing to it. Google-equivalent efficiency is not promised.
-A button/gesture invocation is a lower-battery fallback. Stock Home Assistant is
-not verified to satisfy the offline queue contract; integration or app changes
-are needed. Installing the app alone does not implement this assistant.
-
-A native companion needs a durable outbox, spoken acknowledgements, push results,
-and on-device speech recognition where supported. If transcription is unavailable,
-save audio locally and clearly say only audio was saved for later transcription.
-Test lock-screen permissions, manufacturer background behavior, battery saver, reboot,
-and force-stop on the actual phone before asserting support.
-References: [speech recognition](https://developer.android.com/reference/android/speech/SpeechRecognizer)
-and [persistent work](https://developer.android.com/develop/background-work/background-tasks/persistent).
+Native Companion owns wake detection, capture buffering and Android TTS. Physical
+handset lock-screen, microphone accuracy and battery checks are separate from
+replay/emulator tests. A supported button/gesture is a low-power fallback.
+Configured cloud transcription requires its protected provider/key and budget.
 
 ## Sources
 

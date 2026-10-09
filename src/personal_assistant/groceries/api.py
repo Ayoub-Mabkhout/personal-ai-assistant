@@ -1,14 +1,9 @@
-"""Phone UI and authenticated cloud grocery API. Home Assistant owns login."""
-import hashlib
+"""Phone UI and authenticated cloud grocery API. Standalone owner sessions and paired-device credentials."""
 import json
 from pathlib import Path
 import secrets
-import threading
-import time
-import urllib.error
-import urllib.request
 from typing import Literal
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from .store import Conflict, Groceries, split_items
@@ -54,45 +49,23 @@ class RecipeImport(BaseModel):
     source: str = Field(default='', max_length=1000)
 
 
-def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=None, phone_sender=None, mobile_settings_file=None):
+def router(path, internal_token, assets, store_info=None, user_verifier=None, phone_sender=None, mobile_settings_file=None, owner_auth=None):
     if len(internal_token) < 32:
         raise ValueError('Use a dedicated grocery credential of at least 32 characters.')
     store = Groceries(path)
     api = APIRouter(prefix='/groceries')
-    cache, lock = {}, threading.Lock()
     from personal_assistant.relay.mobile_settings import MobileSettings
     settings = MobileSettings(mobile_settings_file or Path(path).with_name('companion-preferences.json'))
 
-    def authorize(authorization: str | None = Header(default=None)):
-        if not authorization or not authorization.startswith('Bearer '):
-            raise HTTPException(401, 'Sign in to Home Assistant.')
-        token = authorization[7:]
-        if secrets.compare_digest(token.encode(), internal_token.encode()):
+    def authorize(request: Request, authorization: str | None = Header(default=None)):
+        if authorization and secrets.compare_digest(authorization.encode(), ('Bearer '+internal_token).encode()):
             return
-        if len(token) > 8192:
-            raise HTTPException(401, 'Invalid login.')
-        key = hashlib.sha256(token.encode()).hexdigest()
-        with lock:
-            if cache.get(key, 0) > time.monotonic():
-                return
-        try:
-            if user_verifier:
-                user_verifier(token)
-            else:
-                request = urllib.request.Request(ha_url.rstrip('/')+'/api/', headers={'Authorization': 'Bearer '+token})
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    if response.status != 200:
-                        raise OSError('Authentication rejected')
-        except (OSError, urllib.error.HTTPError):
-            raise HTTPException(401, 'Home Assistant login expired. Sign in again.') from None
-        with lock:
-            # Bounded and short-lived; access tokens are never written to disk.
-            for old in list(cache):
-                if cache[old] <= time.monotonic():
-                    cache.pop(old)
-            if len(cache) >= 256:
-                cache.clear()
-            cache[key] = time.monotonic()+15
+        if owner_auth:
+            return owner_auth.authorize(request, authorization)
+        if authorization and authorization.startswith('Bearer ') and user_verifier:
+            try: return user_verifier(authorization[7:])
+            except OSError: pass
+        raise HTTPException(401, 'Sign in to Assistant.')
 
     @api.get('/v1/list', dependencies=[Depends(authorize)])
     def snapshot():

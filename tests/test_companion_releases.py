@@ -56,8 +56,8 @@ class ReleaseTests(unittest.TestCase):
             feed=ReleaseFeed(apk,clock=lambda:now[0])
             pump=CompanionReleasePump(feed,calls.append);pump.tick();pump.tick()
             self.assertEqual(feed.status(3)['state'],'accepted');self.assertEqual(len(calls),2)
-            self.assertEqual(calls[-1]['message'],'command_broadcast_intent')
-            self.assertEqual(calls[-1]['data']['intent_action'],'com.personalassistant.companion.RELEASE_PUBLISHED')
+            self.assertEqual(calls[-1]['type'],'release')
+            self.assertEqual(calls[-1]['data']['version_code'],3)
             self.assertNotIn('intent_extras',calls[-1]['data'])
             self.assertFalse(feed.publish(3,release['sha256'])['created']);pump.tick();self.assertEqual(len(calls),2)
 

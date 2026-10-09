@@ -4,7 +4,7 @@ Assistant Companion is the selected native Android interface for voice, shopping
 task history, same-session follow-ups, notifications and phone actions. It shares
 the cloud shopping list, keeps a local cache and saved changes, and provides a
 home-screen widget. The server, list and recipes remain available while the laptop
-sleeps. Home Assistant supports legacy voice/browser access and migration delivery.
+sleeps. The relay provides standalone browser login and native notifications.
 
 Source and build tooling are implemented. Native Firebase project configuration,
 phone registration and real notification delivery require deployment acceptance.
@@ -37,14 +37,13 @@ build includes ARM64 native libraries and generic wake-model assets, rather than
 personal voice recordings.
 
 Once the APK is deployed, open the cloud `/groceries/` page, sign in with the
-existing Home Assistant account, and choose **Phone widget & alarms**. Download
+standalone Assistant owner account, and choose **Phone widget & alarms**. Download
 the APK and install **Assistant Companion**. Android may ask to allow installation
 from that browser. Open the installed app and enter the HTTPS server origin and
 the one-use pairing code shown on the groceries page. Pairing expires after ten
 minutes; request a new code if necessary. The resulting device credential permits
 shopping changes, voice commands, the owner's protected native task history and
-continuations, and fetching that phone's actions. It cannot administer Home
-Assistant, access another phone's alarm queue or use the raw agent administration
+continuations, and fetching that phone's actions. It cannot access another phone's alarm queue or use the raw agent administration
 endpoints. Do not share codes.
 
 Long-press the Android home screen, choose **Widgets**, then **Assistant
@@ -67,22 +66,11 @@ automatically deleted.
 
 With Firebase configured and the phone registered, releases arrive through the
 native durable event journal and a content-free FCM hint. The app schedules a
-network job to fetch and verify the release from its paired server. An older
-installation can receive a migration hint through official Home Assistant
-Companion's existing `command_broadcast_intent` receiver. Opening the app also
-checks for a missed event, with a five-minute
-foreground throttle; **Check for updates** remains available. Scheduled shopping
-sync retries a pending update download but does not check for new releases.
-
-Install the release with this receiver manually once; version 0.2.0 has the older
-daily updater and version 0.1.0 has no updater. Future releases appear under **App updates**.
-Enable update notifications if desired, then tap **Install update** when ready.
-Android may ask to allow installations from Assistant Companion and still requires
-the normal installation confirmation. Background checks depend on Android job
-scheduling and network availability; push acceptance is not proof of handset
-delivery. The Home Assistant phone app is needed for the legacy migration bridge;
-configured native FCM delivery works independently. Android can delay delivery or
-prevent a force-stopped app from running.
+network job to fetch and verify the release from its paired server. Opening the
+app checks missed events with a five-minute foreground throttle; Check for updates
+remains available. Android requires ordinary installation confirmation and may ask
+to allow installation from Companion. Background scheduling and force-stop state
+can delay delivery; provider acceptance does not prove handset receipt.
 
 Downloads are checked against the published checksum, package, version and the
 installed app's signing certificate before installation. Updates retain the same
@@ -110,13 +98,10 @@ duplicate hint, which safely fetches the same verified release. Status is availa
 to the owner at `GET /groceries/v1/mobile/release/status`. Never publish a new APK
 under the same version code. The APK and metadata remain public generic artifacts.
 
-The bridge follows the official [HA broadcast notification command](https://companion.home-assistant.io/docs/notifications/notification-commands/#broadcast-intent).
-
 ## Alarms through the assistant
 
-`scripts/phone_actions.py` uses the existing worker Home Assistant refresh-login
-file referenced by protected `~/.personal-assistant/worker/config.json`. It does
-not read the owner password or require passing a token in the command line.
+`scripts/phone_actions.py` uses `relay_url` and `submit_token_file` from the
+protected worker config. No password/token is passed on the command line.
 
 ```powershell
 .venv/Scripts/python.exe scripts/phone_actions.py phones
@@ -124,36 +109,8 @@ not read the owner password or require passing a token in the command line.
 .venv/Scripts/python.exe scripts/phone_actions.py status UNIQUE_STABLE_REQUEST_ID
 ```
 
-The alarm command is an actual write; examples should only be executed for an
-alarm the user requested. Preserve its ID on retries. If exactly one active phone
-is paired it is selected; otherwise ask which phone and add `--phone PHONE_ID`.
-Time is a 24-hour HH:MM in the phone Clock's local timezone. This initial interface
-supports a single alarm time and label, not arbitrary dates or recurrence.
-
-The configured native provider delivers a phone-scoped alarm event and a
-notification that opens Assistant Companion to fetch the queued request. The
-legacy Home Assistant provider offers its existing **Set alarm** button. Both
-paths hand it to the installed Clock app through `ACTION_SET_ALARM`, with hour, minute,
-label and `EXTRA_SKIP_UI`. The phone keeps an action-ID journal to avoid blindly
-launching an acknowledged alarm twice. If it crashes during a handoff whose
-outcome is uncertain, inspect Clock before submitting another request.
-
-The legacy `--launch` option requests an immediate app launch using HA Companion's
-`command_activity`. Enable it only after the user grants **Display over other
-apps** to the official HA Companion in Android settings. Android lock-screen,
-background-activity and manufacturer restrictions can still affect launching.
-The button path does not require granting that background-launch permission.
-The native Companion cannot be launched this way: with native delivery `--launch`
-still produces the tap-to-set-alarm card.
-
-An alarm request remains valid for ten minutes. If the phone is offline longer,
-it expires rather than unexpectedly setting the next day's alarm. A cloud
-`queued` receipt means the request is saved; `push_api_accepted` means the selected
-provider accepted the wake-up notification. `delegated` means the app handed the
-intent to Clock. **None proves Clock registered the alarm.** The response explicitly retains
-`clock_registration_verified: false`; inspect the actual Clock alarm on the first
-handset test. `failed` and `expired` require a corrected/new request. No live test
-alarm is inserted automatically.
-
-[Android AlarmClock intent contract](https://developer.android.com/reference/android/provider/AlarmClock).
-[HA Companion activity launch and Android permission](https://companion.home-assistant.io/docs/notifications/notification-commands/#activity).
+Only create an alarm explicitly requested by the user. Retain its ID on retries.
+One active phone can be selected automatically; multiple phones require --phone.
+Native events open the existing Clock-intent handoff. API acceptance, phone receipt,
+intent delegation and verified Clock registration are distinct states. Android
+permissions and lock-screen behavior require actual handset verification.

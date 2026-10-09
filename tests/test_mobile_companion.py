@@ -36,7 +36,7 @@ class MobileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);owner='o'*40
             app=create_app(root/'queue.sqlite3',owner,'w'*40,groceries={'path':root/'groceries.sqlite3','internal_token':'g'*40,
-                'ha_url':'http://homeassistant:8123','assets':root,'user_verifier':lambda token: None if token==owner else (_ for _ in ()).throw(OSError())})
+                'assets':root,'user_verifier':lambda token: None if token==owner else (_ for _ in ()).throw(OSError())})
             client=TestClient(app);auth={'Authorization':'Bearer '+owner}
             def pair():
                 code=client.post('/groceries/v1/mobile/pairing',headers=auth).json()['code']

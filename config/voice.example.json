@@ -8,5 +8,5 @@
   "max_realtime_seconds": 300,
   "monthly_budget_usd": 8,
   "max_live_seconds": 600,
-  "vocabulary": "Voice commands. Hey Chat. Shopping list. Calendar. REWE. Home Assistant."
+  "vocabulary": "Voice commands. Hey Chat. Shopping list. Calendar. REWE."
 }

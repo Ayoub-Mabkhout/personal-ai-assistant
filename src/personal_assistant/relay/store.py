@@ -139,7 +139,7 @@ class Queue:
             result.pop('lease_token')
         return result
 
-    def submit(self, payload, source='home_assistant'):
+    def submit(self, payload, source='owner_api'):
         request_id = payload['id']
         if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', request_id):
             raise ValueError('Command ID must contain 8-64 letters, numbers, underscores or hyphens.')

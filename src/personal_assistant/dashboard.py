@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 import threading
 from typing import Literal
 from personal_assistant.worker.runtime import RelayClient, TransportError
-from personal_assistant.worker.notifications import HomeAssistantNotifier
+from personal_assistant.relay.client import OwnerClient
 from personal_assistant.relay.features import FeatureEdit, NewFeature
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -71,7 +71,7 @@ def create_app(config):
     runtime=Path(config['runtime_dir'])
     profile=ROOT/'private/profile'
     edit_lock=threading.Lock()
-    homeassistant=HomeAssistantNotifier(config) if config.get('homeassistant_auth_file') else None
+    cloud=OwnerClient(config) if config.get('submit_token_file') else None
 
     @app.middleware('http')
     async def protect(request:Request,call_next):
@@ -214,19 +214,21 @@ def create_app(config):
 
     @app.get('/api/shopping')
     def shopping():
-        if homeassistant is None:
+        if cloud is None:
             raise HTTPException(503,'Shopping-list connection is not configured.')
         try:
-            return homeassistant.call('/api/shopping_list')
+            return [{'id':item['id'],'name':item['name'],'complete':item['complete']} for item in cloud.call('/groceries/v1/list')['items']]
         except OSError:
             raise HTTPException(503,'Shopping list is temporarily unreachable.') from None
 
     @app.post('/api/shopping')
     def check_shopping_item(body:ShoppingItem):
-        if homeassistant is None:
+        if cloud is None:
             raise HTTPException(503,'Shopping-list connection is not configured.')
         try:
-            return homeassistant.call('/api/shopping_list/item/'+body.id,{'complete':body.complete})
+            snapshot=cloud.call('/groceries/v1/list')
+            item=next(item for item in snapshot['items'] if item['id']==body.id)
+            return cloud.call('/groceries/v1/mutations',{'id':__import__('uuid').uuid4().hex,'operation':'complete','target':body.id,'version':item['version'],'complete':body.complete})
         except OSError:
             raise HTTPException(503,'Shopping-list change was not confirmed. Refresh to check its state.') from None
 

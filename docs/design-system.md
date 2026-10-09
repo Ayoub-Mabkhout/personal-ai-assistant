@@ -146,8 +146,6 @@ web surfaces use the same runtime location, never a place baked into source.
   appears in bold above it. Reminder cards are titled with the event and show
   its time and place. Private cards show only the kind of update on the lock
   screen. The microphone service notification is colorized in the accent.
-  Home Assistant payloads carry the same colour and a matching Material Design
-  icon for the status bar.
 
 ## Platform notes
 

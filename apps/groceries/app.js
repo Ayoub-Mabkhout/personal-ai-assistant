@@ -3,7 +3,7 @@ const $=id=>document.getElementById(id),base='/groceries/',client=location.origi
 function read(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}}
 function write(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch{}}
 const cached=read('groceries-cache',null);
-let snapshot={items:[],recipes:[],...cached},queue=read('groceries-outbox',[]),failures=read('groceries-review',[]),tokens=read('groceries-login',null);
+let snapshot={items:[],recipes:[],...cached},queue=read('groceries-outbox',[]),failures=read('groceries-review',[]),tokens=null;
 let ready=cached!==null,synced=cached!==null,rendered=false,syncing=false,again=false,refreshPromise=null,editing=null,added=0,tab='list',importBody=null;
 const staged=new Map(),rowRefs=new Map(),recipeRefs=new Map();
 const uuid=()=>crypto.randomUUID(),saveQueue=()=>write('groceries-outbox',queue),saveFailures=()=>write('groceries-review',failures);
@@ -74,35 +74,15 @@ $('theme').onclick=()=>{
 themeApi.subscribe(showMode);
 showMode();
 
-function signIn(){
-  const state=uuid();
-  sessionStorage.setItem('groceries-state',JSON.stringify({state,time:Date.now()}));
-  location.href=location.origin+'/auth/authorize?'+new URLSearchParams({client_id:client,redirect_uri:client,response_type:'code',state});
-}
-async function exchange(body){
-  const r=await fetch('/auth/token',{method:'POST',body:new URLSearchParams({...body,client_id:client})});
-  if(!r.ok)throw Error('Sign-in was not completed.');
-  const result=await r.json();
-  tokens={...result,refresh_token:result.refresh_token||body.refresh_token};
-  tokens.expires_at=Date.now()+tokens.expires_in*1000;
-  write('groceries-login',tokens);
-  return tokens;
-}
+function signIn(){location.href='/auth/login?next='+encodeURIComponent('/groceries/')}
 const fault=(state,label,detail='')=>Object.assign(Error(label),{state,label,detail});
 const say=error=>error.state?error.label+(error.detail?' · '+error.detail:''):error.message;
-async function access(){
-  if(!tokens)throw fault('signedout','Sign in to sync','local changes wait on this phone');
-  if(tokens.expires_at<Date.now()+60000){
-    if(!refreshPromise)refreshPromise=exchange({grant_type:'refresh_token',refresh_token:tokens.refresh_token}).finally(()=>refreshPromise=null);
-    await refreshPromise;
-  }
-  return tokens.access_token;
-}
+async function access(){if(!tokens)throw fault('signedout','Sign in to sync','local changes wait on this phone')}
 async function api(path,body){
   const token=await access();
   let r;
   try{
-    r=await fetch(base+'v1/'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+    r=await fetch(base+'v1/'+path,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   }catch{throw fault('offline','Cloud unreachable','changes are saved on this phone')}
   if(r.status===401){localStorage.removeItem('groceries-login');tokens=null;throw fault('signedout','Please sign in again.','local changes wait on this phone')}
   if(!r.ok){
@@ -598,9 +578,10 @@ sheet.onpointerdown=e=>{pressedBackdrop=e.target===sheet};
 sheet.onclick=e=>{if(pressedBackdrop&&e.target===sheet)sheet.close();pressedBackdrop=false};
 sheet.onclose=clearPairing;
 
-$('signin').onclick=()=>{
+$('signin').onclick=async()=>{
   if(!tokens)return signIn();
   if(queue.length&&!confirm('There are unsynced changes on this phone. Sign out and keep them here?'))return;
+  try{const response=await fetch('/auth/logout',{method:'POST'});if(!response.ok)throw Error();}catch{toast('Sign out could not be confirmed. Please try again.',{kind:'error'});return}
   localStorage.removeItem('groceries-login');tokens=null;
   setStatus('signedout','Signed out','your local list remains on this phone');render();
 };
@@ -612,15 +593,8 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)commitAll()
 if('IntersectionObserver'in window)new IntersectionObserver(([entry])=>$('bar').classList.toggle('stuck',!entry.isIntersecting)).observe(document.querySelector('.top'));
 
 (async()=>{
-  const params=new URLSearchParams(location.search);
-  if(params.has('code')){
-    const expected=JSON.parse(sessionStorage.getItem('groceries-state')||'null'),code=params.get('code');
-    history.replaceState(null,'',base);sessionStorage.removeItem('groceries-state');
-    try{
-      if(!expected||params.get('state')!==expected.state||Date.now()-expected.time>600000)throw Error('Sign-in session expired. Try again.');
-      await exchange({grant_type:'authorization_code',code});
-    }catch(error){toast(error.message,{kind:'error'})}
-  }
+  localStorage.removeItem('groceries-login');
+  try{tokens=(await fetch('/auth/session',{cache:'no-store'})).ok?{}:null}catch{}
   render();await sync();
   if('serviceWorker'in navigator)navigator.serviceWorker.register(base+'sw.js',{scope:base}).catch(()=>{});
   setInterval(sync,30000);

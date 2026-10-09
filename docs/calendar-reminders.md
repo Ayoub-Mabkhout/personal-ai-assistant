@@ -3,7 +3,7 @@
 The assistant's local calendar remains the primary store. The cloud receives a
 complete projection of reminder occurrences, not permission to edit appointments.
 After a successful sync, the cloud server can send reminders through its
-configured native Companion or legacy Home Assistant provider while the laptop
+native Companion provider while the laptop
 is asleep. Native delivery uses the phone event journal and configured FCM hints;
 Snooze 10 min reschedules durably in the cloud. Firebase setup and actual reminder
 receipt/snooze on the handset remain separate acceptance steps.

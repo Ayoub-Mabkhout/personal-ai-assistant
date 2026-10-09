@@ -1,29 +1,25 @@
-"""Phone task conversation and scoped follow-ups, with HA or signed-link access."""
-import hashlib
+"""Phone task conversation and scoped follow-ups, with owner sessions or signed-link access."""
 import base64
 import json
 from pathlib import Path
-import threading
-import time
-import urllib.request
-from fastapi import APIRouter,Header,HTTPException,Query
+from fastapi import APIRouter,Header,HTTPException,Query,Request
 from fastapi.responses import FileResponse
 from .continuations import Continuations,Followup
 
 
-def task_router(queues,ha_url,assets,user_verifier=None,task_links=None,mobile_settings_file=None):
-    api=APIRouter(prefix='/tasks');cache={};lock=threading.Lock();continuations=Continuations(queues['agent'])
+def task_router(queues,assets,user_verifier=None,task_links=None,mobile_settings_file=None,owner_auth=None):
+    api=APIRouter(prefix='/tasks');continuations=Continuations(queues['agent'])
     @api.get('/v1/preferences')
-    def preferences(authorization:str|None=Header(default=None)):
-        authorize(authorization)
+    def preferences(request:Request,authorization:str|None=Header(default=None)):
+        authorize(request,authorization)
         from .mobile_settings import MobileSettings
         from fastapi.responses import JSONResponse
         value=MobileSettings(mobile_settings_file).snapshot() if mobile_settings_file else {'daylight':None}
         return JSONResponse(value,headers={'Cache-Control':'private, no-store'})
     @api.get('/v1/history')
-    def history(authorization:str|None=Header(default=None),q:str=Query(default='',max_length=300),
+    def history(request:Request,authorization:str|None=Header(default=None),q:str=Query(default='',max_length=300),
                 cursor:str|None=Query(default=None,max_length=500),limit:int=Query(default=30,ge=1,le=100)):
-        authorize(authorization)
+        authorize(request,authorization)
         boundary=None
         if cursor:
             try:
@@ -60,37 +56,27 @@ def task_router(queues,ha_url,assets,user_verifier=None,task_links=None,mobile_s
             last=items[-1];next_cursor=base64.urlsafe_b64encode(json.dumps([last['updated'],last['kind'],last['id']]).encode()).decode().rstrip('=')
         return {'items':items,'next_cursor':next_cursor}
     @api.get('/v1/{kind}/{identifier}')
-    def detail(kind:str,identifier:str,authorization:str|None=Header(default=None),x_task_view:str|None=Header(default=None)):
+    def detail(kind:str,identifier:str,request:Request,authorization:str|None=Header(default=None),x_task_view:str|None=Header(default=None)):
         if kind not in queues: raise HTTPException(404)
         if task_links and x_task_view:
             if not task_links.verify(kind,identifier,x_task_view): raise HTTPException(401,'Invalid task link.')
             return result(kind,identifier)
-        authorize(authorization)
+        authorize(request,authorization)
         return result(kind,identifier)
 
-    def authorize(authorization):
-        if not authorization or not authorization.startswith('Bearer ') or len(authorization)>8200:
-            raise HTTPException(401,'Sign in to Home Assistant.')
-        token=authorization[7:];key=hashlib.sha256(token.encode()).hexdigest()
-        with lock: valid=cache.get(key,0)>time.monotonic()
-        if not valid:
-            try:
-                if user_verifier: user_verifier(token)
-                else:
-                    request=urllib.request.Request(ha_url.rstrip('/')+'/api/',headers={'Authorization':'Bearer '+token})
-                    with urllib.request.urlopen(request,timeout=5) as response:
-                        if response.status!=200: raise OSError('Login rejected')
-            except OSError: raise HTTPException(401,'Home Assistant login expired.') from None
-            with lock:
-                if len(cache)>256: cache.clear()
-                cache[key]=time.monotonic()+15
+    def authorize(request,authorization):
+        if owner_auth: return owner_auth.authorize(request,authorization)
+        if authorization and authorization.startswith('Bearer ') and user_verifier:
+            try: return user_verifier(authorization[7:])
+            except OSError: pass
+        raise HTTPException(401,'Sign in to Assistant.')
 
     @api.post('/v1/{kind}/{identifier}/followups')
-    def followup(kind:str,identifier:str,body:Followup,authorization:str|None=Header(default=None),x_task_followup:str|None=Header(default=None)):
+    def followup(kind:str,identifier:str,body:Followup,request:Request,authorization:str|None=Header(default=None),x_task_followup:str|None=Header(default=None)):
         if kind!='agent':raise HTTPException(422,'This task has no headless agent session.')
         if task_links and x_task_followup:
             if not task_links.verify_followup(kind,identifier,x_task_followup):raise HTTPException(401,'Invalid follow-up link.')
-        else:authorize(authorization)
+        else:authorize(request,authorization)
         job,created=continuations.accept(identifier,body)
         return {'id':job['id'],'state':job['state'],'created':created,'connection':queues['agent'].status()}
 

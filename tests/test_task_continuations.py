@@ -20,7 +20,7 @@ class ContinuationTests(unittest.TestCase):
         self.queue=Queue(self.root/'agents.sqlite3',serial=True)
         self.queue.submit({'id':'original-task','command':'Original instruction','timezone':'Europe/Berlin'})
         self.links=TaskLinks(b'x'*32)
-        app=FastAPI();app.include_router(task_router({'agent':self.queue},'https://invalid',self.root,task_links=self.links))
+        app=FastAPI();app.include_router(task_router({'agent':self.queue},self.root,task_links=self.links))
         self.client=TestClient(app)
         self.view={'X-Task-View':self.links.token('agent','original-task')}
 
@@ -84,7 +84,7 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(card['data']['clickAction'],self.links.url('https://assistant.example','agent','original-task'))
 
     def test_history_requires_login_groups_turns_and_searches_followups(self):
-        app=FastAPI();app.include_router(task_router({'agent':self.queue},'https://invalid',self.root,
+        app=FastAPI();app.include_router(task_router({'agent':self.queue},self.root,
             user_verifier=lambda token:None,task_links=self.links))
         inbox=Continuations(self.queue)
         turn,_=inbox.accept('original-task',Followup(id='history-turn',instruction='Look for the invoice'))
@@ -102,7 +102,7 @@ class ContinuationTests(unittest.TestCase):
     def test_history_cursor_does_not_repeat_tasks_with_equal_timestamps(self):
         queue=Queue(self.root/'same-time.sqlite3',clock=lambda:1000)
         for i in range(5):queue.submit({'id':'history-task-'+str(i),'command':'Test','timezone':'Europe/Berlin'})
-        app=FastAPI();app.include_router(task_router({'agent':queue},'https://invalid',self.root,user_verifier=lambda token:None))
+        app=FastAPI();app.include_router(task_router({'agent':queue},self.root,user_verifier=lambda token:None))
         with TestClient(app) as client:
             auth={'Authorization':'Bearer test-login'};cursor=None;ids=[]
             for _ in range(3):

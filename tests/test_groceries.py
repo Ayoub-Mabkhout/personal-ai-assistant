@@ -51,12 +51,11 @@ class GroceryTests(unittest.TestCase):
             if token!='valid-ha-user':
                 raise OSError('invalid')
         app=create_app(self.root/'queue.sqlite3','s'*48,'w'*48,groceries={
-            'path':self.root/'groceries.sqlite3','internal_token':'g'*48,'ha_url':'http://unused',
-            'assets':Path(__file__).resolve().parents[1]/'apps/groceries','user_verifier':verify})
+            'path':self.root/'groceries.sqlite3','internal_token':'g'*48,'assets':Path(__file__).resolve().parents[1]/'apps/groceries','user_verifier':verify})
         with TestClient(app) as client:
             self.assertEqual(client.get('/groceries/v1/list').status_code,401)
             self.assertEqual(client.get('/groceries/v1/list',headers={'Authorization':'Bearer invalid'}).status_code,401)
-            response=client.post('/groceries/v1/voice',json={'id':'voice-123','text':'Hey Chat, add bananas and sparkling water to my shopping list'},headers={'Authorization':'Bearer valid-ha-user'})
+            response=client.post('/groceries/v1/voice',json={'id':'voice-123','text':'Hey Chat, add bananas and sparkling water to my shopping list'},headers={'Authorization':'Bearer '+'s'*48})
             self.assertEqual(response.status_code,200)
             self.assertEqual(response.json()['names'],['bananas','sparkling water'])
             self.assertEqual(len(self.store.snapshot()['items']),2)

@@ -1,4 +1,4 @@
-"""Queue phone alarms using the existing protected Home Assistant login."""
+"""Queue phone alarms using protected relay owner credentials."""
 import argparse
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ import urllib.error
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from personal_assistant.worker.notifications import HomeAssistantNotifier
+from personal_assistant.relay.client import OwnerClient
 
 
 BASE = '/groceries/v1/mobile/'
@@ -62,7 +62,7 @@ def execute(args, client):
 def parser():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('--config', type=Path, default=Path.home()/'.personal-assistant/worker/config.json',
-                     help='Protected worker config containing HA origin and refresh-auth file reference.')
+                     help='Protected config containing relay_url and submit_token_file.')
     commands = cli.add_subparsers(dest='action', required=True)
     commands.add_parser('phones', help='List paired phones; this does not send a phone command.')
     alarm = commands.add_parser('alarm', help='Queue an alarm; phone Clock creation must be checked separately.')
@@ -71,8 +71,7 @@ def parser():
     alarm.add_argument('--label', default='Alarm', help='Clock label (maximum 200 characters).')
     alarm.add_argument('--phone', type=identifier, help='Phone ID; omitted only when exactly one active phone is paired.')
     alarm.add_argument('--launch', action='store_true',
-                       help='HA Companion only: launch it once its Display over other apps permission is granted; otherwise a Set alarm button is sent. '
-                            'The native Companion cannot be launched this way: it always shows a tap-to-set-alarm card, even with --launch.')
+                       help='Native Companion shows a tap-to-set-alarm card; intent registration requires handset verification.')
     status = commands.add_parser('status', help='Read the saved alarm delivery state.')
     status.add_argument('id', type=identifier)
     termux=commands.add_parser('termux',help='Queue a phone script; Termux installation and command permission required.')
@@ -97,7 +96,7 @@ def main():
         cli.error('Alarm label must contain at most 200 characters.')
     try:
         config = json.loads(args.config.read_text(encoding='utf-8-sig'))
-        result = execute(args, HomeAssistantNotifier(config))
+        result = execute(args, OwnerClient(config))
     except urllib.error.HTTPError as error:
         print(json.dumps({'error':'Server rejected the phone request.', 'status':error.code}), file=sys.stderr)
         return 1

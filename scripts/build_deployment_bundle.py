@@ -12,15 +12,7 @@ FILES = (
     'infra/server/Caddyfile', 'infra/server/Caddyfile.bootstrap',
     'infra/server/.env.example', 'infra/server/images.lock.json',
     'infra/server/cloud-init.yaml',
-    'integrations/home_assistant/configuration.yaml',
-    'integrations/home_assistant/task_replies.package.yaml',
-    'integrations/home_assistant/custom_sentences/en/assistant.yaml',
-    'scripts/prepare_server.py', 'scripts/deploy_server.sh',
-    'scripts/onboard_homeassistant.py',
-    'scripts/configure_homeassistant_http.py',
-    'scripts/configure_homeassistant_voice.py',
-    'scripts/configure_homeassistant_dispatch.py', 'scripts/assist_pipeline_config.py',
-    'scripts/confirm_homeassistant_https.py',
+    'scripts/configure_owner.py', 'scripts/prepare_server.py', 'scripts/deploy_server.sh',
     'scripts/smoke_server.py', 'docs/server-deployment.md',
 )
 
@@ -33,8 +25,6 @@ def build(output, root=ROOT):
     paths.extend((root / 'apps/groceries').glob('*'))
     paths.extend((root / 'apps/tasks').glob('*'))
     paths.extend((root / 'apps/shared').glob('*.js'))
-    paths.extend((root / 'integrations/home_assistant/custom_components').rglob('*.py'))
-    paths.extend((root / 'integrations/home_assistant/custom_components').rglob('manifest.json'))
     for path in paths:
         if not path.is_file() or path.resolve() != path.absolute():
             raise ValueError('Missing or symlinked deployment source: ' + str(path))

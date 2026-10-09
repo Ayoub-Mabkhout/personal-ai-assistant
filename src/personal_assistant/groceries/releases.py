@@ -1,4 +1,4 @@
-"""Validated APK publication and durable push hints through HA Companion."""
+"""Validated APK publication and durable push hints through native Companion."""
 import hashlib
 import json
 import logging
@@ -113,12 +113,7 @@ class CompanionReleasePump:
             if release['version_code'] != version or release['sha256'] != sha256:
                 self.feed.outcome(version, False)
                 return
-            self.sender({'message': 'command_broadcast_intent', 'data': {
-                'intent_package_name': 'com.personalassistant.companion',
-                'intent_class_name': 'com.personalassistant.companion.UpdateReceiver',
-                'intent_action': 'com.personalassistant.companion.RELEASE_PUBLISHED',
-                'version_code': version, 'sha256': sha256,
-                'priority': 'high', 'ttl': 86400}})
+            self.sender({'type':'release','data':{'version_code':version,'sha256':sha256,'priority':'high','ttl':86400}})
         except Exception as error:
             self.feed.outcome(version, False)
             logging.warning('Companion release push failed (%s); retry saved.', type(error).__name__)

@@ -2,8 +2,7 @@
 
 Status: native capture, local wake interface, durable command outbox and explicit
 conversational speech implemented. Reliability targets below remain targets.
-The companion is the selected phone interface; Home Assistant supports legacy
-voice/browser access and migration delivery. Native notifications require
+The companion is the selected phone interface and connects directly to the relay. Native notifications require
 Firebase client/server configuration and device registration, then handset
 verification. Select the custom app as **Digital assistant**
 when testing it. Keep Samsung One UI Home as the **Home app**.
@@ -22,7 +21,7 @@ are not included in the publicly downloadable APK.
 
 Porcupine's native Android SDK is a possible comparison, with a custom **Hey Chat** model.
 It supports custom keyword models and caller-supplied audio frames. This is a
-candidate to measure, not a claim that it beats Home Assistant. Its AccessKey,
+candidate to measure. Its AccessKey,
 model generation and acceptable current licensing must be established before
 shipping this integration. Its current [pricing FAQ](https://picovoice.ai/docs/faq/general/)
 offers an enterprise trial and says there is no dedicated personal-use plan;
@@ -140,7 +139,7 @@ and [client delegation](https://developers.openai.com/api/docs/guides/live-deleg
 
 Build wake detection and buffered capture before the full conversational interface.
 Test locked-screen operation and one-take commands with a deliberately delayed
-server. Compare with Home Assistant using the same phrases and locations, with
+server. Compare builds using the same phrases and locations, with
 only one wake listener enabled at a time.
 
 Measure missed wakes, false activations, first-word loss, recognition errors,

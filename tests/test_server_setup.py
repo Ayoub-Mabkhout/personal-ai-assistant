@@ -26,7 +26,7 @@ class ServerSetupTests(unittest.TestCase):
     def test_prepare_preserves_credentials_and_owner_configuration(self):
         prepare(self.directory, 'assistant.example.com', 'owner@example.com')
         token = (self.directory / 'secrets/submit_token').read_bytes()
-        configuration = self.directory / 'data/homeassistant/configuration.yaml'
+        configuration = self.directory / 'data/relay/owner-login.json'
         configuration.write_text('existing user configuration')
         prepare(self.directory, 'assistant.example.com', 'owner@example.com')
         self.assertEqual((self.directory / 'secrets/submit_token').read_bytes(), token)
@@ -38,12 +38,11 @@ class ServerSetupTests(unittest.TestCase):
         prepare(self.directory, 'assistant.example.com', 'owner@example.com')
         with self.assertRaises(ValueError):
             publish(self.directory)
-        auth = self.directory / 'data/homeassistant/.storage/auth'
-        auth.parent.mkdir()
-        auth.write_text(json.dumps({'data': {'users': [{'is_owner': True, 'is_active': False}]}}))
+        auth = self.directory / 'data/relay/owner-login.json'
+        auth.write_text(json.dumps({}))
         with self.assertRaises(ValueError):
             publish(self.directory)
-        auth.write_text(json.dumps({'data': {'users': [{'is_owner': True, 'is_active': True}]}}))
+        auth.write_text(json.dumps({'username':'owner','salt':'0'*32,'password_hash':'0'*128}))
         publish(self.directory)
         self.assertIn('ASSISTANT_CADDY_CONFIG=Caddyfile\n', (self.directory / '.env').read_text())
         self.assertNotIn('Caddyfile.bootstrap', (self.directory / '.env').read_text())

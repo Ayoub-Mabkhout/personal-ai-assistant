@@ -4,7 +4,7 @@ description: Run scripts on the paired phone through Termux, inspect execution r
 ---
 
 Use `scripts/phone_actions.py` with the repository Python environment. It reads
-protected Home Assistant refresh authentication from the private worker config;
+protected relay submit-token reference from the private worker config;
 no password, phone token or manual credential copying is needed.
 
 For an alarm, resolve the requested local clock time, then list paired phones.
