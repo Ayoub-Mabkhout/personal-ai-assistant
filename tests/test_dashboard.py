@@ -90,5 +90,22 @@ class DashboardTests(unittest.TestCase):
         client.close()
 
 
+class ShippedDashboardPageTests(unittest.TestCase):
+    def test_pages_receive_one_session_token_and_call_only_existing_routes(self):
+        pages={'/':'index.html','/whatsapp':'whatsapp.html'}
+        with tempfile.TemporaryDirectory() as raw, TestClient(dashboard.create_app({'runtime_dir':raw}),base_url='http://127.0.0.1:8787') as client:
+            routes={route.path for route in client.app.routes}
+            for path,name in pages.items():
+                with self.subTest(path):
+                    html=client.get(path).text
+                    self.assertEqual(len(re.findall(r"const token='[A-Za-z0-9_-]{20,}'",html)),1)
+                    self.assertNotIn('__DASHBOARD_TOKEN__',html)
+                    source=(dashboard.ROOT/'apps/dashboard'/name).read_text(encoding='utf-8')
+                    called={'/api/'+call.split('?')[0].rstrip('/') for call in re.findall(r"(?:\b(?:api|shared)\('|fetch\('/api/)([^']+)'",source)}
+                    self.assertTrue(called)
+                    for call in called:
+                        self.assertTrue(any(route==call or route.startswith(call+'/{') for route in routes),call)
+
+
 if __name__=='__main__':
     unittest.main()

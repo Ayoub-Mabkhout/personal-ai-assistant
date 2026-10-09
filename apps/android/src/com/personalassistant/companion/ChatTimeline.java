@@ -1,12 +1,9 @@
 package com.personalassistant.companion;
 
-import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.drawable.RippleDrawable;
 import android.view.*;
 import android.widget.*;
 import org.json.*;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 /** Chronological, timestamped user and assistant bubbles shared with locked entry. Updates diff by entry id, so a streaming revision edits its bubble in place. */
@@ -34,10 +31,6 @@ final class ChatTimeline {
     static void bubble(LinearLayout parent,AppUi ui,String text,boolean user,long time,String kind,String taskId,TaskOpener open){
         if(text==null||text.isEmpty())return;Bubble bubble=new Bubble(ui,user);bubble.set(text,time,kind==null?"":kind,taskId==null?"":taskId,open);parent.addView(bubble.outer);
     }
-    private static String stamp(long time){
-        if(time<=0)return "";Locale locale=Locale.getDefault();
-        return new SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale,"MMMdHm"),locale).format(new Date(time));
-    }
 
     private static final class Bubble {
         final AppUi ui;final boolean user;final LinearLayout outer,column,extras;final TextView words,meta;AppUi.StatusChip state;Button link;String text="",kind="",task="";TaskOpener open;
@@ -52,13 +45,12 @@ final class ChatTimeline {
             LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);
             if(user){cp.leftMargin=ui.dp(44);outer.addView(column,cp);}
             else{
-                ImageView avatar=new ImageView(ui.context);avatar.setImageDrawable(ui.glyph("star",ui.onAccent,14));avatar.setScaleType(ImageView.ScaleType.CENTER);avatar.setBackground(ui.aurora(-1,130,false));avatar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(28),ui.dp(28));ap.topMargin=ui.dp(4);outer.addView(avatar,ap);cp.leftMargin=ui.dp(8);cp.rightMargin=ui.dp(20);outer.addView(column,cp);
+                LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(28),ui.dp(28));ap.topMargin=ui.dp(4);outer.addView(ui.avatar(),ap);cp.leftMargin=ui.dp(8);cp.rightMargin=ui.dp(20);outer.addView(column,cp);
             }
         }
         void set(String text,long time,String kind,String task,TaskOpener open){
             if(!text.equals(this.text)){this.text=text;words.setText(text);}
-            String who=user?"You":"Assistant",stamp=stamp(time),line=stamp.isEmpty()?who:who+" · "+stamp;if(!line.contentEquals(meta.getText()))meta.setText(line);
+            String who=user?"You":"Assistant",stamp=AppUi.stamp(time),line=stamp.isEmpty()?who:who+" · "+stamp;if(!line.contentEquals(meta.getText()))meta.setText(line);
             this.kind=kind;this.task=task;this.open=open;sync();
         }
         private void sync(){
@@ -71,12 +63,10 @@ final class ChatTimeline {
             else{if(link==null){link=linkChip();extras.addView(link,new LinearLayout.LayoutParams(-2,-2));}link.setTag("chat_task:"+task);}
             if(extras.getChildCount()==0)column.removeView(extras);else if(extras.getParent()==null)column.addView(extras,new LinearLayout.LayoutParams(-2,-2));
         }
-        /** Outlined action chip with a trailing chevron; 48 dp touch area around a 36 dp face. */
         private Button linkChip(){
-            Button chip=ui.ghostButton("View task",()->{if(open!=null&&!task.isEmpty())open.open(task);});
+            Button chip=ui.linkButton("View task",14,()->{if(open!=null&&!task.isEmpty())open.open(task);});
             chip.setTextColor(ui.text);chip.setTextSize(13.5f);chip.setTypeface(AppUi.face(500));
-            chip.setBackground(new RippleDrawable(ColorStateList.valueOf(AppUi.alpha(ui.accent,.16f)),ui.insetOf(ui.outline(Color.TRANSPARENT,18,ui.strokeStrong,1.25f),0,6,0,6),ui.insetOf(ui.pillMask(),0,6,0,6)));
-            chip.setPadding(ui.dp(14),0,ui.dp(10),0);chip.setCompoundDrawablesWithIntrinsicBounds(null,null,ui.glyph("arrow",ui.accent,16),null);chip.setCompoundDrawablePadding(ui.dp(4));
+            chip.setBackground(ui.chipFace(Color.TRANSPARENT,ui.strokeStrong,1.25f,.16f,18,0));chip.setPadding(ui.dp(14),0,ui.dp(10),0);chip.setCompoundDrawablePadding(ui.dp(4));
             return chip;
         }
     }

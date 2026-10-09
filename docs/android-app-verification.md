@@ -10,8 +10,14 @@ checks pairing drafts/focus/selection through asynchronous updates, invalid
 address validation, optimistic shopping/cache rendering and durable offline
 adds, selected native recipe ingredients, separate transcript/reply panes,
 microphone level binding, sensitivity selection, update-ready visibility and
-background/local-test controls. Its `screens_only` option captures light/dark
-views using explicit synthetic UI data. `reduced_motion=true` additionally
+background/local-test controls. It also covers the recipe sheet's Back
+navigation and refusals, the timed Undo for ticked shopping rows (nothing is
+queued inside the window; Undo, ticking another row and leaving the screen),
+the shopping widget layouts in day and night mode and its Add shortcut landing
+on the focused add field, and every Appearance choice. Its `theme` argument is
+`light`, `dark` or `sun`; `sun` leaves the preference unset to exercise the
+default. Its `screens_only` option captures views using explicit synthetic UI
+data. `reduced_motion=true` additionally
 requires the emulator animator scale to be zero and checks that page/meter
 updates settle without a running animation. Restore the previous system scale
 after the test. A visual-only run is not a functional-suite pass.
@@ -32,6 +38,9 @@ only in the diagnostic APK. The normal app always reads its real microphone.
 `UpgradeInstrumentation` is framework-only so it can seed a signed version4
 install, then verify that a version5 install preserves synthetic pairing,
 cached shopping data, a stable pending mutation ID and appearance preferences.
+With `theme=unset` in both steps it leaves the preference unset and checks that
+the upgraded app follows sunrise and sunset, the default since the Dusk Aurora
+release.
 The fixture uses an empty server origin and cleans itself afterward. Do not
 run it against a real paired phone.
 
@@ -41,6 +50,18 @@ requests without opening a connection, checks that local shopping/voice saves
 and pending counts remain responsive, protects concurrent queued additions,
 verifies detached optimistic views and completion rebasing, and checks stable
 Live acknowledgement history merging.
+
+`TaskUiInstrumentation` also drives the history paging merge (Load more, refresh,
+new search) and the Today and Yesterday separators across daylight saving
+changes. The sunrise and sunset maths, quick-add splitting and voice status
+wording are plain Java and run in `tests/test_android_jvm.py` wherever a JDK is
+installed.
+
+Not covered by the emulator suites, so check by hand in light, dark and sun
+themes after changing them: the assistant gesture overlay (it needs the
+assistant role), the Quick Settings microphone tile and its subtitle, the
+locked voice entry over the keyguard, and the notification small icon and
+accent colour. Record the outcomes with the handset notes below.
 
 Local instrumentation does not establish physical Samsung microphone quality,
 overnight battery use, real account exchange or push delivery. Record actual

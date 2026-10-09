@@ -5,10 +5,13 @@ import android.appwidget.*;
 import android.content.*;
 import android.content.res.Configuration;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.SizeF;
 import android.view.View;
 import android.widget.RemoteViews;
 import org.json.*;
+import java.util.*;
 
 public class ShoppingWidget extends AppWidgetProvider {
     /** Add opens MainActivity with these extras so it can land on the Shopping tab and focus the add field; builds that ignore them open the default tab. */
@@ -18,11 +21,16 @@ public class ShoppingWidget extends AppWidgetProvider {
         Intent i=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra(EXTRA_TAB,"shopping").putExtra(EXTRA_FOCUS_ADD,true);
         return PendingIntent.getActivity(c,1,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
-    /** Rows that fit the widget's current height; the header, status lines and buttons take about 150 dp. */
-    private static int rowsFit(Context c,AppWidgetManager manager,int widget){
-        Bundle options=manager.getAppWidgetOptions(widget);boolean landscape=c.getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
-        int height=options==null?0:options.getInt(landscape?AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT:AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT,0);
-        return height<=0?6:Math.max(1,Math.min(6,(height-150)/48));
+    /** Rows that fit a widget height in dp; the header, status lines and buttons take about 150 dp. */
+    private static int rowsFit(float height){return height<=0?6:Math.max(1,Math.min(6,(int)((height-150)/48)));}
+    /** Android 12 lists every size the launcher can show, so each gets its own row count. Earlier versions only know the height for the app's current orientation, which can differ from the launcher's. */
+    private static RemoteViews views(Context c,Bundle options){
+        if(Build.VERSION.SDK_INT>=31&&options!=null){
+            ArrayList<SizeF> sizes=options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES);
+            if(sizes!=null&&!sizes.isEmpty()){Map<SizeF,RemoteViews> bySize=new LinkedHashMap<>();for(SizeF size:sizes)if(bySize.size()<16)bySize.put(size,build(c,rowsFit(size.getHeight())));return new RemoteViews(bySize);}
+        }
+        boolean landscape=c.getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
+        return build(c,rowsFit(options==null?0:options.getInt(landscape?AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT:AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT,0)));
     }
     static PendingIntent action(Context c,String verb,String id,int version){
         Intent i=new Intent(c,ShoppingWidget.class).setAction(verb).setData(Uri.parse("assistantwidget://"+verb+"/"+id)).putExtra("id",id).putExtra("version",version);
@@ -30,7 +38,7 @@ public class ShoppingWidget extends AppWidgetProvider {
     }
     static void update(Context c){
         AppWidgetManager manager=AppWidgetManager.getInstance(c);int[] ids=manager.getAppWidgetIds(new ComponentName(c,ShoppingWidget.class));
-        for(int widget:ids)manager.updateAppWidget(widget,build(c,rowsFit(c,manager,widget)));
+        for(int widget:ids)manager.updateAppWidget(widget,views(c,manager.getAppWidgetOptions(widget)));
     }
     static RemoteViews build(Context c,int fit){
         RemoteViews views=new RemoteViews(c.getPackageName(),R.layout.widget);views.removeAllViews(R.id.rows);

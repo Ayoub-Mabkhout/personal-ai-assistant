@@ -33,7 +33,7 @@ const toasts={queue:[],current:null,timer:0,exit:0};
 function toast(message,options={}){
   const item={message,ms:options.ms||6500,action:options.action,kind:options.kind};
   if(options.replace||!toasts.current)return showToast(item);
-  if(!toasts.queue.some(x=>x.message===message))toasts.queue.push(item);
+  if(![toasts.current,...toasts.queue].some(x=>x.message===message))toasts.queue.push(item);
 }
 function showToast(item){
   const box=$('toast');
@@ -129,14 +129,10 @@ function report(error){
   else setStatus('error',error.message,'will retry shortly');
 }
 
-// A permanent client error must not block the changes queued behind it, so it is parked for review.
-// Auth, timeout and rate-limit responses are transient and keep the change at the head of the queue.
-const rejected=error=>error.status>=400&&error.status<500&&![401,408,425,429].includes(error.status);
-function reason(error){
-  if(error.status===413)return 'This change was too large to send.';
-  if(error.status===404)return 'This item is no longer on the cloud list.';
-  return error.message;
-}
+// The server rejects a change for good with 409 (conflict), 422 (invalid item) or 413 (body too large). Parking it for review
+// keeps it from blocking the queue; any other status (auth, routing, proxy, outage) is transient and the change stays at the head.
+const rejected=error=>[409,413,422].includes(error.status);
+const reason=error=>error.status===413?'This change was too large to send.':error.message;
 function park(change,error){
   failures.push({change,error:reason(error)});saveFailures();
   queue.shift();saveQueue();
@@ -202,7 +198,7 @@ function overlay(){
   const apply=(change,held)=>{
     if(change.operation==='add')for(const [i,item] of change.items.entries())items.push({...item,id:'pending-'+change.id+'-'+i,complete:0,version:0});
     if(change.operation==='complete'){const item=items.find(x=>x.id===change.target);if(item){item.complete=change.complete;if(held)item.held=true}}
-    if(change.operation==='delete'){const i=items.findIndex(x=>x.id===change.target);if(i>=0)items.splice(i,1)}
+    if(change.operation==='delete'){const i=items.findIndex(x=>x.id===change.target);if(i>=0){if(held)Object.assign(items[i],{held:true,removed:true});else items.splice(i,1)}}
   };
   for(const change of queue)apply(change,false);
   for(const entry of staged.values())apply(entry.change,true);
@@ -218,7 +214,7 @@ function nameNode(item){
 function buildRow(){
   const ref={item:null,locked:false,nameKey:''};
   const node=el('div',undefined,'item'),row=el('div',undefined,'row'),toggle=el('label',undefined,'toggle'),input=el('input'),box=el('span',undefined,'cb'),copy=el('span',undefined,'copy'),meta=el('span'),chip=el('span',undefined,'pill warning');
-  const search=el('a',undefined,'row-btn'),remove=button(undefined,'row-btn remove',()=>{if(!ref.locked)hold({operation:'delete',target:ref.item.id,version:ref.item.version},'Removed '+ref.item.name+'.')}),undo=button('Undo','undo',()=>cancel(ref.item.id));
+  const search=el('a',undefined,'row-btn'),undo=button('Undo','undo',()=>cancel(ref.item.id)),remove=button(undefined,'row-btn remove',()=>{if(ref.locked)return;hold({operation:'delete',target:ref.item.id,version:ref.item.version},'Removed '+ref.item.name+'.');undo.focus()});
   input.type='checkbox';box.append(tick());
   chip.append(icon('i-phone'),document.createTextNode('Saved on phone'));meta.append(chip);
   search.target='_blank';search.rel='noopener noreferrer';search.title='Search products; availability depends on the selected store';search.append(icon('i-search'));
@@ -234,10 +230,10 @@ function buildRow(){
 function updateRow(ref,item){
   const queued=queue.some(x=>x.target===item.id),held=!!item.held;
   ref.item=item;ref.locked=!item.version||queued||held;
-  ref.node.toggleAttribute('data-staged',held);
+  ref.node.toggleAttribute('data-staged',held);ref.node.toggleAttribute('data-removed',!!item.removed);
   ref.input.checked=!!item.complete;
   ref.input.disabled=(!item.version||queued)&&!held;
-  const key=(item.quantity||'')+'\u0000'+item.name;
+  const key=ingredientKey(item);
   if(ref.nameKey!==key){ref.nameKey=key;ref.copy.firstChild.replaceWith(nameNode(item))}
   ref.chip.hidden=!!item.version;
   const href='https://shop.rewe.de/productList?search='+encodeURIComponent(item.name);
@@ -246,7 +242,7 @@ function updateRow(ref,item){
   ref.remove.setAttribute('aria-label','Remove '+item.name);
   ref.remove.setAttribute('aria-disabled',String(ref.locked));
 }
-const bought=item=>item.held?!item.complete:!!item.complete;
+const bought=item=>item.held&&!item.removed?!item.complete:!!item.complete;
 function leave(node,box,moving){
   let gone=node;
   if(moving){
@@ -579,11 +575,12 @@ async function pair(){
 }
 async function copyText(text){
   try{await navigator.clipboard.writeText(text);return true}catch{}
-  const area=el('textarea',text,'sr');
-  area.setAttribute('readonly','');document.body.append(area);area.select();
+  // Everything outside an open modal dialog is inert, so the field must live inside it to take the selection.
+  const area=el('textarea',text,'sr'),from=document.activeElement;
+  area.setAttribute('readonly','');(sheet.open?sheet:document.body).append(area);area.focus();area.select();
   let ok=false;
-  try{ok=document.execCommand('copy')}catch{}
-  area.remove();return ok;
+  try{ok=document.activeElement===area&&document.execCommand('copy')}catch{}
+  area.remove();if(from&&from.focus)from.focus();return ok;
 }
 document.querySelectorAll('[data-copy]').forEach(control=>control.onclick=async()=>{
   const ok=await copyText($(control.dataset.copy).textContent),label=control.querySelector('span'),glyph=control.querySelector('use');
@@ -594,7 +591,10 @@ document.querySelectorAll('[data-copy]').forEach(control=>control.onclick=async(
 $('pair-phone').onclick=pair;
 $('pair-renew').onclick=pair;
 $('pair-close').onclick=()=>sheet.close();
-sheet.onclick=e=>{if(e.target===sheet)sheet.close()};
+// Only a press and release on the backdrop dismisses the sheet; selecting the code and letting go outside must not discard it.
+let pressedBackdrop=false;
+sheet.onpointerdown=e=>{pressedBackdrop=e.target===sheet};
+sheet.onclick=e=>{if(pressedBackdrop&&e.target===sheet)sheet.close();pressedBackdrop=false};
 sheet.onclose=clearPairing;
 
 $('signin').onclick=()=>{

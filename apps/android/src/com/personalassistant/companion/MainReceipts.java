@@ -6,7 +6,6 @@ import android.view.*;
 import android.widget.*;
 import org.json.*;
 import java.io.File;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 /** Activity tab: task-history hero, saved-voice banner and the dated receipt timeline. */
@@ -64,10 +63,10 @@ final class MainReceipts {
         String[] chip=status(state);int[] tone=ui.toneColors(chip[1]);
         LinearLayout row=ui.row();row.setGravity(Gravity.TOP);row.addView(new MainParts.Rail(ui,tone[0],first,last),new LinearLayout.LayoutParams(ui.dp(26),-1));
         LinearLayout card=ui.card();card.setPadding(ui.dp(16),ui.dp(12),ui.dp(12),ui.dp(task.isEmpty()?14:4));
-        LinearLayout top=ui.row();top.addView(ui.type(new SimpleDateFormat("MMM d, HH:mm",Locale.getDefault()).format(new Date(file.lastModified())),12,16,500,0,ui.muted),MainParts.weighted(ui,1,0,0,8,0));top.addView(ui.statusChip(chip[0],chip[1]));card.addView(top);
+        LinearLayout top=ui.row();top.addView(ui.type(AppUi.stamp(file.lastModified()),12,16,500,0,ui.muted),MainParts.weighted(ui,1,0,0,8,0));top.addView(ui.statusChip(chip[0],chip[1]));card.addView(top);
         TextView request=ui.type(text,15,20,700,-.003f,ui.text);request.setMaxLines(3);request.setEllipsize(TextUtils.TruncateAt.END);card.addView(request,MainParts.params(ui,-2,-2,0,8,4,0));
         LinearLayout lower=ui.row();TextView answer=ui.type(reply,13,18,400,0,ui.muted);answer.setMaxLines(3);answer.setEllipsize(TextUtils.TruncateAt.END);lower.addView(answer,MainParts.weighted(ui,1,0,2,4,2));
-        if(!task.isEmpty()){Button open=ui.ghostButton("Open task",()->a.openTask(task));open.setTag("receipt_task:"+task);open.setCompoundDrawablesWithIntrinsicBounds(null,null,ui.glyph("arrow",ui.accent,16),null);open.setCompoundDrawablePadding(ui.dp(2));open.setPadding(ui.dp(10),0,ui.dp(4),0);lower.addView(open);}
+        if(!task.isEmpty()){Button open=ui.linkButton("Open task",10,()->a.openTask(task));open.setTag("receipt_task:"+task);lower.addView(open);}
         card.addView(lower,MainParts.params(ui,-1,-2,0,1,0,0));
         card.setClickable(true);card.setFocusable(true);
         card.setOnClickListener(v->{if(!task.isEmpty()&&(state.equals("queued")||state.equals("running")))a.openTask(task);else new AlertDialog.Builder(a).setTitle("Voice request").setMessage(text+"\n\n"+reply).setPositiveButton("Close",null).show();});

@@ -61,7 +61,6 @@ final class RecipeLibrary {
             if(footer.length>0){LinearLayout bottom=ui.column();bottom.setPadding(ui.dp(20),ui.dp(8),ui.dp(20),ui.dp(16));for(View view:footer)bottom.addView(view,new LinearLayout.LayoutParams(-1,-2));page.addView(bottom);}
             return page;
         }
-        private void rule(LinearLayout parent,int inset){View line=new View(activity);line.setBackgroundColor(ui.stroke);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Math.max(1,ui.dp(1)));p.leftMargin=ui.dp(inset);parent.addView(line,p);}
         private static void silence(View... views){for(View view:views)view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);}
         private static ArrayList<JSONObject> ingredients(JSONObject recipe){
             ArrayList<JSONObject> list=new ArrayList<>();JSONArray rows=recipe.optJSONArray("ingredients");
@@ -76,7 +75,7 @@ final class RecipeLibrary {
             if(recipes.isEmpty())content.addView(ui.empty("recipe","No recipes saved yet","Import recipe text, or share a recipe to Assistant Companion from another app.","Import text",this::importPage));
             else{
                 LinearLayout card=ui.rowsCard();int n=0;
-                for(JSONObject recipe:recipes.values()){if(n++>0)rule(card,66);card.addView(recipeRow(recipe));}
+                for(JSONObject recipe:recipes.values()){if(n++>0)ui.hairline(card,66,0,0);card.addView(recipeRow(recipe));}
                 content.addView(card);content.addView(ui.quietButton("Import text",this::importPage),new LinearLayout.LayoutParams(-1,-2));
             }
             ui.space(content,4);content.addView(ui.ghostButton("Open web library",()->{dialog.dismiss();web.run();}),new LinearLayout.LayoutParams(-1,-2));
@@ -89,7 +88,7 @@ final class RecipeLibrary {
             int[] tone=ui.iconTone("recipe");ImageView tile=new ImageView(activity);tile.setImageDrawable(ui.glyph("recipe",tone[0],22));tile.setScaleType(ImageView.ScaleType.CENTER);tile.setBackground(ui.outline(tone[1],12,0,0));row.addView(tile,new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40)));
             LinearLayout words=ui.column();TextView name=ui.type(title,16,22,500,0,ui.text);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
             LinearLayout detail=ui.row();detail.addView(ui.small(sub));
-            if(pending){AppUi.StatusChip chip=ui.statusChip("Saved on phone","warning");chip.setCompoundDrawablesWithIntrinsicBounds(ui.glyph("phone-saved",ui.warning,14),null,null,null);LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.leftMargin=ui.dp(8);detail.addView(chip,cp);}
+            if(pending){LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.leftMargin=ui.dp(8);detail.addView(ui.savedChip("Saved on phone"),cp);}
             words.addView(detail);LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(0,-2,1);wp.leftMargin=ui.dp(14);row.addView(words,wp);
             AppUi.Icon arrow=new AppUi.Icon(activity,"arrow",ui.muted);LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(18),ui.dp(18));ap.leftMargin=ui.dp(8);row.addView(arrow,ap);
             silence(tile,words,arrow);row.setContentDescription(title+", "+sub+(pending?", saved on phone":""));
@@ -106,7 +105,7 @@ final class RecipeLibrary {
                 LinearLayout card=ui.rowsCard();
                 for(int i=0;i<items.size();i++){
                     JSONObject ingredient=items.get(i);Ingredient row=new Ingredient(ui,(ingredient.optString("quantity")+" "+ingredient.optString("name")).trim(),()->count(summary,checks));
-                    row.setTag("recipe_ingredient_"+i);if(i>0)rule(card,52);card.addView(row);checks.add(row);
+                    row.setTag("recipe_ingredient_"+i);if(i>0)ui.hairline(card,52,0,0);card.addView(row);checks.add(row);
                 }
                 content.addView(card);summary.setText(checks.size()+" of "+checks.size()+" selected");
             }
@@ -114,10 +113,10 @@ final class RecipeLibrary {
             if(!instructions.isEmpty()){
                 LinearLayout holder=ui.column();LinearLayout panel=ui.panel();TextView directions=ui.body(instructions);directions.setTextIsSelectable(true);panel.addView(directions);panel.setVisibility(View.GONE);
                 Button toggle=ui.ghostButton("Show directions",()->{});toggle.setCompoundDrawablesWithIntrinsicBounds(null,null,ui.glyph("down",ui.accent,18),null);toggle.setCompoundDrawablePadding(ui.dp(4));toggle.setPadding(ui.dp(4),0,ui.dp(12),0);
-                toggle.setOnClickListener(v->{boolean opening=panel.getVisibility()!=View.VISIBLE;AppUi.update(toggle,opening?"Hide directions":"Show directions");toggle.setCompoundDrawablesWithIntrinsicBounds(null,null,ui.glyph(opening?"up":"down",ui.accent,18),null);if(opening)AppUi.expand(panel);else AppUi.collapse(panel,null);});
+                toggle.setOnClickListener(v->{boolean opening=panel.getVisibility()!=View.VISIBLE;toggle.setText(opening?"Hide directions":"Show directions");toggle.setCompoundDrawablesWithIntrinsicBounds(null,null,ui.glyph(opening?"up":"down",ui.accent,18),null);if(opening)AppUi.expand(panel);else AppUi.collapse(panel,null);});
                 holder.addView(toggle,new LinearLayout.LayoutParams(-2,-2));holder.addView(panel);content.addView(holder);
             }
-            TextView feedback=problem();Button add=ui.button("Add selected to list",true,()->{});add.setTag("recipe_add_selected");add.setEnabled(!items.isEmpty());add.setOnClickListener(v->add(items,checks,add,feedback));
+            TextView feedback=problem();Button add=ui.primaryButton("Add selected to list",()->{});add.setTag("recipe_add_selected");add.setEnabled(!items.isEmpty());add.setOnClickListener(v->add(items,checks,add,feedback));
             go(page(content,feedback,add),1);
         }
         private void count(TextView summary,ArrayList<Ingredient> checks){int on=0;for(Ingredient row:checks)if(row.isChecked())on++;AppUi.update(summary,on+" of "+checks.size()+" selected");}
@@ -137,7 +136,7 @@ final class RecipeLibrary {
             content.addView(ui.detail("Paste ingredients and directions, or recipe JSON. Import needs an internet connection."));ui.space(content,18);
             EditText text=ui.field("Recipe text",draft);text.setSingleLine(false);text.setMinLines(8);text.setGravity(Gravity.TOP);text.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);text.setTag("recipe_import_text");importField=text;content.addView(text,new LinearLayout.LayoutParams(-1,-2));
             TextView error=problem();
-            Button submit=ui.button("Preview import",true,()->{
+            Button submit=ui.primaryButton("Preview import",()->{
                 String value=text.getText().toString().trim();
                 if(value.isEmpty()){say(error,"Paste a recipe first.");return;}
                 if(!VoiceOutbox.networkReady(activity)){say(error,"Connect to the internet to import. Your text stays here.");return;}

@@ -64,10 +64,10 @@ addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply
 :root{
   color-scheme:light dark;
   --bg:#FAF5EC;--surface:#FFFEFB;--surface-alt:#F3ECE4;--text:#231A2E;--muted:#675C73;
-  --accent:#5B35D5;--accent-soft:#ECE5FF;--stroke:#E7DDD3;
+  --accent:#5B35D5;--stroke:#E7DDD3;
   --success:#17784A;--success-soft:#E0F2E7;--warning:#965800;--warning-soft:#FFEFCF;
   --danger:#B3263E;--danger-soft:#FCE3E7;--info:#3D52CC;--info-soft:#E3E8FF;
-  --g1-rgb:91,53,213;--g2-rgb:162,59,198;--g3-rgb:204,63,120;--peri-rgb:142,162,255;
+  --peri-rgb:142,162,255;
   --glass:rgba(255,255,255,0);
   --e1:0 1px 0 rgba(255,255,255,.9) inset,0 2px 8px rgba(70,40,100,.07),0 16px 34px -16px rgba(91,53,213,.3);
   --e2:0 1px 0 rgba(255,255,255,.9) inset,0 4px 12px rgba(70,40,100,.08),0 20px 40px -14px rgba(91,53,213,.4);
@@ -75,10 +75,10 @@ addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#130E1C;--surface:#1D1729;--surface-alt:#281F38;--text:#F5F0FB;--muted:#ADA3BF;
-  --accent:#B39CFF;--accent-soft:#2E2357;--stroke:#322849;
+  --accent:#B39CFF;--stroke:#322849;
   --success:#74DFA5;--success-soft:#173A2A;--warning:#FFC766;--warning-soft:#3E2D10;
   --danger:#FF8FA0;--danger-soft:#44192A;--info:#A4B5FF;--info-soft:#232B5C;
-  --g1-rgb:142,107,255;--g2-rgb:196,108,240;--g3-rgb:240,143,196;--peri-rgb:143,168,255;
+  --peri-rgb:143,168,255;
   --glass:rgba(255,255,255,.055);
   --e1:0 1px 0 rgba(255,255,255,.07) inset,0 14px 30px -14px rgba(0,0,0,.75),0 0 0 .5px rgba(142,107,255,.14);
   --e2:0 1px 0 rgba(255,255,255,.08) inset,0 22px 44px -14px rgba(0,0,0,.85),0 0 28px -8px rgba(142,107,255,.28);
@@ -88,10 +88,10 @@ addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply
 :root[data-theme=dark]{
   color-scheme:dark;
   --bg:#130E1C;--surface:#1D1729;--surface-alt:#281F38;--text:#F5F0FB;--muted:#ADA3BF;
-  --accent:#B39CFF;--accent-soft:#2E2357;--stroke:#322849;
+  --accent:#B39CFF;--stroke:#322849;
   --success:#74DFA5;--success-soft:#173A2A;--warning:#FFC766;--warning-soft:#3E2D10;
   --danger:#FF8FA0;--danger-soft:#44192A;--info:#A4B5FF;--info-soft:#232B5C;
-  --g1-rgb:142,107,255;--g2-rgb:196,108,240;--g3-rgb:240,143,196;--peri-rgb:143,168,255;
+  --peri-rgb:143,168,255;
   --glass:rgba(255,255,255,.055);
   --e1:0 1px 0 rgba(255,255,255,.07) inset,0 14px 30px -14px rgba(0,0,0,.75),0 0 0 .5px rgba(142,107,255,.14);
   --e2:0 1px 0 rgba(255,255,255,.08) inset,0 22px 44px -14px rgba(0,0,0,.85),0 0 28px -8px rgba(142,107,255,.28);
@@ -116,7 +116,6 @@ h1{margin:16px 0 8px;font-size:32px;line-height:38px;font-weight:700;letter-spac
 .card{position:relative;margin-top:24px;padding:24px;border-radius:28px;background:linear-gradient(180deg,var(--glass),rgba(255,255,255,0) 46%),var(--surface);border:1px solid var(--stroke);box-shadow:var(--e2)}
 .status{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:20px}
 .chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px 0 8px;border-radius:13px;background:var(--surface-alt);color:var(--muted);font-size:12px;line-height:16px;font-weight:700;white-space:nowrap}
-.chip:not(:has(.i)){padding-left:11px}
 .chip .i{width:14px;height:14px}
 .chip.success{background:var(--success-soft);color:var(--success)}
 .chip.warning{background:var(--warning-soft);color:var(--warning)}
@@ -146,7 +145,6 @@ h1{margin:16px 0 8px;font-size:32px;line-height:38px;font-weight:700;letter-spac
 <symbol id="i-alert-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-3.5L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.5 3.5L20 15"/><path d="M20 20v-5h-5"/></symbol>
-<symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
 <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></symbol>
 </defs></svg>
 <main class="wrap">

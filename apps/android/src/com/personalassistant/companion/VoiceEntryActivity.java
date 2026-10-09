@@ -8,7 +8,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.*;
-import java.util.Locale;
 
 /** Lightweight voice entry above keyguard; never requests device unlock. */
 public final class VoiceEntryActivity extends Activity {
@@ -45,29 +44,12 @@ public final class VoiceEntryActivity extends Activity {
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null)ui.window();}
     @Override public void onStop(){if(registered){unregisterReceiver(voiceState);registered=false;}Cloud.prefs(this).unregisterOnSharedPreferenceChangeListener(preferences);super.onStop();}
     /** The sunrise and sunset theme flips while the screen is open, so re-check at the computed moment. */
-    private void watchTheme(){handler.removeCallbacks(themeCheck);if(!"sun".equals(Cloud.prefs(this).getString("ui_theme","sun")))return;long now=System.currentTimeMillis();handler.postDelayed(themeCheck,Math.max(1000,DaylightTheme.nextChange(now)-now+1000));}
+    private void watchTheme(){handler.removeCallbacks(themeCheck);long wait=AppUi.sunDelay(this);if(wait>0)handler.postDelayed(themeCheck,wait);}
     private void checkTheme(){if(isFinishing()||isDestroyed())return;if(AppUi.dark(this)!=ui.dark){themeRecreate=true;recreate();}else watchTheme();}
-    private static boolean live(String orb){return orb.equals("listening")||orb.equals("conversation");}
-    /** Friendly {title, detail, orb state} for the raw voice_status; shared with the assistant overlay. */
-    static String[] describe(Context c){
-        android.content.SharedPreferences p=Cloud.prefs(c);boolean mic=AppUi.micActive(c),wake=p.getBoolean("wake_enabled",false);
-        String raw=p.getString("voice_status","Microphone off"),low=raw.toLowerCase(Locale.ROOT);
-        if(low.contains("starting")||low.contains("preparing")||low.contains("loading"))return new String[]{"Getting ready...","The microphone is starting.","working"};
-        if(low.contains("sending")||low.contains("connecting"))return new String[]{"Connecting...","Your audio is buffered while the connection starts.","working"};
-        if(low.startsWith("open "))return new String[]{"Open the app to start",raw,"attention"};
-        if(low.contains("no internet")||low.contains("saved on this phone")||low.contains("cloud unavailable"))return new String[]{VoiceOutbox.pending(c)>0?"Saved offline":wake&&mic?"Listening offline":"Offline",raw,"offline"};
-        if(low.contains("permission")||low.contains("interrupted")||low.contains("could not")||low.contains("unavailable")||low.contains("voice stopped")||low.contains("connection lost"))return new String[]{"Needs attention",raw,"attention"};
-        if(mic&&low.contains("listening to your command"))return new String[]{"Listening to you","Say your full request, then pause.","listening"};
-        if(mic&&(p.getBoolean("voice_conversation_mode",false)||p.getBoolean("voice_conversation_active",false)||low.contains("live voice")||low.contains("live microphone")||low.contains("conversation mode")))return new String[]{"Conversation active","Speak naturally. Say That was all to end.","conversation"};
-        if(low.contains("no speech"))return new String[]{"No speech heard","Tap the orb to try again.","idle"};
-        if(wake&&mic)return new String[]{"Listening for Hey Chat","You can leave this screen or lock your phone.","idle"};
-        if(mic)return new String[]{"Microphone ready","Tap the orb to start a request.","idle"};
-        return new String[]{"Microphone off","Tap the orb to start talking.","idle"};
-    }
     private void refresh(){
-        String[] s=describe(this);boolean mic=AppUi.micActive(this);
-        orbLive=live(s[2]);if(talk!=null){talk.state(s[2]);talk.level(AppUi.level(this),mic&&orbLive);}
-        AppUi.update(status,s[0]);AppUi.update(detail,s[1]);
+        VoiceStatus s=AppUi.voiceStatus(this,false);boolean mic=AppUi.micActive(this);
+        orbLive=s.live();if(talk!=null){talk.state(s.orb);talk.level(AppUi.level(this),mic&&orbLive);}
+        AppUi.update(status,s.title);AppUi.update(detail,s.detail);
         if(meter!=null)meter.value(AppUi.level(this),mic);
         if(chat!=null)chat.render(null);
     }

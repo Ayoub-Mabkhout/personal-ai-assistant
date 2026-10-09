@@ -26,14 +26,11 @@ final class AppUi {
     static final android.view.animation.Interpolator OUT=new PathInterpolator(.05f,.7f,.1f,1f),SLIDE=new PathInterpolator(.2f,0f,0f,1f);
     private static final Typeface[] FACES=new Typeface[3];
 
-    /** Null when built for a non-Activity host (assistant overlay); window() and sheets need an Activity. */
-    /** Null when built for a non-Activity host such as the assistant overlay; window() needs an Activity. */
+    /** Null when built for a non-Activity host such as the assistant overlay; window() and sheets need an Activity. */
     final Activity activity;final Context context;final boolean dark;final float density;
     final int background,surface,surfaceAlt,text,muted,accent,onAccent,accentSoft,stroke,strokeStrong;
-    final int success,successSoft,warning,warningSoft,danger,dangerSoft,info,infoSoft,onDanger,glow;
+    final int success,successSoft,warning,warningSoft,danger,dangerSoft,info,infoSoft,glow;
     final int[] aurora;
-    /** Legacy names kept for screens that have not been restyled yet. */
-    final int soft,warm,cool,coolAccent;
 
     AppUi(Activity activity){this(activity,activity);}
     AppUi(Context context){this(context,context instanceof Activity?(Activity)context:null);}
@@ -45,10 +42,9 @@ final class AppUi {
         stroke=pick(0xFFE7DDD3,0xFF322849);strokeStrong=pick(0xFF8E829E,0xFF8479A3);
         success=pick(0xFF17784A,0xFF74DFA5);successSoft=pick(0xFFE0F2E7,0xFF173A2A);
         warning=pick(0xFF965800,0xFFFFC766);warningSoft=pick(0xFFFFEFCF,0xFF3E2D10);
-        danger=pick(0xFFB3263E,0xFFFF8FA0);dangerSoft=pick(0xFFFCE3E7,0xFF44192A);onDanger=pick(0xFFFFFFFF,0xFF3A0B17);
+        danger=pick(0xFFB3263E,0xFFFF8FA0);dangerSoft=pick(0xFFFCE3E7,0xFF44192A);
         info=pick(0xFF3D52CC,0xFFA4B5FF);infoSoft=pick(0xFFE3E8FF,0xFF232B5C);
         aurora=dark?new int[]{0xFF8E6BFF,0xFFC46CF0,0xFFF08FC4}:new int[]{0xFF5B35D5,0xFFA23BC6,0xFFCC3F78};glow=pick(0xFF8EA2FF,0xFF8FA8FF);
-        soft=accentSoft;warm=muted;cool=surfaceAlt;coolAccent=accent;
     }
     private int pick(int light,int night){return dark?night:light;}
     /** ui_theme is sun (default: dark from sunset to sunrise), system, light or dark. */
@@ -58,7 +54,20 @@ final class AppUi {
     float dpf(float n){return n*density;}
     static int mix(int a,int b,float fraction){return Color.rgb(Math.round(Color.red(a)*(1-fraction)+Color.red(b)*fraction),Math.round(Color.green(a)*(1-fraction)+Color.green(b)*fraction),Math.round(Color.blue(a)*(1-fraction)+Color.blue(b)*fraction));}
     static int alpha(int color,float a){return Color.argb(Math.round(255*a),Color.red(color),Color.green(color),Color.blue(color));}
-    static boolean motion(){return Build.VERSION.SDK_INT<26||ValueAnimator.areAnimatorsEnabled();}
+    static boolean motion(){return ValueAnimator.areAnimatorsEnabled();}
+    /** Milliseconds until the sunrise and sunset theme next flips; -1 for the fixed modes. */
+    static long sunDelay(Context c){
+        if(!"sun".equals(Cloud.prefs(c).getString("ui_theme","sun")))return -1;
+        long now=System.currentTimeMillis();return Math.max(1000,DaylightTheme.nextChange(now)-now+1000);
+    }
+
+    /** Locale-ordered date and time such as "Oct 8, 21:14"; the year appears only for entries from an earlier year. */
+    static String stamp(long at){return at<=0?"":format(at,"MMMdHm","yMMMdHm");}
+    static String date(long at){return format(at,"MMMd","yMMMd");}
+    private static String format(long at,String current,String earlier){
+        Locale locale=Locale.getDefault();Calendar then=Calendar.getInstance(),now=Calendar.getInstance();then.setTimeInMillis(at);
+        return new java.text.SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale,then.get(Calendar.YEAR)==now.get(Calendar.YEAR)?current:earlier),locale).format(new Date(at));
+    }
 
     /** Light bars on a light page and the reverse; Android 15 ignores bar colours but still honours the icon appearance. */
     void window(){
@@ -70,7 +79,6 @@ final class AppUi {
         w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    // ------------------------------------------------------------------ typography
     static Typeface face(int weight){
         int slot=weight>=700?2:weight>=500?1:0;
         if(FACES[slot]==null)FACES[slot]=Build.VERSION.SDK_INT>=28?Typeface.create(Typeface.DEFAULT,weight>=700?700:weight>=500?500:400,false):slot==2?Typeface.create("sans-serif",Typeface.BOLD):Typeface.create(slot==1?"sans-serif-medium":"sans-serif",Typeface.NORMAL);
@@ -91,23 +99,18 @@ final class AppUi {
     TextView detail(String value){return type(value,14,20,400,0,muted);}
     TextView label(String value){TextView view=type(value,12,16,700,.075f,muted);view.setAllCaps(true);return view;}
     void label(LinearLayout parent,String title){TextView view=label(title);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.leftMargin=dp(4);p.topMargin=dp(6);p.bottomMargin=dp(8);parent.addView(view,p);}
-    void section(LinearLayout box,String title){label(box,title);}
-    /** Page header: display title with an optional muted subtitle. */
     LinearLayout header(String title,String subtitle){LinearLayout box=column();box.addView(display(title));if(subtitle!=null&&!subtitle.isEmpty()){space(box,4);box.addView(detail(subtitle));}return box;}
 
-    // ------------------------------------------------------------------ layout and surfaces
     LinearLayout column(){LinearLayout box=new LinearLayout(context);box.setOrientation(LinearLayout.VERTICAL);return box;}
     LinearLayout row(){LinearLayout box=new LinearLayout(context);box.setOrientation(LinearLayout.HORIZONTAL);box.setGravity(Gravity.CENTER_VERTICAL);return box;}
     void space(LinearLayout parent,int height){View space=new View(context);parent.addView(space,new LinearLayout.LayoutParams(1,dp(height)));}
     GradientDrawable outline(int fill,float radiusDp,int strokeColor,float strokeDp){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dpf(radiusDp));if(strokeDp>0)d.setStroke(Math.max(1,Math.round(dpf(strokeDp))),strokeColor);return d;}
-    GradientDrawable shape(int color,int radius,int border){return outline(color,radius,border,border!=0?1:0);}
     Drawable insetOf(Drawable d,int l,int t,int r,int b){return new InsetDrawable(d,dp(l),dp(t),dp(r),dp(b));}
     Drawable pillMask(){GradientDrawable m=new GradientDrawable();m.setColor(Color.WHITE);m.setCornerRadius(dpf(100));return m;}
     /** Ripple that follows a rounded outline; face may be null for transparent rows. */
     RippleDrawable pressable(Drawable face,float radiusDp){GradientDrawable mask=new GradientDrawable();mask.setColor(Color.WHITE);mask.setCornerRadius(dpf(radiusDp));return new RippleDrawable(ColorStateList.valueOf(alpha(accent,.16f)),face,mask);}
-    Drawable aurora(int radiusDp,float angle,boolean threeStops){return new Aurora(threeStops?aurora:new int[]{aurora[0],aurora[1]},angle,radiusDp<0?-1:dpf(radiusDp),dpf(1));}
+    Drawable aurora(float angle,boolean threeStops){return new Aurora(threeStops?aurora:new int[]{aurora[0],aurora[1]},angle,-1,dpf(1));}
     Drawable pageBackground(){return new Wash(this);}
-    Drawable backgroundDrawable(){return pageBackground();}
     /** Card face: hairline everywhere, plus a faint lavender top highlight in dark mode. */
     Drawable cardFace(float radiusDp){GradientDrawable base=outline(surface,radiusDp,stroke,1);return dark?new LayerDrawable(new Drawable[]{base,new TopLight(0x33B39CFF,dpf(radiusDp)*.6f,dpf(1))}):base;}
     Drawable sheetFace(){float r=dpf(28);GradientDrawable d=new GradientDrawable();d.setColor(surface);d.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});d.setStroke(Math.max(1,dp(1)),stroke);return d;}
@@ -123,14 +126,10 @@ final class AppUi {
     /** Parents clip children to their padding by default, which cuts off shadows at the page gutter. */
     static void unclip(View view){for(ViewParent p=view.getParent();p instanceof ViewGroup&&!(p instanceof ScrollView)&&!(p instanceof HorizontalScrollView);p=p.getParent()){((ViewGroup)p).setClipChildren(false);((ViewGroup)p).setClipToPadding(false);}}
     LinearLayout card(){LinearLayout box=column();box.setPadding(dp(18),dp(18),dp(18),dp(18));box.setBackground(cardFace(24));lift(box,24,3,false);LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.bottomMargin=dp(16);box.setLayoutParams(params);return box;}
-    /** Card for stacked rows: no inner padding beyond the rounded edge. */
     LinearLayout rowsCard(){LinearLayout box=card();box.setPadding(dp(6),dp(6),dp(6),dp(6));return box;}
-    LinearLayout tonalCard(){LinearLayout box=column();box.setPadding(dp(18),dp(18),dp(18),dp(18));box.setBackground(outline(accentSoft,24,alpha(accent,.22f),1));LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.bottomMargin=dp(16);box.setLayoutParams(params);return box;}
     LinearLayout panel(){LinearLayout box=column();box.setPadding(dp(14),dp(12),dp(14),dp(12));box.setBackground(outline(surfaceAlt,16,0,0));return box;}
-    void divider(LinearLayout parent){hairline(parent,0);}
-    View hairline(LinearLayout parent,int startInsetDp){View line=new View(context);line.setBackgroundColor(stroke);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)));p.leftMargin=dp(startInsetDp);p.topMargin=dp(8);p.bottomMargin=dp(8);parent.addView(line,p);return line;}
+    View hairline(LinearLayout parent,int startDp,int topDp,int endDp){View line=new View(context);line.setBackgroundColor(stroke);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,Math.max(1,dp(1)));p.setMarginStart(dp(startDp));p.topMargin=dp(topDp);p.setMarginEnd(dp(endDp));parent.addView(line,p);return line;}
 
-    // ------------------------------------------------------------------ buttons
     private <T extends Button> T style(T b,String title,float size,int weight,int color){b.setStateListAnimator(null);b.setElevation(0);b.setTranslationZ(0);b.setText(title);b.setAllCaps(false);b.setTextSize(size);b.setTypeface(face(weight));b.setLetterSpacing(0);b.setTextColor(color);b.setIncludeFontPadding(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setGravity(Gravity.CENTER);b.setPadding(dp(20),0,dp(20),0);press(b);return b;}
     private Button plain(String title,float size,int weight,int color,Runnable action){Button b=style(new Button(context),title,size,weight,color);b.setOnClickListener(v->action.run());return b;}
     private Pill filled(String title,int[] stops,int fg,Runnable action){
@@ -139,36 +138,40 @@ final class AppUi {
         StateListDrawable face=new StateListDrawable();face.addState(new int[]{-android.R.attr.state_enabled},outline(surfaceAlt,26,stroke,1));face.addState(new int[]{},new Aurora(stops,120,-1,dpf(1)));
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x38FFFFFF),face,pillMask()));lift(b,-1,4,false);b.lift=b.getElevation();b.setOnClickListener(v->action.run());return b;
     }
-    /** Primary is the aurora pill (52 dp); otherwise a full-width row with a trailing chevron. */
-    Button button(String title,boolean primary,Runnable action){
-        if(primary)return filled(title,new int[]{aurora[0],aurora[1]},onAccent,action);
-        Button b=plain(title,15,500,text,action);b.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);b.setPadding(dp(14),dp(10),dp(14),dp(10));b.setMinHeight(dp(52));b.setMinimumHeight(dp(52));b.setBackground(pressable(null,16));
-        b.setCompoundDrawablesWithIntrinsicBounds(null,null,new GlyphDrawable("arrow",muted,dp(18)),null);b.setCompoundDrawablePadding(dp(8));return b;
-    }
+    /** The aurora pill, 52 dp tall. */
+    Pill primaryButton(String title,Runnable action){return filled(title,new int[]{aurora[0],aurora[1]},onAccent,action);}
     /** Tonal pill: accent text on accent-soft, 52 dp touch height around a 40 dp face. */
-    Button quietButton(String title,Runnable action){Button b=plain(title,14.5f,700,accent,action);b.setMinHeight(dp(52));b.setMinimumHeight(dp(52));b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(accent,.2f)),insetOf(outline(accentSoft,26,0,0),0,6,0,6),insetOf(pillMask(),0,6,0,6)));b.setPadding(dp(20),0,dp(20),0);return b;}
+    Button quietButton(String title,Runnable action){Button b=plain(title,14.5f,700,accent,action);b.setMinHeight(dp(52));b.setMinimumHeight(dp(52));b.setBackground(chipFace(accentSoft,0,0,.2f,26,0));b.setPadding(dp(20),0,dp(20),0);return b;}
     Button ghostButton(String title,Runnable action){Button b=plain(title,14.5f,700,accent,action);b.setBackground(pressable(null,24));return b;}
-    Pill dangerButton(String title,Runnable action){return filled(title,new int[]{danger,danger},onDanger,action);}
     /** Always a strong filled control: ink pill with a stop glyph. */
     Pill stopButton(String title,Runnable action){Pill b=filled(title,new int[]{text,text},background,action);b.glyph("stop",background,20);return b;}
-    /** Outlined action chip with a leading glyph; 48 dp touch area around a 36 dp face. */
-    Pill chip(String label,String icon,Runnable action){
-        Pill b=style(new Pill(this),label,13.5f,500,text);b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(accent,.16f)),insetOf(outline(Color.TRANSPARENT,18,strokeStrong,1.25f),3,6,3,6),insetOf(pillMask(),3,6,3,6)));b.glyph(icon,accent,18);b.setOnClickListener(v->action.run());return b;
+    /** Outlined action chip with a leading glyph. */
+    Pill chip(String label,String icon,Runnable action){return chip(label,icon,false,action);}
+    Pill tonalChip(String label,String icon,Runnable action){return chip(label,icon,true,action);}
+    private Pill chip(String label,String icon,boolean tonal,Runnable action){
+        Pill b=style(new Pill(this),label,13.5f,tonal?700:500,tonal?accent:text);b.setBackground(tonal?chipFace(accentSoft,0,0,.2f,18,3):chipFace(Color.TRANSPARENT,strokeStrong,1.25f,.16f,18,3));b.glyph(icon,accent,18);b.setOnClickListener(v->action.run());return b;
     }
+    /** Pill face inset 6 dp top and bottom: a 48 dp touch area around a 36 dp face. */
+    RippleDrawable chipFace(int fill,int strokeColor,float strokeDp,float rippleAlpha,float radiusDp,int insetH){return new RippleDrawable(ColorStateList.valueOf(alpha(accent,rippleAlpha)),insetOf(outline(fill,radiusDp,strokeColor,strokeDp),insetH,6,insetH,6),insetOf(pillMask(),insetH,6,insetH,6));}
+    /** Ghost button with a trailing arrow. */
+    Button linkButton(String title,int startDp,Runnable action){Button b=ghostButton(title,action);b.setCompoundDrawablesWithIntrinsicBounds(null,null,glyph("arrow",accent,16),null);b.setCompoundDrawablePadding(dp(2));b.setPadding(dp(startDp),0,dp(4),0);return b;}
     ImageButton iconButton(String icon,String description,Runnable action){
         ImageButton b=new ImageButton(context);b.setImageDrawable(new GlyphDrawable(icon,text,dp(22)));b.setScaleType(ImageView.ScaleType.CENTER);b.setMinimumWidth(dp(48));b.setMinimumHeight(dp(48));
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(accent,.16f)),insetOf(outline(surface,24,stroke,1),3,3,3,3),insetOf(pillMask(),3,3,3,3)));b.setContentDescription(description);b.setOnClickListener(v->action.run());press(b);return b;
     }
-    /** Round aurora action (add, send). */
-    ImageButton fab(String icon,String description,Runnable action){
-        ImageButton b=new ImageButton(context);b.setImageDrawable(new GlyphDrawable(icon,onAccent,dp(24)));b.setScaleType(ImageView.ScaleType.CENTER);b.setMinimumWidth(dp(52));b.setMinimumHeight(dp(52));
-        b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x38FFFFFF),new Aurora(new int[]{aurora[0],aurora[1]},130,-1,dpf(1)),pillMask()));lift(b,-1,5,false);b.setContentDescription(description);b.setOnClickListener(v->action.run());press(b);return b;
+    Fab fab(String icon,String description,Runnable action){
+        Fab b=new Fab(context);b.setImageDrawable(new GlyphDrawable(icon,onAccent,dp(24)));b.setScaleType(ImageView.ScaleType.CENTER);b.setMinimumWidth(dp(52));b.setMinimumHeight(dp(52));
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x38FFFFFF),new Aurora(new int[]{aurora[0],aurora[1]},130,-1,dpf(1)),pillMask()));lift(b,-1,5,false);b.lift=b.getElevation();b.setContentDescription(description);b.setOnClickListener(v->action.run());press(b);return b;
     }
     ActionRow actionRow(String title,String icon,Runnable action){return new ActionRow(this,title,icon,"",false,action);}
     /** Settings-style row with a muted value ("Balanced") before the chevron. */
     ActionRow actionRow(String title,String icon,String value,Runnable action){return new ActionRow(this,title,icon,value,false,action);}
     ActionRow dangerRow(String title,String icon,Runnable action){return new ActionRow(this,title,icon,"",true,action);}
     StatusChip statusChip(String value,String tone){return new StatusChip(this,value,tone,true);}
+    /** Warning chip for changes that exist only on this phone until the next sync. */
+    StatusChip savedChip(String value){StatusChip chip=statusChip(value,"warning");chip.setCompoundDrawablesWithIntrinsicBounds(glyph("phone-saved",warning,14),null,null,null);return chip;}
+    /** Round aurora disc with a star, beside assistant messages. */
+    ImageView avatar(){ImageView avatar=new ImageView(context);avatar.setImageDrawable(glyph("star",onAccent,14));avatar.setScaleType(ImageView.ScaleType.CENTER);avatar.setBackground(aurora(130,false));avatar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);return avatar;}
     /** Tone: success, warning, danger, info, accent; anything else is neutral. Returns {foreground, soft background}. */
     int[] toneColors(String tone){
         if("success".equals(tone))return new int[]{success,successSoft};if("warning".equals(tone))return new int[]{warning,warningSoft};if("danger".equals(tone))return new int[]{danger,dangerSoft};
@@ -182,16 +185,13 @@ final class AppUi {
     }
     /** Tinted tile colours for a leading row icon. */
     int[] iconTone(String icon){
-        String k=Glyphs.canonical(icon);
-        if(k.equals("voice")||k.equals("sparkle")||k.equals("appearance")||k.equals("waveform"))return toneColors("accent");
-        if(k.equals("settings")||k.equals("download")||k.equals("link")||k.equals("cloud")||k.equals("tile")||k.equals("info")||k.equals("history"))return toneColors("info");
-        if(k.equals("check")||k.equals("shield-check")||k.equals("phone-saved"))return toneColors("success");
-        if(k.equals("bell")||k.equals("battery")||k.equals("clock")||k.equals("alert"))return toneColors("warning");
-        if(k.equals("logout")||k.equals("trash")||k.equals("x-circle"))return toneColors("danger");
+        if("voice".equals(icon)||"sparkle".equals(icon)||"appearance".equals(icon)||"waveform".equals(icon))return toneColors("accent");
+        if("download".equals(icon)||"link".equals(icon)||"tile".equals(icon))return toneColors("info");
+        if("shield-check".equals(icon))return toneColors("success");
+        if("bell".equals(icon)||"battery".equals(icon)||"alert".equals(icon))return toneColors("warning");
         return toneColors("orchid");
     }
 
-    // ------------------------------------------------------------------ inputs
     EditText field(String hint,String value){return field(hint,value,false);}
     /** Surface fill with a strong boundary (3:1); accent boundary while focused. */
     EditText field(String hint,String value,boolean pill){
@@ -199,12 +199,15 @@ final class AppUi {
         f.setPadding(dp(pill?20:16),dp(14),dp(pill?20:16),dp(14));f.setMinHeight(dp(52));f.setMinimumHeight(dp(52));f.setHighlightColor(alpha(accent,.28f));
         float r=pill?26:16;StateListDrawable face=new StateListDrawable();face.addState(new int[]{android.R.attr.state_focused},outline(surface,r,accent,2));face.addState(new int[]{},outline(surface,r,strokeStrong,1.5f));f.setBackground(face);return f;
     }
+    Switch switchControl(boolean checked,String description){
+        Switch control=new Switch(context);control.setShowText(false);control.setSplitTrack(false);control.setTrackDrawable(new SwitchTrack(this));control.setThumbDrawable(new SwitchThumb(this));control.setChecked(checked);control.setContentDescription(description);return control;
+    }
     Switch toggle(String title,String description,LinearLayout parent,boolean checked,android.widget.CompoundButton.OnCheckedChangeListener listener){
         LinearLayout row=row();row.setMinimumHeight(dp(56));LinearLayout labels=column();labels.addView(text(title,15,true));if(!description.isEmpty()){space(labels,3);TextView note=detail(description);note.setTextSize(13);labels.addView(note);}
         row.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
-        Switch control=new Switch(context);control.setShowText(false);control.setSplitTrack(false);control.setTrackDrawable(new SwitchTrack(this));control.setThumbDrawable(new SwitchThumb(this));control.setChecked(checked);control.setContentDescription(title);
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(60),dp(48));sp.leftMargin=dp(8);row.addView(control,sp);row.setOnClickListener(v->control.performClick());row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-        parent.addView(row);control.setOnCheckedChangeListener(listener);control.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);return control;
+        Switch control=switchControl(checked,title);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(60),dp(48));sp.leftMargin=dp(8);row.addView(control,sp);
+        row.setOnClickListener(v->control.performClick());row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        parent.addView(row);control.setOnCheckedChangeListener(listener);return control;
     }
     TextView badge(String value){return new StatusChip(this,value,"accent",false);}
     LinearLayout empty(String icon,String title,String detail){return empty(icon,title,detail,null,null);}
@@ -216,44 +219,42 @@ final class AppUi {
         if(actionLabel!=null&&action!=null){space(box,12);Button next=quietButton(actionLabel,action);box.addView(next,new LinearLayout.LayoutParams(-2,-2));}
         return box;
     }
-    /** Theme for full-screen sheets (edge to edge, slide-up animation); use with new Dialog(context, ui.sheetTheme()). */
-    int sheetTheme(){return dark?R.style.AssistantDarkSheet:R.style.AssistantLightSheet;}
-    Dialog sheet(){Dialog dialog=new Dialog(context,sheetTheme());dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);return dialog;}
+    /** Full-screen sheet: edge to edge with a slide-up animation. */
+    Dialog sheet(){Dialog dialog=new Dialog(context,dark?R.style.AssistantDarkSheet:R.style.AssistantLightSheet);dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);return dialog;}
     VoiceButton voiceButton(Runnable action){VoiceButton button=new VoiceButton(context,this);button.setOnClickListener(v->action.run());return button;}
     NavBar navBar(String[] labels,String[] icons,String[] tags,IntConsumer onSelect){return new NavBar(this,labels,icons,tags,onSelect);}
     Drawable glyph(String kind,int color,int sizeDp){return new GlyphDrawable(kind,color,dp(sizeDp));}
 
-    // ------------------------------------------------------------------ prefs
     static float level(Context context){try{return Math.max(0,Math.min(1,Cloud.prefs(context).getFloat("voice_level",0f)));}catch(ClassCastException e){return Math.max(0,Math.min(1,(float)number(context,"voice_level")));}}
+    static VoiceStatus voiceStatus(Context context,boolean inApp){
+        SharedPreferences p=Cloud.prefs(context);
+        return VoiceStatus.of(p.getString("voice_status","Microphone off"),micActive(context),p.getBoolean("wake_enabled",false),p.getBoolean("voice_listening_test",false),p.getBoolean("voice_conversation_mode",false)||p.getBoolean("voice_conversation_active",false),()->VoiceOutbox.pending(context),inApp);
+    }
     static boolean micActive(Context context){long at=number(context,"voice_metrics_elapsed"),age=android.os.SystemClock.elapsedRealtime()-at;return Cloud.prefs(context).getBoolean("voice_mic_active",false)&&at>0&&age>=0&&age<=3000;}
     static long number(Context context,String key){
         SharedPreferences p=Cloud.prefs(context);
         try{return p.getLong(key,0);}catch(ClassCastException a){try{return p.getInt(key,0);}catch(ClassCastException b){try{return (long)p.getFloat(key,0f);}catch(ClassCastException c){return 0;}}}
     }
 
-    // ------------------------------------------------------------------ motion (all gated by motion())
-    /** Press feedback: scale .97 in 90 ms, back in 160 ms. */
     static void press(View view){
         view.setOnTouchListener((v,e)->{int a=e.getActionMasked();
             if(a==MotionEvent.ACTION_DOWN&&motion())v.animate().scaleX(.97f).scaleY(.97f).setDuration(90).start();
             else if(a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_CANCEL){if(motion())v.animate().scaleX(1f).scaleY(1f).setDuration(160).start();else{v.setScaleX(1f);v.setScaleY(1f);}}
             return false;});
     }
-    /** Fade plus a 12 dp rise; new entries only. */
     static void enter(View view,int delayMs){
         view.animate().cancel();
         if(!motion()||!view.isShown()){view.setAlpha(1f);view.setTranslationY(0f);return;}
         view.setAlpha(0f);view.setTranslationY(12*view.getResources().getDisplayMetrics().density);view.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260).setInterpolator(OUT).start();
     }
     static void stagger(ViewGroup group){for(int i=0;i<group.getChildCount();i++)enter(group.getChildAt(i),Math.min(i,7)*45);}
-    /** Direction-aware page switch: +1 enters from the right, -1 from the left. */
+    /** +1 enters from the right, -1 from the left. */
     static void slide(View page,int direction){
         page.animate().cancel();
         if(!motion()||!page.isShown()){page.setAlpha(1f);page.setTranslationX(0f);return;}
         page.setAlpha(0f);page.setTranslationX(direction*20*page.getResources().getDisplayMetrics().density);page.animate().alpha(1f).translationX(0f).setStartDelay(0).setDuration(260).setInterpolator(SLIDE).start();
     }
     static void fade(View view){view.animate().cancel();if(view.isShown()&&motion()){view.setAlpha(.2f);view.animate().alpha(1f).setStartDelay(0).setDuration(150).setInterpolator(OUT).start();}else view.setAlpha(1f);}
-    /** Status text change: the new text fades in over 150 ms; nothing is left translucent when motion is off. */
     static void update(TextView view,String value){if(view!=null&&!view.getText().toString().equals(value)){view.setText(value);fade(view);}}
     static void collapse(View row,Runnable done){
         if(!motion()||!row.isShown()||row.getHeight()==0){row.setVisibility(View.GONE);if(done!=null)done.run();return;}
@@ -269,8 +270,7 @@ final class AppUi {
         a.addListener(new AnimatorListenerAdapter(){@Override public void onAnimationEnd(Animator x){lp.height=ViewGroup.LayoutParams.WRAP_CONTENT;row.setLayoutParams(lp);row.setAlpha(1f);}});a.start();
     }
 
-    // ------------------------------------------------------------------ glyph library (24x24, stroke 1.75, round caps and joins)
-    /** Path mini-language: SVG commands M L H V C Q A Z, plus O cx cy r and R x y w h r; segments are separated by |, F fills, B fills and strokes. */
+    /** Glyphs on a 24x24 grid with a 1.75 stroke and round caps and joins. Path mini-language: SVG commands M L H V C Q A Z, plus O cx cy r and R x y w h r; segments are separated by |, F fills, B fills and strokes. */
     static final class Glyphs {
         private static final String[] DATA={
             "voice","R9 3 6 11 3|M5.5 11 A6.5 6.5 0 0 0 18.5 11|M12 17.5 V21|M8.5 21 H15.5",
@@ -283,7 +283,6 @@ final class AppUi {
             "down","M6 9.5 L12 15.5 L18 9.5",
             "up","M6 14.5 L12 8.5 L18 14.5",
             "plus","M12 5 V19|M5 12 H19",
-            "close","M6.5 6.5 L17.5 17.5|M17.5 6.5 L6.5 17.5",
             "refresh","M20 12 A8 8 0 1 1 17.7 6.3 L20 8.5|M20 4 V8.5 H15.5",
             "recipe","M12 7 C10.5 5.7 8.2 5 4.5 5.2 V18.2 C8.2 18 10.5 18.7 12 20 C13.5 18.7 15.8 18 19.5 18.2 V5.2 C15.8 5 13.5 5.7 12 7 Z|M12 7 V20",
             "bell","M6 16.5 V11 A6 6 0 0 1 18 11 V16.5 L19.5 18 H4.5 Z|M10 20.5 A2 2 0 0 0 14 20.5",
@@ -304,22 +303,15 @@ final class AppUi {
             "clock","O12 12 8.5|M12 7.5 V12 L15 14",
             "alert","M10.29 3.86 L1.82 18 A2 2 0 0 0 3.53 21 H20.47 A2 2 0 0 0 22.18 18 L13.71 3.86 A2 2 0 0 0 10.29 3.86 Z|M12 9.5 V13.5|FO12 17.2 1",
             "x-circle","O12 12 8.5|M9.2 9.2 L14.8 14.8|M14.8 9.2 L9.2 14.8",
-            "undo","M9 14.5 L4 9.5 L9 4.5|M4 9.5 H14.5 A5.5 5.5 0 0 1 14.5 20.5 H11",
             "waveform","M4 10 V14|M8 6.5 V17.5|M12 3.5 V20.5|M16 7.5 V16.5|M20 10 V14",
             "chat","M4 6.5 A2.5 2.5 0 0 1 6.5 4 H17.5 A2.5 2.5 0 0 1 20 6.5 V13.5 A2.5 2.5 0 0 1 17.5 16 H10 L5.5 20 V16 H6.5 A2.5 2.5 0 0 1 4 13.5 Z",
-            "headphones","M4 14 V12 A8 8 0 0 1 20 12 V14|R3.5 13.5 4 6.5 1.8|R16.5 13.5 4 6.5 1.8",
-            "trash","M4.5 7 H19.5|M9.5 7 V5 A1 1 0 0 1 10.5 4 H13.5 A1 1 0 0 1 14.5 5 V7|M6.5 7 L7.3 18.6 A2 2 0 0 0 9.3 20.5 H14.7 A2 2 0 0 0 16.7 18.6 L17.5 7|M10 11 V16|M14 11 V16",
             "info","O12 12 8.5|M12 11 V16|FO12 7.9 1",
             "stop","BR7.5 7.5 9 9 1.6",
-            "play","BM8.5 6 L18 12 L8.5 18 Z",
             "star","FM12 2 Q12.9 11.1 22 12 Q12.9 12.9 12 22 Q11.1 12.9 2 12 Q11.1 11.1 12 2 Z",
-            "bolt","M13 2.5 L4.5 13.5 H11.5 L10.5 21.5 L19.5 10.5 H12.5 Z",
-            "edit","M4.5 19.5 L5.3 15.7 L16 5 A2 2 0 0 1 19 8 L8.3 18.7 Z|M14 7 L17 10"};
-        private static final String[] ALIAS={"mic","voice","bag","shopping","cart","shopping","pulse","activity","sliders","settings","tick","check","chevron","arrow","chevron-right","arrow","next","arrow","moon","appearance","grid","tile","book","recipe","shield","shield-check","arrow-up","send","wave","waveform","spark","sparkle","delete","trash","warning","alert","error","x-circle","offline","cloud-off","time","clock","disconnect","logout","install","download","cog","settings"};
+            "bolt","M13 2.5 L4.5 13.5 H11.5 L10.5 21.5 L19.5 10.5 H12.5 Z"};
         private static HashMap<String,Object[]> cache;
-        static String canonical(String kind){if(kind==null)return "";for(int i=0;i<ALIAS.length;i+=2)if(ALIAS[i].equals(kind))return ALIAS[i+1];return kind;}
         private static synchronized Object[] get(String kind){
-            if(cache==null)cache=new HashMap<>();String k=canonical(kind);Object[] hit=cache.get(k);if(hit!=null)return hit;
+            if(cache==null)cache=new HashMap<>();String k=kind==null?"":kind;Object[] hit=cache.get(k);if(hit!=null)return hit;
             String data="O12 12 7.5|FO12 12 1.6";for(int i=0;i<DATA.length;i+=2)if(DATA[i].equals(k)){data=DATA[i+1];break;}
             String[] parts=data.split("\\|");Path[] paths=new Path[parts.length];int[] modes=new int[parts.length];
             for(int i=0;i<parts.length;i++){String s=parts[i];if(s.charAt(0)=='F'){modes[i]=1;s=s.substring(1);}else if(s.charAt(0)=='B'){modes[i]=2;s=s.substring(1);}paths[i]=path(s);}
@@ -368,21 +360,18 @@ final class AppUi {
         }
     }
     static final class Icon extends View {
-        String kind;int color;float strokeUnits;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        String kind;int color;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         Icon(Context context,String kind,int color){super(context);this.kind=kind;this.color=color;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
         void color(int value){color=value;invalidate();}
         void kind(String value){kind=value;invalidate();}
-        /** Fixed stroke in glyph units; default scales so small icons keep a 1.5 dp line. */
-        void stroke(float units){strokeUnits=units;invalidate();}
         @Override protected void onDraw(Canvas canvas){
             super.onDraw(canvas);if(getWidth()==0)return;canvas.save();canvas.scale(getWidth()/24f,getHeight()/24f);paint.setColor(color);
-            Glyphs.draw(canvas,kind,paint,strokeUnits>0?strokeUnits:Glyphs.units(getWidth(),getResources().getDisplayMetrics().density));canvas.restore();
+            Glyphs.draw(canvas,kind,paint,Glyphs.units(getWidth(),getResources().getDisplayMetrics().density));canvas.restore();
         }
     }
     static final class GlyphDrawable extends Drawable {
-        final String kind;int color;final int size;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        final String kind;final int color,size;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         GlyphDrawable(String kind,int color,int size){this.kind=kind;this.color=color;this.size=size;}
-        void color(int value){color=value;invalidateSelf();}
         @Override public int getIntrinsicWidth(){return size;}@Override public int getIntrinsicHeight(){return size;}
         @Override public void draw(Canvas canvas){
             Rect b=getBounds();if(b.isEmpty())return;canvas.save();canvas.translate(b.left,b.top);canvas.scale(b.width()/24f,b.height()/24f);paint.setColor(color);
@@ -391,7 +380,6 @@ final class AppUi {
         @Override public void setAlpha(int a){paint.setAlpha(a);invalidateSelf();}@Override public void setColorFilter(ColorFilter filter){paint.setColorFilter(filter);}@Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
 
-    // ------------------------------------------------------------------ drawables
     /** Linear gradient pill or rounded rect at a CSS angle with a 1 dp light rim along the top edge. */
     static final class Aurora extends Drawable {
         final int[] colors;final float angle,radius,rimPx;final Paint fill=new Paint(Paint.ANTI_ALIAS_FLAG),rim=new Paint(Paint.ANTI_ALIAS_FLAG);final RectF box=new RectF(),inner=new RectF();
@@ -452,7 +440,6 @@ final class AppUi {
         @Override public void setAlpha(int a){p.setAlpha(a);}@Override public void setColorFilter(ColorFilter f){p.setColorFilter(f);}@Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
 
-    // ------------------------------------------------------------------ components
     /** Button with a leading glyph centred together with its label; the elevation drops while disabled. */
     static final class Pill extends Button {
         final AppUi ui;String glyph;int glyphColor,glyphPx,gap;float lift;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -464,6 +451,12 @@ final class AppUi {
             int base=ui.dp(14);float textWidth=getPaint().measureText(getText().toString()),group=glyphPx+gap+textWidth,shift=Math.max(0,(getWidth()-group)/2f-base);
             c.save();c.translate(shift,0);super.onDraw(c);c.translate(base,(getHeight()-glyphPx)/2f);c.scale(glyphPx/24f,glyphPx/24f);paint.setColor(isEnabled()?glyphColor:ui.muted);Glyphs.draw(c,glyph,paint,Glyphs.units(glyphPx,ui.density));c.restore();
         }
+    }
+    /** Round aurora action (add, send); half transparent and flat while disabled. */
+    static final class Fab extends ImageButton {
+        float lift;
+        Fab(Context context){super(context);}
+        @Override public void setEnabled(boolean on){super.setEnabled(on);setAlpha(on?1f:.5f);if(lift>0)setElevation(on?lift:0);}
     }
     /** Settings row: tinted icon tile, title, optional value and a chevron (hidden for destructive rows). */
     static final class ActionRow extends Button {
@@ -479,7 +472,6 @@ final class AppUi {
             int end=ui.dp(14)+(danger?0:ui.dp(22))+(value.isEmpty()?0:(int)Math.ceil(paint.measureText(value))+ui.dp(8));
             setPadding(ui.dp(16)+ui.dp(36)+ui.dp(14),ui.dp(8),end,ui.dp(8));
         }
-        /** Updates the muted value shown before the chevron. */
         void value(String v){value=v==null?"":v;setContentDescription(value.isEmpty()?null:getText()+", "+value);pad();requestLayout();invalidate();}
         @Override protected void onDraw(Canvas c){
             super.onDraw(c);int h=getHeight(),w=getWidth(),tile=ui.dp(36),left=ui.dp(16);float top=(h-tile)/2f;
@@ -492,7 +484,7 @@ final class AppUi {
     }
     /** Soft semantic chip: tone fill, tone text, leading glyph. */
     static final class StatusChip extends TextView {
-        final AppUi ui;final boolean withGlyph;String tone;
+        final AppUi ui;final boolean withGlyph;
         StatusChip(AppUi ui,String value,String tone,boolean withGlyph){
             super(ui.context);this.ui=ui;this.withGlyph=withGlyph;setText(value);setTextSize(12);setTypeface(face(700));setLetterSpacing(.004f);setIncludeFontPadding(false);setGravity(Gravity.CENTER_VERTICAL);setSingleLine(true);
             setPadding(ui.dp(withGlyph?8:11),ui.dp(5),ui.dp(11),ui.dp(5));setCompoundDrawablePadding(ui.dp(5));setMinHeight(ui.dp(26));tone(tone);
@@ -503,7 +495,7 @@ final class AppUi {
             super.onMeasure(widthSpec,heightSpec);
         }
         void tone(String value){
-            tone=value;int[] c=ui.toneColors(value);setTextColor(c[0]);setBackground(ui.outline(c[1],14,0,0));
+            int[] c=ui.toneColors(value);setTextColor(c[0]);setBackground(ui.outline(c[1],14,0,0));
             if(withGlyph){String g="success".equals(value)?"check":"warning".equals(value)?"alert":"danger".equals(value)?"x-circle":"info".equals(value)?"clock":"accent".equals(value)?"sparkle":null;setCompoundDrawablesWithIntrinsicBounds(g==null?null:new GlyphDrawable(g,c[0],ui.dp(14)),null,null,null);}
         }
     }
@@ -521,26 +513,14 @@ final class AppUi {
         }
         private void star(Canvas c,float x,float y,float size,int color){c.save();c.translate(x-size,y-size);c.scale(size/12f,size/12f);paint.setColor(color);Glyphs.draw(c,"star",paint,0f);c.restore();}
     }
-    static final class TimelineMark extends View {
-        final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final int color,line,fill;final boolean hollow;
-        TimelineMark(Context context,int color,int line){this(context,color,line,false,0);}
-        /** Hollow marks draw a ring over the page colour (in progress); filled marks are a solid dot (finished). */
-        TimelineMark(Context context,int color,int line,boolean hollow,int fill){super(context);this.color=color;this.line=line;this.hollow=hollow;this.fill=fill;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
-        @Override protected void onDraw(Canvas c){
-            float d=getResources().getDisplayMetrics().density,x=getWidth()/2f,y=14*d;p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);p.setColor(line);p.setStrokeWidth(2*d);c.drawLine(x,0,x,getHeight(),p);
-            if(hollow){p.setStyle(Paint.Style.FILL);p.setColor(fill);c.drawCircle(x,y,6.5f*d,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3.2f*d);p.setColor(color);c.drawCircle(x,y,5f*d,p);}
-            else{p.setStyle(Paint.Style.FILL);p.setColor(color);c.drawCircle(x,y,5f*d,p);}
-        }
-    }
     /** Circular checkbox with ring, fill and tick drawn in sequence on real state changes only. */
     static final class CheckDot extends View {
-        final int ring,fill,tick;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Path tickPath=new Path(),segment=new Path();float progress;boolean on;ValueAnimator animation;
+        final int ring,fill,tick;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Path tickPath=new Path(),segment=new Path();float progress;ValueAnimator animation;
         CheckDot(AppUi ui){super(ui.context);ring=ui.strokeStrong;fill=ui.accent;tick=ui.onAccent;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
-        boolean checked(){return on;}
         void set(boolean value,boolean animate){
             if(animation!=null)animation.cancel();
-            if(!animate||!motion()||!isShown()){on=value;progress=value?1:0;invalidate();return;}
-            on=value;animation=ValueAnimator.ofFloat(progress,value?1:0);animation.setDuration(180);animation.addUpdateListener(a->{progress=(Float)a.getAnimatedValue();invalidate();});animation.start();
+            if(!animate||!motion()||!isShown()){progress=value?1:0;invalidate();return;}
+            animation=ValueAnimator.ofFloat(progress,value?1:0);animation.setDuration(180);animation.addUpdateListener(a->{progress=(Float)a.getAnimatedValue();invalidate();});animation.start();
         }
         @Override protected void onDetachedFromWindow(){if(animation!=null)animation.cancel();super.onDetachedFromWindow();}
         @Override protected void onDraw(Canvas c){
@@ -552,12 +532,12 @@ final class AppUi {
     }
     /** Text that draws a strike line across itself; the line grows over 220 ms when the state really changes. */
     static final class StrikeText extends TextView {
-        final Paint line=new Paint(Paint.ANTI_ALIAS_FLAG);float progress;boolean on;ValueAnimator animation;
+        final Paint line=new Paint(Paint.ANTI_ALIAS_FLAG);float progress;ValueAnimator animation;
         StrikeText(Context context,int color){super(context);line.setColor(color);line.setStyle(Paint.Style.STROKE);line.setStrokeCap(Paint.Cap.ROUND);line.setStrokeWidth(1.6f*context.getResources().getDisplayMetrics().density);}
         void strike(boolean value,boolean animate){
             if(animation!=null)animation.cancel();
-            if(!animate||!motion()||!isShown()){on=value;progress=value?1:0;invalidate();return;}
-            on=value;animation=ValueAnimator.ofFloat(progress,value?1:0);animation.setDuration(220);animation.setInterpolator(SLIDE);animation.addUpdateListener(a->{progress=(Float)a.getAnimatedValue();invalidate();});animation.start();
+            if(!animate||!motion()||!isShown()){progress=value?1:0;invalidate();return;}
+            animation=ValueAnimator.ofFloat(progress,value?1:0);animation.setDuration(220);animation.setInterpolator(SLIDE);animation.addUpdateListener(a->{progress=(Float)a.getAnimatedValue();invalidate();});animation.start();
         }
         @Override protected void onDetachedFromWindow(){if(animation!=null)animation.cancel();super.onDetachedFromWindow();}
         @Override protected void onDraw(Canvas c){
@@ -566,11 +546,8 @@ final class AppUi {
         }
     }
     static final class Meter extends View {
-        final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);final int color,idle;final int[] stops;float amplitude;boolean active;ValueAnimator transition;
-        /** Aurora bars run from the given colour to orchid. */
-        Meter(Context context,int color){super(context);this.color=color;idle=alpha(color,.45f);stops=new int[]{color,Color.red(color)+Color.green(color)+Color.blue(color)>380?0xFFC46CF0:0xFFA23BC6};setContentDescription("Microphone level");}
-        Meter(Context context,AppUi ui){super(context);color=ui.aurora[0];idle=ui.muted;stops=new int[]{ui.aurora[0],ui.aurora[1]};setContentDescription("Microphone level");}
-        /** Attack 60 ms, release 220 ms, only when a new real level arrives. */
+        final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);final int idle;final int[] stops;float amplitude;boolean active;ValueAnimator transition;
+        Meter(Context context,AppUi ui){super(context);idle=ui.muted;stops=new int[]{ui.aurora[0],ui.aurora[1]};setContentDescription("Microphone level");}
         void value(float level,boolean on){
             active=on;if(transition!=null)transition.cancel();float target=on?level:0;
             if(isShown()&&motion()&&Math.abs(amplitude-target)>.01f){transition=ValueAnimator.ofFloat(amplitude,target);transition.setDuration(target>amplitude?60:220);transition.addUpdateListener(animation->{amplitude=(Float)animation.getAnimatedValue();invalidate();});transition.start();}
@@ -601,15 +578,13 @@ final class AppUi {
                 item.setTag(tags[i]);item.setContentDescription(labels[i]);item.setClickable(true);item.setFocusable(true);item.setOnClickListener(v->{select(index,true);if(pick!=null)pick.accept(index);});press(item);items[i]=item;row.addView(item,new LinearLayout.LayoutParams(0,-1,1));
             }
         }
-        /** Margins for a floating bar: 8 dp at the sides, clear of the gesture area below. */
         LinearLayout.LayoutParams params(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.leftMargin=p.rightMargin=ui.dp(8);p.topMargin=ui.dp(4);p.bottomMargin=ui.dp(12);return p;}
-        int selected(){return selected;}
         private float left(int i){return row.getLeft()+items[i].getLeft()+ui.dpf(4);}
         private float width(int i){return items[i].getWidth()-ui.dpf(8);}
         void select(int index,boolean animate){
             if(index<0||index>=items.length||(index==selected&&pillW>0))return;int old=selected;selected=index;for(int i=0;i<items.length;i++)items[i].setSelected(i==index);
             if(tint!=null)tint.cancel();
-            if(old!=index&&animate&&motion()&&isShown()){final int from=old;tint=ValueAnimator.ofFloat(0,1);tint.setDuration(200);tint.addUpdateListener(a->{float f=a.getAnimatedFraction();if(from>=0)color(from,AppUi.mix(ui.onAccent,ui.muted,f));color(index,AppUi.mix(ui.muted,ui.onAccent,f));});tint.start();}
+            if(old!=index&&animate&&motion()&&isShown()){final int from=old;for(int i=0;i<items.length;i++)if(i!=index&&i!=from)color(i,ui.muted);tint=ValueAnimator.ofFloat(0,1);tint.setDuration(200);tint.addUpdateListener(a->{float f=a.getAnimatedFraction();if(from>=0)color(from,AppUi.mix(ui.onAccent,ui.muted,f));color(index,AppUi.mix(ui.muted,ui.onAccent,f));});tint.start();}
             else for(int i=0;i<items.length;i++)color(i,i==index?ui.onAccent:ui.muted);
             if(row.getWidth()==0)return;
             float tx=left(index),tw=width(index);if(slide!=null)slide.cancel();
@@ -665,7 +640,6 @@ final class AppUi {
             if(isShown()&&motion()){blend=0;stateAnim=ValueAnimator.ofFloat(0,1);stateAnim.setDuration(180);stateAnim.addUpdateListener(a->{blend=(Float)a.getAnimatedValue();build();invalidate();});stateAnim.start();}
             else{blend=1;from=to;fromGlyph=toGlyph;fromLabel=toLabel;build();invalidate();}
         }
-        /** Halo alpha is about .28 plus .25 of the level; layers scale by 1 plus .76, .5 and .25 of the level. */
         void level(float value,boolean on){
             live=on;float target=on?Math.max(0,Math.min(1,value)):0;if(levelAnim!=null)levelAnim.cancel();
             if(!motion()){shown=Math.round(target*4)/4f;invalidate();return;}

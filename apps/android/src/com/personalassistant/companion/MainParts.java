@@ -1,6 +1,5 @@
 package com.personalassistant.companion;
 
-import android.content.res.ColorStateList;
 import android.graphics.*;
 import android.graphics.drawable.*;
 import android.view.*;
@@ -12,13 +11,6 @@ final class MainParts {
 
     static LinearLayout.LayoutParams params(AppUi ui,int width,int height,int left,int top,int right,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,height);p.setMarginStart(ui.dp(left));p.topMargin=ui.dp(top);p.setMarginEnd(ui.dp(right));p.bottomMargin=ui.dp(bottom);return p;}
     static LinearLayout.LayoutParams weighted(AppUi ui,float weight,int left,int top,int right,int bottom){LinearLayout.LayoutParams p=params(ui,0,-2,left,top,right,bottom);p.weight=weight;return p;}
-
-    /** Tonal chip: accent text on accent-soft, 48 dp touch area around a 36 dp face. */
-    static AppUi.Pill tonalChip(AppUi ui,String label,String icon,Runnable action){
-        AppUi.Pill chip=ui.chip(label,icon,action);chip.setTextColor(ui.accent);chip.setTypeface(AppUi.face(700));
-        chip.setBackground(new RippleDrawable(ColorStateList.valueOf(AppUi.alpha(ui.accent,.2f)),ui.insetOf(ui.outline(ui.accentSoft,18,0,0),3,6,3,6),ui.insetOf(ui.pillMask(),3,6,3,6)));
-        return chip.glyph(icon,ui.accent,18);
-    }
 
     /** Section label above the chat timeline; shared by the Voice tab and the locked entry, with room before the first bubble. */
     static void conversationLabel(AppUi ui,LinearLayout parent){parent.addView(ui.label("Conversation"),params(ui,-1,-2,4,12,0,14));}

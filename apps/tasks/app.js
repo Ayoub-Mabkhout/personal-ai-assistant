@@ -146,8 +146,8 @@ $('copy-result').onclick=event=>copy(copyText.result,event.currentTarget);
 async function copy(text,button){
   try{await navigator.clipboard.writeText(text)}
   catch{const field=el('textarea');field.value=text;field.className='sr-only';document.body.append(field);field.select();try{document.execCommand('copy')}catch{}field.remove()}
-  const label=button.querySelector('span');label.textContent='Copied';button.querySelector('use').setAttribute('href','#i-check');
-  clearTimeout(button.resetTimer);button.resetTimer=setTimeout(()=>{label.textContent='Copy';button.querySelector('use').setAttribute('href','#i-copy')},1800);
+  const label=button.querySelector('span');label.textContent='Copied';button.querySelector('use').setAttribute('href','#i-check');$('copy-status').textContent='Copied to clipboard';
+  clearTimeout(button.resetTimer);button.resetTimer=setTimeout(()=>{label.textContent='Copy';button.querySelector('use').setAttribute('href','#i-copy');$('copy-status').textContent=''},1800);
 }
 function copyButton(text){
   const button=el('button','btn ghost');button.type='button';button.setAttribute('aria-label','Copy answer');

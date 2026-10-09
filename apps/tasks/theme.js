@@ -66,7 +66,7 @@
     return NAMES.sun+' · '+(phase.dark?'dark':'light')+' until '+hours.format(phase.next);
   }
 
-  window.tasksTheme={mode:()=>mode,resolved:()=>resolved,set,describe,cycle:()=>set(MODES[(MODES.indexOf(mode)+1)%MODES.length])};
+  window.tasksTheme={mode:()=>mode,describe,cycle:()=>set(MODES[(MODES.indexOf(mode)+1)%MODES.length])};
   apply();
   const follow=()=>{if(mode==='system')apply()};
   if(system){if(system.addEventListener)system.addEventListener('change',follow);else if(system.addListener)system.addListener(follow)}

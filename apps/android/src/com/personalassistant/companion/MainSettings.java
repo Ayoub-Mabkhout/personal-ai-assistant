@@ -28,7 +28,7 @@ final class MainSettings {
 
         ui.label(page,"Voice & appearance");LinearLayout voice=ui.rowsCard();
         LinearLayout preview=tileRow("chat",null);preview.addView(labels("Transcription preview","Show words without executing commands."),MainParts.weighted(ui,1,14,0,8,0));
-        Switch toggle=new Switch(a);toggle.setShowText(false);toggle.setSplitTrack(false);toggle.setTrackDrawable(new AppUi.SwitchTrack(ui));toggle.setThumbDrawable(new AppUi.SwitchThumb(ui));toggle.setChecked(prefs.getBoolean("voice_preview",false));toggle.setContentDescription("Transcription preview");toggle.setTag("transcription_preview");
+        Switch toggle=ui.switchControl(prefs.getBoolean("voice_preview",false),"Transcription preview");toggle.setTag("transcription_preview");
         toggle.setOnCheckedChangeListener((button,on)->Cloud.prefs(a).edit().putBoolean("voice_preview",on).apply());preview.addView(toggle,new LinearLayout.LayoutParams(ui.dp(60),ui.dp(48)));preview.setClickable(true);preview.setFocusable(true);preview.setOnClickListener(v->toggle.performClick());preview.setBackground(ui.pressable(null,16));preview.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);voice.addView(preview);
         sensitivity=row(voice,"Wake sensitivity","waveform","Balanced",a::sensitivity);sensitivity.setTag("wake_sensitivity");appearance=row(voice,"Appearance","appearance","",a::appearance);appearance.setTag("appearance");
         line(voice);note(voice,"Hey Chat handles one command, then returns to standby. Start conversation mode keeps listening until you say That was all.");page.addView(voice);
@@ -40,13 +40,13 @@ final class MainSettings {
         pairBox=ui.column();pairBox.setPadding(ui.dp(14),ui.dp(2),ui.dp(14),ui.dp(10));
         server=ui.field("HTTPS server address",prefs.getString("origin",""));server.setTag("server_address");server.setContentDescription("Server address");server.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);pairBox.addView(server);ui.space(pairBox,10);
         code=ui.field("One-use pairing code","");code.setTag("pairing_code");code.setContentDescription("Pairing code");code.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);pairBox.addView(code);ui.space(pairBox,10);
-        pairStatus=ui.type("Open Groceries on the web and tap \"Phone widget & alarms\" for a code.",13,18,400,0,ui.muted);pairStatus.setTag("pairing_status");pairBox.addView(pairStatus,MainParts.params(ui,-1,-2,4,0,4,0));
-        connect=ui.button("Connect phone",true,a::pair);connect.setTag("pair");pairBox.addView(connect,MainParts.params(ui,-1,-2,0,14,0,0));account.addView(pairBox);
+        pairStatus=ui.type("Open Groceries on the web and tap \"Phone widget & alarms\" for a code.",13,18,400,0,ui.muted);pairStatus.setTag("pairing_status");pairStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);pairBox.addView(pairStatus,MainParts.params(ui,-1,-2,4,0,4,0));
+        connect=ui.primaryButton("Connect phone",a::pair);connect.setTag("pair");pairBox.addView(connect,MainParts.params(ui,-1,-2,0,14,0,0));account.addView(pairBox);
         disconnect=ui.dangerRow("Disconnect phone","logout",a::disconnect);account.addView(disconnect,new LinearLayout.LayoutParams(-1,-2));page.addView(account);
 
         ui.label(page,"App & shortcuts");LinearLayout app=ui.rowsCard();
         row(app,"Check for updates","download","",()->a.checkUpdates(true));updateStatus=ui.type("",13,18,400,0,ui.muted);updateStatus.setTag("update_status");app.addView(updateStatus,MainParts.params(ui,-1,-2,66,0,14,8));
-        install=ui.button("Install update",true,()->Updates.install(a));install.setTag("install_update");install.setVisibility(View.GONE);app.addView(install,MainParts.params(ui,-1,-2,14,2,14,10));
+        install=ui.primaryButton("Install update",()->Updates.install(a));install.setTag("install_update");install.setVisibility(View.GONE);app.addView(install,MainParts.params(ui,-1,-2,14,2,14,10));
         notifications=row(app,"Notifications","bell","",a::notificationSettings);row(app,"Microphone Quick Settings tile","tile","",a::addMicrophoneTile).setTag("add_mic_tile");
         line(app);note(app,"Shopping widget: long press your Home screen, then Widgets. Task details and follow-ups open in Companion.");page.addView(app);
 
@@ -63,7 +63,7 @@ final class MainSettings {
     }
     private AppUi.ActionRow row(LinearLayout card,String title,String icon,String value,Runnable action){AppUi.ActionRow row=ui.actionRow(title,icon,value,action);card.addView(row,new LinearLayout.LayoutParams(-1,-2));return row;}
     private LinearLayout labels(String title,String detail){LinearLayout box=ui.column();box.addView(ui.type(title,15,21,500,0,ui.text));box.addView(ui.type(detail,13,18,400,0,ui.muted),MainParts.params(ui,-2,-2,0,1,0,0));return box;}
-    private void line(LinearLayout card){View line=new View(a);line.setBackgroundColor(ui.stroke);card.addView(line,MainParts.params(ui,-1,1,66,2,14,0));}
+    private void line(LinearLayout card){ui.hairline(card,66,2,14);}
     private void note(LinearLayout card,String text){card.addView(ui.type(text,13,18,400,0,ui.muted),MainParts.params(ui,-1,-2,66,8,14,12));}
 
     void pairing(boolean busy){connect.setEnabled(!busy);connect.setText(busy?"Connecting...":"Connect phone");}

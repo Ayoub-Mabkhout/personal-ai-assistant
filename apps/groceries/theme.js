@@ -81,7 +81,6 @@
   }
 
   window.groceriesTheme={
-    read:()=>mode,
     set:set,
     state:()=>({mode:mode,resolved:resolved,next:next}),
     subscribe:listener=>{listeners.push(listener)}

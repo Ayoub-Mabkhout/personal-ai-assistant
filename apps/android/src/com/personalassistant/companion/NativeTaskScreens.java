@@ -41,7 +41,7 @@ final class NativeTaskScreens {
         // AppUi.lift stops ancestors clipping their children; the root clips again once attached so the scrolled list cannot paint over the header.
         void open(){List<Screen> list=openScreens.get(a);if(list==null){list=new ArrayList<>();openScreens.put(a,list);}list.add(this);dialog.show();dialog.getWindow().setLayout(-1,-1);root.post(()->{root.setClipChildren(true);root.setClipToPadding(true);});if(Build.VERSION.SDK_INT>=33)a.registerReceiver(changes,new IntentFilter(NativeTasks.ACTION),Context.RECEIVER_NOT_EXPORTED);else a.registerReceiver(changes,new IntentFilter(NativeTasks.ACTION));registered=true;load();}
         void safe(Runnable r){main.post(()->{if(!closed&&!a.isDestroyed())r.run();});}
-        void spin(){if(AppUi.motion())refresh.animate().rotationBy(360).setDuration(600).setInterpolator(AppUi.SLIDE).start();}
+        void spin(){if(!AppUi.motion())return;refresh.animate().cancel();refresh.setRotation(0);refresh.animate().rotation(360).setDuration(600).setInterpolator(AppUi.SLIDE).start();}
         void note(String text,String icon,boolean warn){int color=warn?ui.warning:ui.muted;status.setVisibility(text.isEmpty()?View.GONE:View.VISIBLE);AppUi.update(status,text);status.setTextColor(color);status.setCompoundDrawablesRelativeWithIntrinsicBounds(icon==null||text.isEmpty()?null:ui.glyph(icon,color,14),null,null,null);}
         void line(TextView view,String text){view.setVisibility(text.isEmpty()?View.GONE:View.VISIBLE);AppUi.update(view,text);}
         AppUi.StatusChip stateChip(String raw){AppUi.StatusChip chip=ui.statusChip(state(raw),"neutral");restyle(chip,raw);return chip;}
@@ -92,7 +92,7 @@ final class NativeTaskScreens {
         View card(JSONObject item){
             String id=item.optString("id"),kind=item.optString("kind","agent"),raw=item.optString("state"),request=item.optString("request"),summary=item.optString("summary");long at=timestamp(item.opt("updated"));
             LinearLayout row=ui.card();row.setTag("task_row:"+id);row.setClickable(true);row.setForeground(ui.pressable(null,24));row.setOnClickListener(v->detail(a,kind,id));
-            LinearLayout top=ui.row();top.addView(stateChip(raw));top.addView(new View(a),new LinearLayout.LayoutParams(0,1,1));if(at>0)top.addView(ui.small(TaskViews.when(at)));row.addView(top);ui.space(row,12);
+            LinearLayout top=ui.row();top.addView(stateChip(raw));top.addView(new View(a),new LinearLayout.LayoutParams(0,1,1));if(at>0)top.addView(ui.small(AppUi.stamp(at)));row.addView(top);ui.space(row,12);
             TextView title=ui.heading(request.isEmpty()?"Task":request);title.setMaxLines(3);title.setEllipsize(TextUtils.TruncateAt.END);row.addView(title);
             if(!summary.isEmpty()){ui.space(row,6);TextView answer=ui.detail(summary);answer.setMaxLines(3);answer.setEllipsize(TextUtils.TruncateAt.END);row.addView(answer);}
             ui.space(row,14);Button open=ui.quietButton("Open task",()->detail(a,kind,id));open.setTag("task_open:"+id);row.addView(open,new LinearLayout.LayoutParams(-1,-2));return row;
@@ -100,7 +100,7 @@ final class NativeTaskScreens {
     }
 
     private static final class Detail extends Screen {
-        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved;final EditText instruction;final TaskViews.SendFab send;final Set<String> queued=new HashSet<>();
+        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved;final EditText instruction;final AppUi.Fab send;final Set<String> queued=new HashSet<>();
         String rendered;boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder;int total=-1;long lastDay;
         Detail(Activity a,String kind,String id){
             super(a,"Task details");this.kind=kind;this.id=id;agent=kind.equals("agent");
@@ -111,9 +111,9 @@ final class NativeTaskScreens {
             composer=ui.column();composer.setTag("task_followup_card");composer.setBackground(ui.sheetFace());ui.lift(composer,28,10,true);
             composer.addView(ui.type("Continue this task",13,18,700,0,ui.text));ui.space(composer,8);
             instruction=ui.field("Add your instruction",Cloud.prefs(a).getString("task_draft:"+id,""),true);instruction.setSingleLine(false);instruction.setMaxLines(5);instruction.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);instruction.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);instruction.setTag("task_followup_input");
-            send=new TaskViews.SendFab(ui,"Send follow-up",this::submit);send.setTag("task_followup_send");
+            send=ui.fab("send","Send follow-up",this::submit);send.setTag("task_followup_send");
             LinearLayout compose=ui.row();compose.setGravity(Gravity.BOTTOM);compose.addView(instruction,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52));fp.leftMargin=ui.dp(10);compose.addView(send,fp);composer.addView(compose);
-            saved=ui.type("",12.5f,18,500,0,ui.muted);saved.setTag("task_followup_status");saved.setVisibility(View.GONE);saved.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(saved);
+            saved=ui.type("",12.5f,18,500,0,ui.muted);saved.setTag("task_followup_status");saved.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);saved.setVisibility(View.GONE);saved.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(saved);
             composer.setVisibility(agent?View.VISIBLE:View.GONE);root.addView(composer,new LinearLayout.LayoutParams(-1,-2));insets();refreshSend();
             instruction.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){Cloud.prefs(a).edit().putString("task_draft:"+id,s.toString()).apply();refreshSend();}public void afterTextChanged(Editable e){}});
             body.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(follow){boolean snap=jump;jump=false;end(snap);}});
@@ -140,7 +140,7 @@ final class NativeTaskScreens {
                 for(int n=0;n<queue.length();n++){
                     JSONObject entry=queue.getJSONObject(n);if(!id.equals(entry.optString("task_id")))continue;count++;long at=timestamp(entry.opt("created"));boolean review="needs_review".equals(entry.optString("state"));
                     if(at>0&&TaskViews.day(at)!=day){day=TaskViews.day(at);pendingMessages.addView(TaskViews.separator(ui,at));}
-                    AppUi.StatusChip badge=ui.statusChip(review?"Needs review · kept on this phone":"Saved on this phone · sending when connected",review?"danger":"warning");if(!review)badge.setCompoundDrawablesWithIntrinsicBounds(ui.glyph("phone-saved",ui.warning,14),null,null,null);badge.setSingleLine(false);badge.setMaxLines(2);
+                    AppUi.StatusChip badge=review?ui.statusChip("Needs review · kept on this phone","danger"):ui.savedChip("Saved on this phone · sending when connected");badge.setSingleLine(false);badge.setMaxLines(2);
                     View item=TaskViews.bubble(ui,entry.optString("instruction"),true,"You",at,badge);if(item==null)continue;pendingMessages.addView(item);if(queued.add(entry.optString("id"))&&primed)AppUi.enter(item,0);
                 }
                 primed=true;
@@ -150,7 +150,7 @@ final class NativeTaskScreens {
         }
         void render(JSONObject value){
             loaded=true;String raw=value.optString("conversation_state",value.optString("state"));AppUi.update(chip,state(raw));restyle(chip,raw);
-            long created=timestamp(value.opt("created"));AppUi.update(provenance,created>0?"Requested "+TaskViews.when(created):"");meta.setVisibility(View.VISIBLE);
+            long created=timestamp(value.opt("created"));AppUi.update(provenance,created>0?"Requested "+AppUi.stamp(created):"");meta.setVisibility(View.VISIBLE);
             String signature=value.toString();
             if(!signature.equals(rendered)||placeholder){
                 int before=placeholder?0:messages.getChildCount();rendered=signature;placeholder=false;messages.removeAllViews();lastDay=0;

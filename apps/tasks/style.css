@@ -75,6 +75,7 @@ main:has(.composer:not([hidden])){padding-bottom:0}
 @media(hover:hover){.pillnav a:not([aria-current=page]):hover{background:var(--surface-alt);color:var(--text)}}
 @media(min-width:600px){.pillnav{align-self:center}.pillnav a{flex:none;padding:0 22px}}
 @media(max-width:440px){.pillnav a:not([aria-current=page]) .i{display:none}}
+@media(max-width:359px){.pillnav{gap:2px}.pillnav a{padding:0 8px;font-size:12px}}
 @media(max-height:560px){.pillnav{position:static}}
 
 .titles{padding:4px 2px 0}
@@ -90,7 +91,6 @@ h1{margin-top:2px;font-size:32px;line-height:38px;font-weight:700;letter-spacing
 .s-danger{--tone:var(--danger);--tone-soft:var(--danger-soft)}
 .s-neutral{--tone:var(--muted);--tone-soft:var(--surface-alt)}
 .chip{display:inline-flex;align-items:center;gap:5px;min-height:26px;padding:0 11px 0 8px;border-radius:13px;background:var(--tone-soft);color:var(--tone);font-size:12px;line-height:16px;font-weight:700;white-space:nowrap}
-.chip:not(:has(.i)){padding-left:11px}
 .chip .i{width:14px;height:14px}
 .chip.s-neutral{box-shadow:inset 0 0 0 1px var(--stroke)}
 .note{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;border-radius:20px;background:var(--tone-soft);color:var(--tone);font-size:14px;line-height:20px;font-weight:500}
