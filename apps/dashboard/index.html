@@ -238,9 +238,12 @@ textarea.field{min-height:120px;resize:vertical;line-height:22px}
 .check:checked{border-color:transparent;background:linear-gradient(120deg,var(--g1),var(--g2));box-shadow:0 0 0 4px var(--accent-soft)}
 .check:checked::before{transform:rotate(-45deg) scale(1)}
 .check:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.state{display:grid;place-items:center;width:24px;height:24px;flex:none;margin:-1px 0 0;border:1.5px solid var(--stroke-strong);border-radius:50%}
+.state.ok{border-color:transparent;background:var(--success);color:var(--surface)}
+.state.ok::before{content:'';width:10px;height:5px;margin-top:-3px;border:solid currentColor;border-width:0 0 2.25px 2.25px;transform:rotate(-45deg)}
 .feat-text{display:grid;gap:2px;min-width:0}
 .feat-title{justify-self:start;font-weight:500;overflow-wrap:anywhere;background:linear-gradient(currentColor,currentColor) 0 55%/0 1.5px no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size 220ms cubic-bezier(.2,0,0,1),color 220ms}
-.feat.done .feat-title{background-size:100% 1.5px;color:var(--muted)}
+.feat.done .feat-title{color:var(--text)}
 .feat-detail{font-size:13px;line-height:18px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 .feat .chips{margin-top:4px}
 .feat-remove{display:flex;align-items:center;justify-content:center;gap:6px;min-width:48px;height:48px;flex:none;padding:0 12px;border:0;border-radius:24px;background:none;color:var(--muted);font-size:13px;font-weight:700;transition:background 160ms,color 160ms}
@@ -482,14 +485,8 @@ dialog textarea.field{min-height:84px}
   </section>
 
   <section id="features" class="page" hidden>
-    <header class="page-head"><span class="eyebrow">WHAT THE ASSISTANT CAN DO</span><h1 tabindex="-1">Features<span class="accent">.</span></h1><p class="lede">Features to build for the Companion, this dashboard and the assistant. Check one off when it is implemented and it moves to Finished. The Companion app shows the same list.</p></header>
+    <header class="page-head"><span class="eyebrow">WHAT THE ASSISTANT CAN DO</span><h1 tabindex="-1">Features<span class="accent">.</span></h1><p class="lede">Features for the Companion, this dashboard and the assistant. The assistant keeps this list up to date: implemented features move to Finished. The Companion app shows the same list.</p></header>
     <article class="card">
-      <form id="feature-form" class="feature-add">
-        <input id="feature-title" class="field" placeholder="Add a feature to build…" required maxlength="200" aria-label="New feature">
-        <select id="feature-area" class="field" aria-label="Area"><option value="assistant">Assistant</option><option value="companion">Companion</option><option value="dashboard">Dashboard</option></select>
-        <button class="btn primary"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add</button>
-      </form>
-      <p class="hint">Saved on the relay, so your phone sees it over mobile data.</p>
       <div class="feature-head"><h2 id="open-heading">To build</h2><button class="btn tonal small" id="refresh-features" type="button"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button></div>
       <ul id="features-open" class="checklist" aria-labelledby="open-heading"></ul>
       <details class="finished" id="features-finished">
@@ -976,29 +973,24 @@ const finishedOn=t=>new Date(t*1000).toLocaleDateString(undefined,{day:'numeric'
 const listItem=node=>{const li=el('li');li.append(node);return li};
 let features=[],featuresShown=false;
 function featureRow(entry,fresh){
-  const li=el('li',undefined,'feat'+(entry.done?' done':'')+(fresh?' rise':'')),main=el('label',undefined,'feat-main'),box=el('input',undefined,'check'),text=el('span',undefined,'feat-text'),meta=el('span',undefined,'chips');
-  li.dataset.id=entry.id;box.type='checkbox';box.checked=entry.done;box.setAttribute('aria-label',entry.title);
-  box.onchange=()=>{if(entry.busy){box.checked=!box.checked;return}toggleFeature(entry,box.checked,li)};
+  const li=el('li',undefined,'feat'+(entry.done?' done':'')+(fresh?' rise':'')),main=el('div',undefined,'feat-main'),box=el('span',undefined,'state'+(entry.done?' ok':'')),text=el('span',undefined,'feat-text'),meta=el('span',undefined,'chips');
+  li.dataset.id=entry.id;box.setAttribute('role','img');box.setAttribute('aria-label',entry.done?'Finished':'To build');
   text.append(el('span',entry.title,'feat-title'));
   if(entry.detail)text.append(el('span',entry.detail,'feat-detail'));
   meta.append(chip(AREAS[entry.area]||humanize(entry.area),'accent'));
   if(entry.done&&entry.done_at)meta.append(el('span','Finished '+finishedOn(entry.done_at),'meta'));
   text.append(meta);main.append(box,text);
-  const remove=el('button',undefined,'feat-remove');remove.type='button';remove.setAttribute('aria-label','Remove '+entry.title);remove.append(svg('x'));
-  remove.onclick=()=>removeFeature(entry,remove);
-  li.append(main,remove);return li;
+  li.append(main);return li;
 }
 function renderFeatures(fresh){
-  const active=document.activeElement,row=active&&active.closest?active.closest('.feat'):null,focusId=row&&row.dataset.id,onRemove=active&&active.classList.contains('feat-remove');
   const open=features.filter(x=>!x.done),done=features.filter(x=>x.done),isFresh=x=>Boolean(fresh&&fresh.has(x.id));
   $('features-open').replaceChildren(...open.map(x=>featureRow(x,isFresh(x))));
-  if(!open.length)$('features-open').append(listItem(features.length?empty('check-circle','Everything is built','Every feature on the list is finished. Add the next one above.'):empty('checklist','No features yet','Add a feature you want the assistant to have.',{label:'Add a feature',run:()=>$('feature-title').focus()})));
+  if(!open.length)$('features-open').append(listItem(features.length?empty('check-circle','Everything is built','Every feature on the list is finished.'):empty('checklist','No features yet','The assistant adds features here as they are planned.')));
   $('features-done').replaceChildren(...done.map(x=>featureRow(x,isFresh(x))));
   $('features-finished').hidden=!done.length;
   const count=$('finished-count');
   if(count.textContent!==String(done.length)){count.textContent=done.length;count.classList.remove('swap');void count.offsetWidth;count.classList.add('swap')}
   $('features-finished').querySelector('summary').setAttribute('aria-label','Finished, '+done.length+(done.length===1?' feature':' features'));
-  if(focusId){const again=document.querySelector('.feat[data-id="'+CSS.escape(focusId)+'"] '+(onRemove?'.feat-remove':'.check'));if(again&&again.offsetParent)again.focus({preventScroll:true})}
 }
 async function loadFeatures(){
   if(!featuresShown)$('features-open').replaceChildren(...skeleton(3).map(listItem));
@@ -1009,68 +1001,9 @@ async function loadFeatures(){
     missed('features');
   }
 }
-async function collapse(li){
-  if(QUICK.matches)return;
-  li.style.height=li.offsetHeight+'px';void li.offsetHeight;
-  li.classList.add('collapse');li.style.height='0px';
-  await pause(240);
-}
-function refocus(id,list,index){
-  const own=document.querySelector('.feat[data-id="'+CSS.escape(id)+'"] .check');
-  if(own&&own.offsetParent)return own.focus({preventScroll:true});
-  const rows=list.querySelectorAll('.check');(rows[Math.min(index,rows.length-1)]||$('feature-title')).focus({preventScroll:true});
-}
-async function toggleFeature(entry,done,li){
-  const focused=li.contains(document.activeElement),list=li.parentElement,index=[...list.children].indexOf(li),before={done:entry.done,done_at:entry.done_at};
-  entry.busy=true;li.classList.toggle('done',done);
-  const saving=api('features/'+encodeURIComponent(entry.id),{done},'PATCH');
-  saving.catch(()=>{});
-  // A refresh may have replaced the list meanwhile; always change the current copy.
-  const apply=values=>{const current=features.find(x=>x.id===entry.id);if(current)Object.assign(current,values);features.sort(featureOrder)};
-  await pause(400);await collapse(li);
-  apply({done,done_at:done?entry.done_at||Date.now()/1000:null});renderFeatures(new Set([entry.id]));
-  if(focused)refocus(entry.id,list,index);
-  $('feature-status').textContent=done?entry.title+' moved to Finished.':entry.title+' moved back to To build.';
-  try{apply(await saving);renderFeatures()}
-  catch(error){apply(before);renderFeatures();toast(error.message,'error')}
-  finally{entry.busy=false}
-}
-function removeFeature(entry,button){
-  const reset=()=>{button.classList.remove('confirm');button.replaceChildren(svg('x'));button.setAttribute('aria-label','Remove '+entry.title)};
-  if(!button.classList.contains('confirm')){
-    button.classList.add('confirm');button.replaceChildren(svg('x'),el('span','Remove?'));button.setAttribute('aria-label','Select again to remove '+entry.title);
-    clearTimeout(button.timer);button.timer=setTimeout(reset,4000);return;
-  }
-  clearTimeout(button.timer);
-  const li=button.closest('.feat'),list=li.parentElement,index=[...list.children].indexOf(li),focused=li.contains(document.activeElement);
-  api('features/'+encodeURIComponent(entry.id),undefined,'DELETE').then(async()=>{
-    await collapse(li);features=features.filter(x=>x.id!==entry.id);renderFeatures();
-    if(focused)refocus(entry.id,list,index);
-    $('feature-status').textContent=entry.title+' removed.';toast('Feature removed.','success');
-  },error=>{reset();toast(error.message,'error')});
-}
-$('feature-form').onsubmit=async e=>{
-  e.preventDefault();
-  const title=$('feature-title').value.trim(),area=$('feature-area').value;if(!title)return;
-  // The ID is kept with the draft, so a retry after a lost reply cannot add the feature twice.
-  const saved=readJSON('personal-feature-draft'),body=saved&&saved.title===title&&saved.area===area?saved:{id:crypto.randomUUID(),title,area};
-  store('personal-feature-draft',body);busy($('feature-form'),true);
-  try{
-    const added=await api('features',body);
-    store('personal-feature-draft',null);
-    if($('feature-title').value.trim()===title)$('feature-title').value='';
-    features=features.filter(x=>x.id!==added.id).concat(added).sort(featureOrder);featuresShown=true;
-    renderFeatures(new Set([added.id]));$('feature-status').textContent=added.title+' added to To build.';
-  }catch(error){
-    if(error.status===409)store('personal-feature-draft',null);
-    toast(error.message+(error.status===409?'':' Your entry remains in this browser.'),'error');
-  }finally{busy($('feature-form'),false)}
-};
 $('refresh-features').onclick=()=>{forget('features');ensure('features',true)};
 $('features-finished').open=Boolean(readJSON('personal-features-finished'));
 $('features-finished').ontoggle=()=>store('personal-features-finished',$('features-finished').open||null);
-const featureDraft=readJSON('personal-feature-draft');
-if(featureDraft&&featureDraft.title){$('feature-title').value=featureDraft.title;if(AREAS[featureDraft.area])$('feature-area').value=featureDraft.area}
 
 /* profile */
 const PROFILE_FIELDS=[['profile-bio','bio'],['location','location'],['profile-subtitle','subtitle'],['focus','focus'],['outside-title','outside_title'],['outside-copy','outside_copy'],['career-title','career_title'],['planning','planning_preferences'],['language-goal','language_goal']];

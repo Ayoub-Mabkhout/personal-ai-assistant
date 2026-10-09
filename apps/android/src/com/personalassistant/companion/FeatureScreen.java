@@ -31,14 +31,14 @@ final class FeatureScreen {
         status=ui.type("",12.5f,18,500,0,ui.muted);status.setTag("features_status");status.setVisibility(View.GONE);status.setPadding(ui.dp(24),ui.dp(2),ui.dp(24),ui.dp(8));status.setCompoundDrawablePadding(ui.dp(6));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);root.addView(status);
         scroll=new ScrollView(a);scroll.setFillViewport(true);body=ui.column();body.setPadding(ui.dp(20),ui.dp(4),ui.dp(20),ui.dp(24));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
 
-        body.addView(ui.detail("What the assistant should be able to do. Check a feature once it works; it moves to Finished."),MainParts.params(ui,-1,-2,4,0,4,14));
+        body.addView(ui.detail("What the assistant can do and what is planned. The assistant keeps this list up to date; implemented features move to Finished."),MainParts.params(ui,-1,-2,4,0,4,14));
         LinearLayout addRow=ui.row();input=ui.field("Add a feature",p.getString("features_draft",""),true);input.setTag("features_input");input.setContentDescription("New feature name");
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setImeOptions(EditorInfo.IME_ACTION_DONE);input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(FeatureBoard.TITLE_MAX)});
         input.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_DONE){add();return true;}return false;});
-        addRow.addView(input,new LinearLayout.LayoutParams(0,ui.dp(52),1));add=ui.fab("plus","Add feature",this::add);add.setTag("features_add");addRow.addView(add,MainParts.params(ui,ui.dp(52),ui.dp(52),10,0,0,0));body.addView(addRow);
+        addRow.addView(input,new LinearLayout.LayoutParams(0,ui.dp(52),1));add=ui.fab("plus","Add feature",this::add);add.setTag("features_add");addRow.addView(add,MainParts.params(ui,ui.dp(52),ui.dp(52),10,0,0,0));body.addView(addRow);addRow.setVisibility(View.GONE);
         input.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int x,int count,int after){}public void onTextChanged(CharSequence s,int x,int before,int count){Cloud.prefs(a).edit().putString("features_draft",s.toString()).apply();add.setEnabled(FeatureBoard.title(s.toString())!=null);}public void afterTextChanged(Editable e){}});
         add.setEnabled(FeatureBoard.title(input.getText().toString())!=null);input.setSelection(input.length());
-        HorizontalScrollView strip=new HorizontalScrollView(a);strip.setHorizontalScrollBarEnabled(false);areas=ui.row();strip.addView(areas);body.addView(strip,MainParts.params(ui,-1,-2,-3,6,0,4));
+        HorizontalScrollView strip=new HorizontalScrollView(a);strip.setHorizontalScrollBarEnabled(false);areas=ui.row();strip.addView(areas);body.addView(strip,MainParts.params(ui,-1,-2,-3,6,0,4));strip.setVisibility(View.GONE);
         chips(areas,area,value->{area=value;Cloud.prefs(a).edit().putString("features_area",value).apply();});
 
         banner=new MainParts.Banner(ui,"warning","alert","Changes need review","The server did not accept them. Tap to choose.",this::review);banner.setTag("features_review");banner.setVisibility(View.GONE);body.addView(banner,MainParts.params(ui,-1,-2,0,8,0,4));
@@ -105,7 +105,7 @@ final class FeatureScreen {
         List<FeatureBoard.Item> list;try{list=Features.board(a);}catch(Exception error){note("Could not read the features saved on this phone.","alert",true);return;}
         rendered=key;int open=FeatureBoard.open(list);finished=list.size()-open;View arrived=null;
         openHolder.removeAllViews();doneRows.removeAllViews();
-        if(open==0)openHolder.addView(ui.empty("checklist",finished==0?"No features yet":"Everything is finished",finished==0?"Add the first feature above. Check it off once it works.":"Add the next feature above."));
+        if(open==0)openHolder.addView(ui.empty("checklist",finished==0?"No features yet":"Everything is finished",finished==0?"The assistant adds features here as they are planned.":"Every feature on the list is finished."));
         else{LinearLayout card=ui.rowsCard();int n=0;for(FeatureBoard.Item item:list)if(!item.done){Row row=new Row(item,n++>0);card.addView(row.box);if(item.id.equals(arriving))arrived=row.box;}openHolder.addView(card);}
         int n=0;for(FeatureBoard.Item item:list)if(item.done){Row row=new Row(item,n++>0);doneRows.addView(row.box);if(item.id.equals(arriving))arrived=row.box;}
         AppUi.update(openCount,open==0?"":open+" open");AppUi.update(doneCount,Integer.toString(finished));
@@ -175,9 +175,9 @@ final class FeatureScreen {
             .setNegativeButton("Keep",null).show();
     }
 
-    /** One checklist row: check dot, struck title, details, area and finish date, a "Saved on phone" chip until synced, and a 48 dp options button. */
+    /** One read-only row: an open ring or a green check, title, details, and area with finish date. */
     private final class Row {
-        final FeatureBoard.Item item;final LinearLayout box=ui.column(),line=ui.row();final AppUi.CheckDot dot=new AppUi.CheckDot(ui);final AppUi.StrikeText label=new AppUi.StrikeText(a,ui.muted);boolean on,moving;
+        final FeatureBoard.Item item;final LinearLayout box=ui.column(),line=ui.row();final ImageView dot=new ImageView(a);final TextView label=new TextView(a);boolean on,moving;
         Row(FeatureBoard.Item item,boolean separated){
             this.item=item;on=item.done;if(separated)ui.hairline(box,54,0,14);
             line.setTag("feature_row:"+item.id);line.setMinimumHeight(ui.dp(60));line.setPadding(ui.dp(14),ui.dp(8),ui.dp(2),ui.dp(8));line.addView(dot,new LinearLayout.LayoutParams(ui.dp(26),ui.dp(26)));
@@ -185,15 +185,14 @@ final class FeatureScreen {
             if(!item.detail.isEmpty()){TextView detail=ui.type(item.detail,13,18,400,0,ui.muted);detail.setMaxLines(3);detail.setEllipsize(TextUtils.TruncateAt.END);words.addView(detail,MainParts.params(ui,-1,-2,0,4,0,0));}
             LinearLayout meta=ui.row();meta.addView(ui.type(meta(),12,16,500,0,item.done?ui.success:ui.muted));if(item.pending)meta.addView(ui.savedChip("Saved on phone"),MainParts.params(ui,-2,-2,8,0,0,0));words.addView(meta,MainParts.params(ui,-1,-2,0,5,0,0));
             words.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);line.addView(words,MainParts.weighted(ui,1,14,0,4,0));
-            ImageButton more=new ImageButton(a);more.setImageDrawable(ui.glyph("more",ui.muted,20));more.setScaleType(ImageView.ScaleType.CENTER);more.setBackground(ui.pressable(null,24));more.setContentDescription("Options for "+item.title);more.setTag("feature_more:"+item.id);more.setOnClickListener(v->options(item));line.addView(more,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));
-            line.setClickable(true);line.setFocusable(true);line.setOnClickListener(v->toggle(this));line.setOnLongClickListener(v->{options(item);return true;});AppUi.press(line);
-            line.setAccessibilityDelegate(new View.AccessibilityDelegate(){@Override public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName(CheckBox.class.getName());info.setCheckable(true);info.setChecked(on);}});
+            line.setFocusable(true);
             box.addView(line);set(on,false);
         }
         String meta(){String where=FeatureBoard.areaName(item.area);return item.done&&item.doneAt>0?where+" · Finished "+AppUi.date((long)(item.doneAt*1000)):where;}
         void set(boolean value,boolean animate){
-            on=value;dot.set(value,animate);label.strike(value,animate);label.setTextColor(value?ui.muted:ui.text);line.setBackground(ui.pressable(value!=item.done?ui.outline(ui.accentSoft,20,0,0):null,20));
-            line.setContentDescription(item.title+(item.detail.isEmpty()?"":", "+item.detail)+", "+meta()+(item.pending?", saved on this phone":"")+(value?". Double tap to move back to open":". Double tap to mark as finished"));
+            on=value;label.setTextColor(ui.text);dot.setScaleType(ImageView.ScaleType.CENTER);
+            if(value){dot.setBackground(ui.outline(ui.success,13,0,0));dot.setImageDrawable(ui.glyph("check",ui.surface,16));}else{dot.setBackground(ui.outline(0,13,ui.strokeStrong,1.5f));dot.setImageDrawable(null);}
+            line.setContentDescription(item.title+(item.detail.isEmpty()?"":", "+item.detail)+", "+meta()+(value?", finished":", to build"));
         }
     }
 }
