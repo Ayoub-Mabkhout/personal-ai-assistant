@@ -6,7 +6,7 @@ permission and performs no location lookup or tracking. A new deployment has no
 coordinates: Sunrise & sunset follows the phone's System theme until configured.
 Light, Dark and System choices remain available. While no coordinates are
 configured, the Appearance dialog labels the choice "Sunrise & sunset · System
-until configured" and the Settings row reads "Sunrise & sunset · System".
+until configured" and the Settings row reads "Sun · System".
 
 The paired, read-only `GET /groceries/v1/mobile/preferences` endpoint uses the
 existing phone bearer credential and returns only:

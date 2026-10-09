@@ -71,8 +71,8 @@ final class MainSettings {
     void pairNote(String message){AppUi.update(pairStatus,message);}
 
     private static void value(AppUi.ActionRow row,String value){if(!row.value.equals(value))row.value(value);}
-    /** Without privately configured coordinates the sun mode follows System; the dialog spells that out, the row stays short. */
-    static String themeName(Context c,String value,boolean full){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":AppUi.daylightConfigured(c)?"Sunrise & sunset":full?"Sunrise & sunset · System until configured":"Sunrise & sunset · System";}
+    /** Without privately configured coordinates the sun mode follows System; the dialog spells that out, the row value stays narrow enough for the title on 360 dp phones. */
+    static String themeName(Context c,String value,boolean full){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":AppUi.daylightConfigured(c)?"Sunrise & sunset":full?"Sunrise & sunset · System until configured":"Sun · System";}
 
     /** Prefs-derived state refreshes on every call; system queries only while the tab is open and at most every 1.5 s. */
     void refresh(boolean full,boolean paired){
