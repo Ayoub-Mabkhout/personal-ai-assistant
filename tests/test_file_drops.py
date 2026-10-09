@@ -27,7 +27,7 @@ class Relay:
         path = Path(directory)
         self.app = create_app(path / 'queue.sqlite3', OWNER, WORKER, clock=lambda: now[0],
                               groceries={'path': path / 'groceries.sqlite3', 'internal_token': 'g' * 40,
-                                         'ha_url': 'http://homeassistant:8123', 'assets': path},
+                                         'assets': path},
                               file_drops=limits or None)
         self.client = TestClient(self.app)
         self.devices = self.app.state.mobile_events.devices
