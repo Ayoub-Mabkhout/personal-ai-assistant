@@ -56,6 +56,9 @@ and battery shortcuts. Keep the phone's usual Home app. The microphone Quick
 Settings tile gives a direct stop control; when Android cannot start the microphone
 in the background, its start action opens the Voice page instead.
 
+Settings > Hey Chat battery measures what background listening costs on the phone
+itself, without root or a computer. See [listener battery measurement](listener-battery.md).
+
 ## Shopping and activity
 
 Shopping uses the same cloud list as the widget and voice actions. New items and
@@ -113,6 +116,6 @@ installation confirmation. See [native delivery setup](native-companion.md) and
 Native emulator tests cover input preservation, local queues, navigation and
 locked local diagnostics. Native Firebase registration, real notification
 receipt/reply and update installation still need handset acceptance. Physical
-microphone behavior, long locked sessions and battery consumption also require
-handset measurements. The app does
+microphone behavior and long locked sessions also require handset measurements;
+the in-app Hey Chat battery measurement gathers the handset battery figure. The app does
 not route confidential company work; that needs the separately approved work path.

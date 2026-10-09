@@ -82,4 +82,5 @@ across stream resets. Continuous audio, effects and CPU inference still consume
 power and the wake lock prevents application-processor deep sleep. Emulator
 latency and numeric parity cannot establish a Samsung overnight battery budget.
 Measure actual screen-off drain before changing wake-lock behavior or claiming
-low-power reliability.
+low-power reliability. Settings > Hey Chat battery records that comparison on the
+phone; see [listener battery measurement](listener-battery.md).
