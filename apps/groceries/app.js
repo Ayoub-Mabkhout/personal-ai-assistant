@@ -61,7 +61,7 @@ const clock=new Intl.DateTimeFormat([],{hour:'2-digit',minute:'2-digit',hourCycl
 // Rounded up so the named minute never precedes the actual switch.
 function modeText(){
   const state=themeApi.state(),name=MODE_NAME[state.mode];
-  return state.mode==='sun'&&state.next?name+' · '+state.resolved+' until '+clock.format(Math.ceil(state.next/60000)*60000):name;
+  return state.mode!=='sun'?name:state.next?name+' · '+state.resolved+' until '+clock.format(Math.ceil(state.next/60000)*60000):name+' · follows System';
 }
 function showMode(){
   $('theme').setAttribute('aria-label','Colour mode: '+modeText()+'. Change.');
@@ -153,6 +153,7 @@ async function sync(){
       queue.shift();saveQueue();
     }
     snapshot={items:[],recipes:[],...await api('list')};
+    AssistantDaylight.configure(snapshot.daylight);
     persist();synced=true;
     setStatus('ok','Cloud saved','works while the laptop is asleep');
   }catch(error){report(error)}

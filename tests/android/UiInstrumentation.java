@@ -45,7 +45,9 @@ public final class UiInstrumentation extends Instrumentation {
     private void click(String tag){runOnMainSync(()->view(tag).performClick());idle();}
     private void idle(){waitForIdleSync();try{Thread.sleep(350);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}waitForIdleSync();}
     private void awaitMic(boolean value,long milliseconds)throws Exception{long end=SystemClock.elapsedRealtime()+milliseconds;while(SystemClock.elapsedRealtime()<end){if(prefs.getBoolean("voice_mic_active",false)==value){idle();return;}String status=prefs.getString("voice_status","");if(value&&(status.startsWith("Voice stopped:")||status.startsWith("Microphone could not start:")))throw new AssertionError(status);Thread.sleep(50);}throw new AssertionError("Microphone did not reach "+value+": "+prefs.getString("voice_status",""));}
-    private void choose(String text){runOnMainSync(()->((android.view.inputmethod.InputMethodManager)activity.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(activity.getWindow().getDecorView().getWindowToken(),0));idle();AccessibilityNodeInfo root=null;List<AccessibilityNodeInfo> nodes=java.util.Collections.emptyList();long deadline=SystemClock.elapsedRealtime()+4000;while(SystemClock.elapsedRealtime()<deadline){root=getUiAutomation().getRootInActiveWindow();if(root!=null){nodes=root.findAccessibilityNodeInfosByText(text);if(!nodes.isEmpty())break;}try{Thread.sleep(100);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();break;}}check(root!=null,"Choice dialog absent");check(!nodes.isEmpty(),"Missing choice option: "+text);android.graphics.Rect bounds=new android.graphics.Rect();nodes.get(0).getBoundsInScreen(bounds);check(!bounds.isEmpty(),"Choice option has no visible bounds");long at=SystemClock.uptimeMillis();sendPointerSync(MotionEvent.obtain(at,at,MotionEvent.ACTION_DOWN,bounds.centerX(),bounds.centerY(),0));sendPointerSync(MotionEvent.obtain(at,at+30,MotionEvent.ACTION_UP,bounds.centerX(),bounds.centerY(),0));idle();}
+    /** An option whose whole text matches wins over longer ones that merely contain it, such as "System" inside "Sunrise & sunset · System until configured". */
+    private static AccessibilityNodeInfo exact(List<AccessibilityNodeInfo> nodes,String text){for(AccessibilityNodeInfo node:nodes)if(text.contentEquals(node.getText()==null?"":node.getText()))return node;return nodes.get(0);}
+    private void choose(String text){runOnMainSync(()->((android.view.inputmethod.InputMethodManager)activity.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(activity.getWindow().getDecorView().getWindowToken(),0));idle();AccessibilityNodeInfo root=null;List<AccessibilityNodeInfo> nodes=java.util.Collections.emptyList();long deadline=SystemClock.elapsedRealtime()+4000;while(SystemClock.elapsedRealtime()<deadline){root=getUiAutomation().getRootInActiveWindow();if(root!=null){nodes=root.findAccessibilityNodeInfosByText(text);if(!nodes.isEmpty())break;}try{Thread.sleep(100);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();break;}}check(root!=null,"Choice dialog absent");check(!nodes.isEmpty(),"Missing choice option: "+text);android.graphics.Rect bounds=new android.graphics.Rect();exact(nodes,text).getBoundsInScreen(bounds);check(!bounds.isEmpty(),"Choice option has no visible bounds");long at=SystemClock.uptimeMillis();sendPointerSync(MotionEvent.obtain(at,at,MotionEvent.ACTION_DOWN,bounds.centerX(),bounds.centerY(),0));sendPointerSync(MotionEvent.obtain(at,at+30,MotionEvent.ACTION_UP,bounds.centerX(),bounds.centerY(),0));idle();}
     private void snapshots(Context target)throws Exception {
         VoiceChat.user(target,"ui-visual-chat-fixture","Add bananas and sparkling water.",System.currentTimeMillis()-60000);VoiceChat.assistant(target,"ui-visual-chat-fixture","Added both items.",System.currentTimeMillis()-59000,"answer","");
         VoiceHistory.record(target,new JSONObject().put("task_id","ui-history-fixture").put("text","Add bananas and sparkling water.").put("reply","Added both items.").put("status","completed"));
@@ -53,7 +55,7 @@ public final class UiInstrumentation extends Instrumentation {
         ((android.view.inputmethod.InputMethodManager)target.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(activity.getWindow().getDecorView().getWindowToken(),0);
         File folder=new File(target.getExternalFilesDir(null),"ui-qa");check(folder.isDirectory()||folder.mkdirs(),"Screenshot directory unavailable");
         for(String page:new String[]{"voice","shopping","activity","settings"}){prefs.edit().putLong("voice_metrics_elapsed",SystemClock.elapsedRealtime()).apply();click("nav_"+page);android.graphics.Bitmap bitmap=getUiAutomation().takeScreenshot();check(bitmap!=null,"Screenshot unavailable");try(OutputStream output=new FileOutputStream(new File(folder,theme+"-"+page+".png"))){check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output),"Screenshot encoding failed");}bitmap.recycle();}
-        if(Build.VERSION.SDK_INT>=30){int appearance=activity.getWindow().getInsetsController().getSystemBarsAppearance();check(((appearance&WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)!=0)==(theme.equals("light")||(theme.equals("sun")&&!DaylightTheme.dark(System.currentTimeMillis()))),"Wrong light/dark status icon appearance");}
+        if(Build.VERSION.SDK_INT>=30){int appearance=activity.getWindow().getInsetsController().getSystemBarsAppearance();check(((appearance&WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)!=0)==!AppUi.dark(target),"Wrong light/dark status icon appearance");}
         new File(target.getFilesDir(),"voice-receipts/ui-history-fixture.json").delete();prefs.edit().putString("origin","").putBoolean("wake_enabled",false).putBoolean("voice_mic_active",false).putFloat("voice_level",0f).putString("voice_status","Microphone off").apply();idle();
     }
     private static JSONObject item(String id,String name)throws JSONException{return new JSONObject().put("id",id).put("name",name).put("quantity","").put("complete",0).put("version",1);}
@@ -110,16 +112,21 @@ public final class UiInstrumentation extends Instrumentation {
         check(view("talk").isShown()&&!view("shopping_item").isShown(),"Recreating the screen replayed the share");
         result.putBoolean("shared_text_handled_once_across_recreate",true);
     }
-    /** Every Appearance choice is stored and recreates the screen; the unset default is Sunrise and sunset. */
+    /** Every Appearance choice is stored; the screen recreates once when its palette changes, and an unconfigured Sunrise & sunset follows System. */
     private void appearance(Context target,Bundle result)throws Exception{
         String[][] steps={{"Sunrise & sunset","sun"},{"System","system"},{"Light","light"},{"Dark","dark"}};
-        prefs.edit().putString("ui_theme","dark").commit();
+        boolean system=(target.getResources().getConfiguration().uiMode&android.content.res.Configuration.UI_MODE_NIGHT_MASK)==android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        prefs.edit().remove("daylight_latitude").remove("daylight_longitude").commit();
         for(String[] step:steps){
-            activity=recreated(target,()->{click("nav_settings");click("appearance");choose(step[0]);});
-            check(prefs.getString("ui_theme","").equals(step[1]),"Appearance choice not stored: "+step[1]);
+            boolean shown=AppUi.dark(target),next=step[1].equals("dark")||(!step[1].equals("light")&&system);
+            Runnable pick=()->{click("nav_settings");click("appearance");choose(step[0]);};
+            if(next!=shown)activity=recreated(target,pick);else pick.run();idle();
+            check(prefs.getString("ui_theme","").equals(step[1])&&AppUi.dark(target)==next,"Appearance choice not stored or resolved: "+step[1]);
         }
-        prefs.edit().remove("ui_theme").commit();check(AppUi.dark(target)==DaylightTheme.dark(System.currentTimeMillis()),"The default theme does not follow the sun");
-        result.putBoolean("appearance_choices_stored_and_default_follows_the_sun",true);
+        Runnable unset=()->prefs.edit().remove("ui_theme").commit();
+        if(!system)activity=recreated(target,unset);else unset.run();
+        check(!AppUi.daylightConfigured(target)&&AppUi.dark(target)==system,"The default theme does not follow System until daylight is configured");
+        result.putBoolean("appearance_choices_stored_and_unset_sun_follows_system",true);
     }
     /** A row marked to hide its descendants from accessibility services would also hide the switch inside it. */
     private void switches(Bundle result){

@@ -2,6 +2,7 @@ package com.personalassistant.companion;
 
 import android.app.NotificationManager;
 import android.app.role.RoleManager;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -70,7 +71,8 @@ final class MainSettings {
     void pairNote(String message){AppUi.update(pairStatus,message);}
 
     private static void value(AppUi.ActionRow row,String value){if(!row.value.equals(value))row.value(value);}
-    static String themeName(String value){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":"Sunrise & sunset";}
+    /** Without privately configured coordinates the sun mode follows System; the dialog spells that out, the row stays short. */
+    static String themeName(Context c,String value,boolean full){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":AppUi.daylightConfigured(c)?"Sunrise & sunset":full?"Sunrise & sunset · System until configured":"Sunrise & sunset · System";}
 
     /** Prefs-derived state refreshes on every call; system queries only while the tab is open and at most every 1.5 s. */
     void refresh(boolean full,boolean paired){
@@ -88,7 +90,7 @@ final class MainSettings {
         String glyph=paired?"shield-check":expired?"alert":"link";if(!glyph.equals(accountGlyph.kind)){int[] c=ui.iconTone(glyph);accountGlyph.kind(glyph);accountGlyph.color(c[0]);accountTile.setBackground(ui.outline(c[1],12,0,0));}
         String access=granted?"Allowed":"Off";if(!access.equals(micChip.getText().toString())){micChip.setText(access);micChip.tone(granted?"success":"warning");}micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
         value(assistant,role?"Selected":"Set up");value(battery,unrestricted?"Unrestricted":"Optimized");
-        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(p.getString("ui_theme","sun")));value(notifications,notifying?"On":"Off");
+        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,p.getString("ui_theme","sun"),false));value(notifications,notifying?"On":"Off");
     }
     void refreshNow(boolean paired){checkedAt=0;refresh(true,paired);}
 }

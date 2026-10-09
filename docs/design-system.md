@@ -108,13 +108,23 @@ and scale are removed: state changes apply immediately or crossfade in under
 ## Theme modes
 
 Every surface offers **Sunrise & sunset** (the default), **System**, **Light**
-and **Dark**. Sunrise & sunset is light from sunrise to sunset and dark
-otherwise, for one fixed place (Munich, 48.137° N, 11.575° E). The sun times
-are computed on the device with the standard solar-position equations (upper
-limb at −0.833°), so no network request or location permission is involved.
-An open screen switches at the computed moment and re-checks when it returns
-to the foreground. Android keeps the place in `DaylightTheme.java`; each web
-page keeps the same constants next to its theme code.
+and **Dark**. Sunrise & sunset uses a deployment's privately configured coarse
+coordinates, fetched through an authenticated preferences API
+([mobile-preferences.md](mobile-preferences.md)) and cached for offline use. A
+clone without these settings follows the device's System theme and says so
+(Android: "Sunrise & sunset · System until configured"; web: "· follows
+System"). No location permission, GPS or external geolocation service is
+involved. The solar calculation uses the sun's upper limb at −0.833°.
+
+Android watches the palette only while an activity is in the foreground: on
+resume, on clock, date, time zone and configuration changes, on preference
+updates and with one timer for the next transition. The screen is recreated for
+a new palette once pairing, sync and update work, installer handoffs, an active
+voice session and dialogs are idle, so a drafted entry, its caret, the selected
+tab and the scroll position survive. Web pages share one controller,
+`apps/shared/daylight.js`, which sets `data-theme` and the `theme-color` metas
+before first paint and rechecks on focus, page show and visibility. Android and
+web surfaces use the same runtime location, never a place baked into source.
 
 ## Platform notes
 

@@ -87,8 +87,9 @@ and runtime evidence in the ignored private workspace.
       follow-ups that resume the recorded worker session.
 - [x] Native task notification/reply, reminder, alarm and update event journal;
       provider acceptance and phone receipt are separate records.
-- [ ] Configure the native Firebase client/server credentials and verify registered
-      FCM delivery, Details and Reply end to end on the handset.
+- [x] Firebase client/server provisioning and real background FCM delivery with
+      authenticated receipts and native Details opening verified on an emulator.
+- [ ] Verify native notification display and Reply end to end on the handset.
 - [ ] Task cancellation/retry and attachment access from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
 - [ ] Finish attachment backfill and establish complete historical coverage.
@@ -97,6 +98,8 @@ and runtime evidence in the ignored private workspace.
 
 - [x] Native Voice, Shopping, Activity and Settings pages with light/dark/system
       themes, tonal gradients, subtle motion and preserved drafts during updates.
+- [x] Dusk Aurora across native screens, dashboard, groceries and task pages;
+      sunrise/sunset uses private runtime settings and follows System when unset.
 - [x] Version 0.6 single-command voice: one wake/Talk, one acknowledged readback,
       then wake standby when background listening is enabled.
 - [x] Explicit Start conversation control or spoken request; **That was all**

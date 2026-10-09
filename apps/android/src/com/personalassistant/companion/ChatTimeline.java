@@ -18,7 +18,7 @@ final class ChatTimeline {
         for(int n=Math.max(0,entries.length()-WINDOW);n<entries.length();n++){
             JSONObject entry=entries.optJSONObject(n);if(entry==null||entry.optString("text").isEmpty())continue;
             boolean user=entry.optString("role").equals("user");String key=entry.optString("id","#"+n)+(user?"|user":"|assistant");Bubble bubble=shown.get(key);
-            if(bubble==null){bubble=new Bubble(ui,user);shown.put(key,bubble);fresh.add(bubble);}
+            if(bubble==null){bubble=new Bubble(ui,user);bubble.outer.setTag("chat_entry:"+entry.optString("role")+":"+entry.optString("id","#"+n));shown.put(key,bubble);fresh.add(bubble);}
             bubble.set(entry.optString("text"),entry.optLong("time"),entry.optString("kind"),entry.optString("task_id"),task);live.add(key);order.add(bubble);
         }
         for(Iterator<Map.Entry<String,Bubble>> it=shown.entrySet().iterator();it.hasNext();){Map.Entry<String,Bubble> held=it.next();if(!live.contains(held.getKey())){rows.removeView(held.getValue().outer);it.remove();}}
@@ -56,7 +56,7 @@ final class ChatTimeline {
         private void sync(){
             String label=kind.equals("acknowledgement")?"Queued":kind.equals("status")?"Status":null;
             if(label==null){if(state!=null){extras.removeView(state);state=null;}}
-            else if(state==null){state=ui.statusChip(label,AppUi.toneOf(label));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-2,-2);sp.rightMargin=ui.dp(8);extras.addView(state,0,sp);}
+            else if(state==null){state=ui.statusChip(label,AppUi.toneOf(label));state.setTag("chat_state");LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-2,-2);sp.rightMargin=ui.dp(8);extras.addView(state,0,sp);}
             else if(!state.getText().toString().equals(label)){AppUi.update(state,label);state.tone(AppUi.toneOf(label));}
             boolean linked=!task.isEmpty()&&open!=null&&(kind.equals("acknowledgement")||kind.equals("task_answer"));
             if(!linked){if(link!=null){extras.removeView(link);link=null;}}

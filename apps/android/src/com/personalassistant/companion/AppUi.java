@@ -16,6 +16,7 @@ import android.view.animation.*;
 import android.widget.*;
 import java.util.*;
 import java.util.function.IntConsumer;
+import java.util.function.BooleanSupplier;
 
 /**
  * Dusk Aurora presentation toolkit shared by the app, locked voice entry and dialogs.
@@ -47,19 +48,32 @@ final class AppUi {
         aurora=dark?new int[]{0xFF8E6BFF,0xFFC46CF0,0xFFF08FC4}:new int[]{0xFF5B35D5,0xFFA23BC6,0xFFCC3F78};glow=pick(0xFF8EA2FF,0xFF8FA8FF);
     }
     private int pick(int light,int night){return dark?night:light;}
-    /** ui_theme is sun (default: dark from sunset to sunrise), system, light or dark. */
-    static boolean dark(Context c){String v=Cloud.prefs(c).getString("ui_theme","sun");if(v.equals("sun"))return DaylightTheme.dark(System.currentTimeMillis());return v.equals("dark")||(v.equals("system")&&(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES);}
+    /** Sun follows System until this deployment explicitly configures private coordinates. */
+    private static Double coordinate(Context c,String key){try{return Double.valueOf(Cloud.prefs(c).getString(key,""));}catch(RuntimeException error){return null;}}
+    static boolean daylightConfigured(Context c){Double latitude=coordinate(c,"daylight_latitude"),longitude=coordinate(c,"daylight_longitude");return latitude!=null&&longitude!=null&&DaylightTheme.valid(latitude,longitude);}
+    static boolean dark(Context c){return dark(c,System.currentTimeMillis());}
+    static boolean dark(Context c,long at){boolean system=(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;return DaylightTheme.resolve(Cloud.prefs(c).getString("ui_theme","sun"),system,at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
+    static long nextThemeChange(Context c,long at){if(!"sun".equals(Cloud.prefs(c).getString("ui_theme","sun"))||!daylightConfigured(c))return Long.MAX_VALUE;return DaylightTheme.nextChange(at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
     static void theme(Activity activity){activity.setTheme(dark(activity)?R.style.AssistantDarkTheme:R.style.AssistantLightTheme);}
+    /** Foreground-only scheduling; the host decides when recreation is safe. */
+    static final class ThemeWatcher {
+        final Activity activity;final BooleanSupplier displayedDark,ready;final Runnable apply;
+        final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
+        boolean active,refreshPending;
+        final Runnable evaluate=()->evaluate();
+        final BroadcastReceiver clock=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){check();}};
+        final SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if("ui_theme".equals(key)||"daylight_latitude".equals(key)||"daylight_longitude".equals(key))check();};
+        ThemeWatcher(Activity activity,BooleanSupplier displayedDark,BooleanSupplier ready,Runnable apply){this.activity=activity;this.displayedDark=displayedDark;this.ready=ready;this.apply=apply;}
+        void resume(){if(active)return;active=true;refreshPending=false;IntentFilter filter=new IntentFilter(Intent.ACTION_TIME_CHANGED);filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);filter.addAction(Intent.ACTION_DATE_CHANGED);filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);if(Build.VERSION.SDK_INT>=33)activity.registerReceiver(clock,filter,Context.RECEIVER_NOT_EXPORTED);else activity.registerReceiver(clock,filter);Cloud.prefs(activity).registerOnSharedPreferenceChangeListener(preferences);check();}
+        void stop(){if(!active)return;active=false;main.removeCallbacks(evaluate);Cloud.prefs(activity).unregisterOnSharedPreferenceChangeListener(preferences);activity.unregisterReceiver(clock);}
+        void check(){main.removeCallbacks(evaluate);if(active&&!refreshPending)main.post(evaluate);}
+        private void evaluate(){if(!active||refreshPending||activity.isFinishing()||activity.isDestroyed())return;long at=System.currentTimeMillis();DaylightTheme.Refresh plan=DaylightTheme.refresh(displayedDark.getAsBoolean(),dark(activity,at),ready.getAsBoolean(),at,nextThemeChange(activity,at));if(plan.apply){refreshPending=true;apply.run();}else if(plan.delay!=Long.MAX_VALUE)main.postDelayed(evaluate,plan.delay);}
+    }
     int dp(float n){return Math.round(n*density);}
     float dpf(float n){return n*density;}
     static int mix(int a,int b,float fraction){return Color.rgb(Math.round(Color.red(a)*(1-fraction)+Color.red(b)*fraction),Math.round(Color.green(a)*(1-fraction)+Color.green(b)*fraction),Math.round(Color.blue(a)*(1-fraction)+Color.blue(b)*fraction));}
     static int alpha(int color,float a){return Color.argb(Math.round(255*a),Color.red(color),Color.green(color),Color.blue(color));}
     static boolean motion(){return ValueAnimator.areAnimatorsEnabled();}
-    /** Milliseconds until the sunrise and sunset theme next flips; -1 for the fixed modes. */
-    static long sunDelay(Context c){
-        if(!"sun".equals(Cloud.prefs(c).getString("ui_theme","sun")))return -1;
-        long now=System.currentTimeMillis();return Math.max(1000,DaylightTheme.nextChange(now)-now+1000);
-    }
 
     /** Locale-ordered date and time such as "Oct 8, 21:14"; the year appears only for entries from an earlier year. */
     static String stamp(long at){return at<=0?"":format(at,"MMMdHm","yMMMdHm");}
@@ -484,7 +498,7 @@ final class AppUi {
     }
     /** Soft semantic chip: tone fill, tone text, leading glyph. */
     static final class StatusChip extends TextView {
-        final AppUi ui;final boolean withGlyph;
+        final AppUi ui;final boolean withGlyph;String tone="neutral";
         StatusChip(AppUi ui,String value,String tone,boolean withGlyph){
             super(ui.context);this.ui=ui;this.withGlyph=withGlyph;setText(value);setTextSize(12);setTypeface(face(700));setLetterSpacing(.004f);setIncludeFontPadding(false);setGravity(Gravity.CENTER_VERTICAL);setSingleLine(true);
             setPadding(ui.dp(withGlyph?8:11),ui.dp(5),ui.dp(11),ui.dp(5));setCompoundDrawablePadding(ui.dp(5));setMinHeight(ui.dp(26));tone(tone);
@@ -495,7 +509,7 @@ final class AppUi {
             super.onMeasure(widthSpec,heightSpec);
         }
         void tone(String value){
-            int[] c=ui.toneColors(value);setTextColor(c[0]);setBackground(ui.outline(c[1],14,0,0));
+            tone=value;int[] c=ui.toneColors(value);setTextColor(c[0]);setBackground(ui.outline(c[1],14,0,0));
             if(withGlyph){String g="success".equals(value)?"check":"warning".equals(value)?"alert":"danger".equals(value)?"x-circle":"info".equals(value)?"clock":"accent".equals(value)?"sparkle":null;setCompoundDrawablesWithIntrinsicBounds(g==null?null:new GlyphDrawable(g,c[0],ui.dp(14)),null,null,null);}
         }
     }

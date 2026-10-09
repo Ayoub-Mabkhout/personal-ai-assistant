@@ -2,9 +2,14 @@
 
 The native app opens on Voice. Its bottom tabs are Voice, Shopping, Activity and
 Settings. The Dusk Aurora design system in `design-system.md` defines tokens,
-type, glyphs and motion. Appearance offers Sunrise & sunset (default: light by
-day and dark after sunset, computed on the phone), System, Light and Dark; the
-open screen flips at the computed moment. A layered circular Talk orb anchors
+type, glyphs and motion. Appearance offers Sunrise & sunset (default), System,
+Light and Dark. Sunrise & sunset uses explicitly configured private coordinates
+and follows System when none are configured; see
+[private daylight preferences](mobile-preferences.md). Only the foreground
+screen watches for the next transition, and it recreates itself for a new
+palette once pairing, sync and update work, installer handoffs, an active voice
+session and dialogs are idle; drafts, selection, tab and scroll position
+survive. A layered circular Talk orb anchors
 Voice, Shopping uses an inline quick-add and compact rows, Activity uses a dated
 timeline, and Settings groups compact icon actions. Tonal backgrounds and
 short status/page transitions stay understated. Animation respects Android
@@ -19,6 +24,13 @@ Start conversation explicitly to allow continuing turns; That was all or the
 End conversation control finishes them without changing the wake setting.
 Timestamped chat shows user requests and responses, with native task links for
 queued work.
+
+Chat uses the shared Dusk Aurora bubble faces, with a timestamp below each
+message and a semantic state chip for queued and status entries. Task actions
+keep a 48 dp touch target; a streaming revision updates its bubble in place,
+keeps its original timestamp and does not replay entry motion. Task history and
+continuations are full-screen sheets. Native task notifications and the
+microphone tile use the monochrome vector assets.
 
 Background listening is a
 separate desired setting for Hey Chat while the app is closed or the phone is

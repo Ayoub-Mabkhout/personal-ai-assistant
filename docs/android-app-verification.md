@@ -40,7 +40,7 @@ install, then verify that a version5 install preserves synthetic pairing,
 cached shopping data, a stable pending mutation ID and appearance preferences.
 With `theme=unset` in both steps it leaves the preference unset and checks that
 the upgraded app follows sunrise and sunset, the default since the Dusk Aurora
-release.
+release; with no private coordinates cached that means the phone's System theme.
 The fixture uses an empty server origin and cleans itself afterward. Do not
 run it against a real paired phone.
 
@@ -53,9 +53,15 @@ Live acknowledgement history merging.
 
 `TaskUiInstrumentation` also drives the history paging merge (Load more, refresh,
 new search) and the Today and Yesterday separators across daylight saving
-changes. The sunrise and sunset maths, quick-add splitting and voice status
-wording are plain Java and run in `tests/test_android_jvm.py` wherever a JDK is
-installed.
+changes. `SolarUiInstrumentation` proves the appearance lifecycle on an unpaired
+emulator with neutral drafts: a palette change waits for active voice capture,
+an open dialog and installer handoffs, then recreates the screen with the
+shopping or pairing draft, caret, focus, tab and scroll intact; an unset
+Sunrise & sunset follows System without a timer; locked voice entry recreation
+starts no recording. The sunrise and sunset maths (synthetic coordinates), the
+solar boundary harness `tests/jvm/DaylightThemeHarness.java`, quick-add
+splitting and voice status wording are plain Java and run in
+`tests/test_android_jvm.py` wherever a JDK is installed.
 
 Not covered by the emulator suites, so check by hand in light, dark and sun
 themes after changing them: the assistant gesture overlay (it needs the

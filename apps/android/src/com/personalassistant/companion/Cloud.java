@@ -53,11 +53,11 @@ final class Cloud {
         return "https://"+uri.getRawAuthority();
     }
     static Object call(Context c,String path,JSONObject body,boolean auth) throws Exception {
-        String base=prefs(c).getString("origin","");
+        final String base,token;synchronized(Cloud.class){SharedPreferences p=prefs(c);base=p.getString("origin","");token=auth?p.getString("token",""):"";}
         if(base.isEmpty()) throw new Exception("Pair the companion first");
         HttpURLConnection connection=(HttpURLConnection)new URL(base+"/groceries/v1/mobile/"+path).openConnection();
         connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(10000);connection.setReadTimeout(15000);
-        if(auth) connection.setRequestProperty("Authorization","Bearer "+prefs(c).getString("token",""));
+        if(auth) connection.setRequestProperty("Authorization","Bearer "+token);
         try {
             if(body!=null){connection.setRequestMethod("POST");connection.setRequestProperty("Content-Type","application/json");connection.setDoOutput(true);try(OutputStream out=connection.getOutputStream()){out.write(body.toString().getBytes("UTF-8"));}}
             int status=connection.getResponseCode();
@@ -66,6 +66,19 @@ final class Cloud {
             try(InputStream in=connection.getInputStream()){while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>2097152)throw new Exception("Server response too large");}}
             return new JSONTokener(out.toString("UTF-8")).nextValue();
         } finally {connection.disconnect();}
+    }
+    /** Optional read-only settings fetch; older/offline servers retain the last valid cache. */
+    static void syncPreferences(Context c)throws Exception{
+        SharedPreferences p=prefs(c);final String token,origin;long now=System.currentTimeMillis();
+        synchronized(Cloud.class){token=p.getString("token","");origin=p.getString("origin","");long last=p.getLong("daylight_checked",0);if(token.isEmpty()||origin.isEmpty()||p.getBoolean("push_signing_out",false)||(last>0&&now>=last&&now-last<3600000L))return;p.edit().putLong("daylight_checked",now).commit();}
+        JSONObject result=(JSONObject)call(c,"preferences",null,true);JSONObject daylight=result.optJSONObject("daylight");
+        synchronized(Cloud.class){
+            if(!token.equals(p.getString("token",""))||!origin.equals(p.getString("origin",""))||p.getBoolean("push_signing_out",false))return;
+            SharedPreferences.Editor edit=p.edit();Object latitude=daylight==null?null:daylight.opt("latitude"),longitude=daylight==null?null:daylight.opt("longitude");
+            if(latitude instanceof Number&&longitude instanceof Number&&DaylightTheme.valid(((Number)latitude).doubleValue(),((Number)longitude).doubleValue()))edit.putString("daylight_latitude",Double.toString(((Number)latitude).doubleValue())).putString("daylight_longitude",Double.toString(((Number)longitude).doubleValue()));
+            else edit.remove("daylight_latitude").remove("daylight_longitude");
+            edit.commit();
+        }
     }
     static void sync(Context c) throws Exception {synchronized(syncLock){
         while(true){

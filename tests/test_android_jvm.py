@@ -1,7 +1,9 @@
 """Companion classes that need no Android framework, compiled with javac and driven through tests/jvm/AndroidLogicProbe.java.
 
-Covers the sunrise and sunset maths behind the default theme, quick-add splitting and the voice status wording
-shared by the Voice tab, the locked entry and the assistant overlay. Skipped where no JDK is installed."""
+Covers the sunrise and sunset maths behind the Sunrise & sunset theme (synthetic coordinates only; deployments configure
+the real place privately), quick-add splitting and the voice status wording shared by the Voice tab, the locked entry
+and the assistant overlay, and runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
+import json
 import math
 import os
 import re
@@ -15,9 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COMPANION = ROOT / 'apps/android/src/com/personalassistant/companion'
 PROBE = ROOT / 'tests/jvm/AndroidLogicProbe.java'
-SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java')] + [PROBE]
+HARNESS = ROOT / 'tests/jvm/DaylightThemeHarness.java'
+SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java')] + [PROBE, HARNESS]
 MAIN = 'com.personalassistant.companion.AndroidLogicProbe'
-LATITUDE, LONGITUDE = 48.137, 11.575
+# Synthetic round values; none of them stands for a real person's location.
+PLACES = ((0.0, 0.0), (35.0, 120.0), (-33.0, -75.0))
 SEP = '\u001f'
 
 
@@ -60,23 +64,22 @@ def ms(moment):
     return int(moment.timestamp() * 1000)
 
 
-def noaa(day):
+def noaa(day, latitude, longitude):
     """Sunrise and sunset in epoch milliseconds from the NOAA general solar position equations; independent of the app's formulas."""
     gamma = 2 * math.pi / 365 * (day.timetuple().tm_yday - 1)
     equation = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma) - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma))
     declination = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma) - 0.006758 * math.cos(2 * gamma)
                    + 0.000907 * math.sin(2 * gamma) - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
-    phi = math.radians(LATITUDE)
+    phi = math.radians(latitude)
     angle = math.degrees(math.acos(math.cos(math.radians(90.833)) / (math.cos(phi) * math.cos(declination)) - math.tan(phi) * math.tan(declination)))
     midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-    return tuple(ms(midnight + timedelta(minutes=720 - 4 * (LONGITUDE + sign * angle) - equation)) for sign in (1, -1))
+    return tuple(ms(midnight + timedelta(minutes=720 - 4 * (longitude + sign * angle) - equation)) for sign in (1, -1))
 
 
 @unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')
 class DaylightThemeTests(unittest.TestCase):
-    def sun(self, instants, latitude=None):
-        suffix = '' if latitude is None else '\t%s' % latitude
-        rows = ask(['sun\t%d%s' % (at, suffix) for at in instants])
+    def sun(self, instants, place):
+        rows = ask(['sun\t%d\t%s\t%s' % (at, *place) for at in instants])
         self.assertEqual(len(rows), len(instants))
         result = []
         for row in rows:
@@ -84,42 +87,40 @@ class DaylightThemeTests(unittest.TestCase):
             result.append((None if times == 'null' else tuple(int(x) for x in times.split(',')), dark == 'true', int(change)))
         return result
 
-    def test_sunrise_and_sunset_match_published_values_for_the_default_place(self):
-        golden = {
-            (2026, 3, 20): (1773983916277, 1774027590658),
-            (2026, 6, 21): (1782011680785, 1782069521942),
-            (2026, 9, 23): (1790139750268, 1790183550705),
-            (2026, 12, 21): (1797836549335, 1797866602565),
-        }
-        got = self.sun([ms(datetime(*day, 12, tzinfo=timezone.utc)) for day in golden])
-        for (day, expected), (times, _, _) in zip(golden.items(), got):
-            with self.subTest(day=day):
-                self.assertLessEqual(max(abs(a - b) for a, b in zip(times, expected)), 1000)
-
     def test_sunrise_and_sunset_agree_with_an_independent_solar_model(self):
         days = [datetime(2026, month, day).date() for month in range(1, 13) for day in (1, 15)]
-        got = self.sun([ms(datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc)) for d in days])
-        for day, (times, _, _) in zip(days, got):
-            with self.subTest(day=str(day)):
-                self.assertLessEqual(max(abs(a - b) for a, b in zip(times, noaa(day))), 4 * 60000)
+        for place in PLACES:
+            got = self.sun([ms(datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc)) for d in days], place)
+            for day, (times, _, _) in zip(days, got):
+                with self.subTest(place=place, day=str(day)):
+                    self.assertLessEqual(max(abs(a - b) for a, b in zip(times, noaa(day, *place))), 4 * 60000)
 
     def test_theme_flips_exactly_at_the_next_change(self):
         start = ms(datetime(2026, 1, 1, tzinfo=timezone.utc))
         instants = [start + n * 37 * 60000 for n in range(14200)]
-        first = self.sun(instants)
-        changes = [change for _, _, change in first]
-        before = self.sun([change - 1000 for change in changes])
-        after = self.sun([change + 1000 for change in changes])
-        for at, (_, dark, change), (_, dark_before, _), (_, dark_after, _) in zip(instants, first, before, after):
-            if not change > at or change - at > 20 * 3600000 or dark_before != dark or dark_after == dark:
-                self.fail('theme does not flip at the next change for %d: %s' % (at, (dark, change, dark_before, dark_after)))
+        for place in PLACES:
+            first = self.sun(instants, place)
+            changes = [change for _, _, change in first]
+            before = self.sun([change - 1000 for change in changes], place)
+            after = self.sun([change + 1000 for change in changes], place)
+            for at, (_, dark, change), (_, dark_before, _), (_, dark_after, _) in zip(instants, first, before, after):
+                if not change > at or change - at > 20 * 3600000 or dark_before != dark or dark_after == dark:
+                    self.fail('theme does not flip at the next change for %s at %d: %s' % (place, at, (dark, change, dark_before, dark_after)))
 
-    def test_default_place_always_has_a_sunrise_and_sunset(self):
-        for day in (datetime(2026, 6, 21, 12, tzinfo=timezone.utc), datetime(2026, 12, 21, 12, tzinfo=timezone.utc)):
-            self.assertIsNotNone(self.sun([ms(day)])[0][0])
+    def test_mid_latitudes_always_have_a_sunrise_and_sunset(self):
+        for place in PLACES:
+            for day in (datetime(2026, 6, 21, 12, tzinfo=timezone.utc), datetime(2026, 12, 21, 12, tzinfo=timezone.utc)):
+                self.assertIsNotNone(self.sun([ms(day)], place)[0][0])
 
     def test_polar_summer_and_winter_have_no_sun_times(self):
-        self.assertEqual([times for times, _, _ in self.sun([ms(datetime(2026, 12, 21, 12, tzinfo=timezone.utc)), ms(datetime(2026, 6, 21, 12, tzinfo=timezone.utc))], 80)], [None, None])
+        instants = [ms(datetime(2026, 12, 21, 12, tzinfo=timezone.utc)), ms(datetime(2026, 6, 21, 12, tzinfo=timezone.utc))]
+        self.assertEqual([times for times, _, _ in self.sun(instants, (80.0, 0.0))], [None, None])
+
+    def test_the_harness_for_boundaries_poles_fallback_and_refresh_planning_passes(self):
+        run = subprocess.run([JAVA, '-cp', BUILD.name, 'com.personalassistant.companion.DaylightThemeHarness'], capture_output=True, text=True, check=True)
+        result = json.loads(run.stdout.strip().splitlines()[-1])
+        self.assertTrue(result['passed'])
+        self.assertGreater(result['checks'], 20)
 
 
 class ItemSplitterTests(unittest.TestCase):

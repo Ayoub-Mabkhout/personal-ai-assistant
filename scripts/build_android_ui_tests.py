@@ -20,7 +20,7 @@ def main():
     dex.mkdir(exist_ok=True)
     signing = Path(os.environ["LOCALAPPDATA"]) / "PersonalAssistant/secrets/android-signing"
     run([tools / "aapt2.exe", "link", "-I", platform, "--manifest", ROOT / "tests/android/UiManifest.xml", "-o", work / "resources.apk"])
-    run(["javac", "-encoding", "UTF-8", "--release", "8", "-classpath", str(platform) + os.pathsep + str(ROOT / "state/android-build/classes"), "-d", classes, ROOT / "tests/android/UiInstrumentation.java", ROOT / "tests/android/UpgradeInstrumentation.java", ROOT / "tests/android/TaskUiInstrumentation.java"])
+    run(["javac", "-encoding", "UTF-8", "--release", "8", "-classpath", str(platform) + os.pathsep + str(ROOT / "state/android-build/classes"), "-d", classes, ROOT / "tests/android/UiInstrumentation.java", ROOT / "tests/android/UpgradeInstrumentation.java", ROOT / "tests/android/TaskUiInstrumentation.java", ROOT / "tests/android/SolarUiInstrumentation.java"])
     run([tools / "d8.bat", "--lib", platform, "--classpath", ROOT / "state/android-build/classes", "--min-api", "26", "--output", dex, *classes.glob("**/*.class")])
     unsigned = work / "unsigned.apk"
     unsigned.write_bytes((work / "resources.apk").read_bytes())

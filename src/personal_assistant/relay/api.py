@@ -84,7 +84,7 @@ class Result(BaseModel):
     result: dict
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
@@ -129,7 +129,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.add_middleware(BodyLimit)
     if groceries:
         from personal_assistant.groceries.api import router
-        groceries_api=router(**groceries,phone_sender=sender)
+        groceries_api=router(**groceries,phone_sender=sender, mobile_settings_file=mobile_settings_file)
         app.include_router(groceries_api)
         release_pump=groceries_api.release_pump
         app.state.release_feed=groceries_api.release_feed
@@ -145,11 +145,15 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             app.include_router(voice_router(voice_service))
         from .tasks import task_router
         app.include_router(task_router({'command':queue,'agent':agent_queue},groceries['ha_url'],
-            Path(groceries['assets']).parent/'tasks',task_links=task_links))
+            Path(groceries['assets']).parent/'tasks',task_links=task_links,
+            mobile_settings_file=mobile_settings_file or Path(groceries['path']).with_name('companion-preferences.json')))
         from .mobile_tasks import mobile_task_router
         from .mobile_push import mobile_push_router
+        from .mobile_settings import mobile_settings_router
         app.include_router(mobile_task_router(groceries_api.devices,{'command':queue,'agent':agent_queue}))
         app.include_router(mobile_push_router(mobile_events))
+        app.include_router(mobile_settings_router(groceries_api.devices,
+            mobile_settings_file or Path(groceries['path']).with_name('companion-preferences.json')))
 
     def authorization(expected):
         def verify(authorization: str | None = Header(default=None)):
@@ -295,4 +299,5 @@ def from_environment():
     return create_app(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3'),
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
-                      release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'))
+                      release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
+                      mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'))

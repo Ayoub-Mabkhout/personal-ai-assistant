@@ -6,68 +6,8 @@
 <meta name="color-scheme" content="light dark">
 <title>Personal</title>
 <meta name="theme-color" content="#FAF5EC">
-<script>
-// Resolved before first paint. Sunrise & sunset is computed here for Munich: no network, no geolocation.
-window.personalTheme=(()=>{
-const KEY='personal-theme',MODES=['sun','system','light','dark'],MUNICH={ lat: 48.137, lon: 11.575 };
-// Sunrise and sunset for a latitude/longitude from the standard solar-position equations
-// (upper limb at -0.833 degrees incl. refraction). Returns epoch milliseconds.
-function sunTimes(ms, lat, lon) {
-  const rad = Math.PI / 180, day = 86400000, J1970 = 2440588, J2000 = 2451545, J0 = 0.0009;
-  const d = ms / day - 0.5 + J1970 - J2000;
-  const lw = -lon * rad, phi = lat * rad;
-  const n = Math.round(d - J0 - lw / (2 * Math.PI));
-  const ds = J0 + lw / (2 * Math.PI) + n;
-  const M = rad * (357.5291 + 0.98560028 * ds);
-  const C = rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
-  const L = M + C + rad * 102.9372 + Math.PI;
-  const dec = Math.asin(Math.sin(L) * Math.sin(rad * 23.4397));
-  const transit = J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
-  const cosW = (Math.sin(-0.833 * rad) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec));
-  if (cosW >= 1) return { rise: null, set: null, polar: 'night' };
-  if (cosW <= -1) return { rise: null, set: null, polar: 'day' };
-  const w = Math.acos(cosW);
-  const set = J2000 + J0 + (w + lw) / (2 * Math.PI) + n + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
-  const rise = transit - (set - transit);
-  const toMs = j => (j + 0.5 - J1970) * day;
-  return { rise: toMs(rise), set: toMs(set) };
-}
-// Dark between sunset and the next sunrise; also returns when the answer next changes.
-function sunPhase(ms, place) {
-  const t = sunTimes(ms, place.lat, place.lon);
-  if (t.polar) return { dark: t.polar === 'night', next: ms + 3600000 };
-  if (ms < t.rise) return { dark: true, next: t.rise };
-  if (ms < t.set) return { dark: false, next: t.set };
-  const tomorrow = sunTimes(ms + 86400000, place.lat, place.lon);
-  return { dark: true, next: tomorrow.rise || ms + 3600000 };
-}
-const root=document.documentElement,meta=document.querySelector('meta[name=theme-color]'),system=matchMedia('(prefers-color-scheme: dark)'),listeners=[];
-function stored(){try{const v=localStorage.getItem(KEY);return MODES.includes(v)?v:'sun'}catch{return 'sun'}}
-let mode=stored(),timer=0;
-function state(){
-  const phase=mode==='sun'?sunPhase(Date.now(),MUNICH):null;
-  return {mode,theme:phase?(phase.dark?'dark':'light'):mode==='system'?(system.matches?'dark':'light'):mode,next:phase?phase.next:null};
-}
-function apply(){
-  clearTimeout(timer);
-  const s=state();
-  if(root.dataset.theme!==s.theme)root.dataset.theme=s.theme;
-  if(meta)meta.content=s.theme==='dark'?'#130E1C':'#FAF5EC';
-  if(s.next)timer=setTimeout(apply,Math.max(s.next-Date.now(),250));
-  listeners.forEach(fn=>fn(s));
-}
-apply();
-system.addEventListener('change',()=>{if(mode==='system')apply()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)apply()});
-addEventListener('focus',apply);
-addEventListener('pageshow',apply);
-addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply()}});
-return {MODES,state,subscribe:fn=>listeners.push(fn),set(next){
-  if(!MODES.includes(next))return;
-  mode=next;try{localStorage.setItem(KEY,next)}catch{}apply();
-}};
-})();
-</script>
+<script src="/daylight.js"></script>
+<script>window.personalTheme=AssistantDaylight.create("personal-theme");</script>
 <style>
 :root{
   color-scheme:light dark;
@@ -515,7 +455,7 @@ dialog textarea.field{min-height:84px}
     </div>
     <div class="pgrid two">
       <article class="card"><span class="eyebrow">STUDY &amp; WORK</span><h2 id="career-title"></h2><div class="timeline" id="career"></div></article>
-      <article class="card"><span class="eyebrow">HOW TO HELP</span><h2>Your preferences</h2><p id="planning"></p><div class="chips"><span class="chip accent">German practice</span></div><p id="language-goal"></p></article>
+      <article class="card"><span class="eyebrow">HOW TO HELP</span><h2>Your preferences</h2><p id="planning"></p><div class="chips"><span class="chip accent">Language practice</span></div><p id="language-goal"></p></article>
     </div>
     <div class="profile-foot"><span>Based on your supplied profile. Editable priorities take precedence.</span><button class="btn tonal" id="accounts">Connected accounts</button></div>
   </section>
@@ -548,15 +488,21 @@ async function api(path,body){
   try{response=await fetch('/api/'+path,{method:body?'POST':'GET',headers:{'X-Dashboard-Token':token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined})}
   catch{throw Error('The dashboard service is not reachable.')}
   if(!response.ok){let message='Unable to load this right now.';try{const j=await response.json();if(typeof j.detail==='string')message=j.detail}catch{}throw Error(message)}
-  return response.json();
+  const result=await response.json();
+  if(body){readEpoch++;inflight.clear()}
+  return result;
 }
 const inflight=new Map();
+let readEpoch=0;
 const shared=path=>{
-  let pending=inflight.get(path);
-  if(!pending){pending=api(path).finally(()=>{if(inflight.get(path)===pending)inflight.delete(path)});inflight.set(path,pending)}
-  return pending;
+  if(!inflight.has(path)){
+    const epoch=readEpoch;
+    const pending=api(path).then(value=>epoch===readEpoch?value:shared(path)).finally(()=>{if(inflight.get(path)===pending)inflight.delete(path)});
+    inflight.set(path,pending);
+  }
+  return inflight.get(path);
 };
-// A read that started before a write must not be joined after it.
+// A write re-reads every read it overlapped (readEpoch); a forced refresh must not join one already in flight.
 const forget=prefix=>{for(const key of [...inflight.keys()])if(key.startsWith(prefix))inflight.delete(key)};
 
 /* dates */
@@ -619,11 +565,11 @@ const THEMES={sun:['Sunrise & sunset','sunrise'],system:['System','monitor'],lig
 const hhmm=ms=>new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 function themeLabel(){
   const s=personalTheme.state(),[name]=THEMES[s.mode];
-  return s.mode==='sun'?name+' · '+s.theme+' until '+hhmm(s.next):name;
+  return s.mode==='sun'?name+(s.next?' · '+s.theme+' until '+hhmm(s.next):' · follows System'):name;
 }
 function renderTheme(){
   const s=personalTheme.state(),[name,icon]=THEMES[s.mode],label='Colour mode: '+themeLabel();
-  const detail=s.mode==='sun'?(s.theme==='dark'?'Dark':'Light')+' until '+hhmm(s.next):{system:'Follows this device',light:'Always light',dark:'Always dark'}[s.mode];
+  const detail=s.mode==='sun'?(s.next?(s.theme==='dark'?'Dark':'Light')+' until '+hhmm(s.next):'Follows this device until a place is configured'):{system:'Follows this device',light:'Always light',dark:'Always dark'}[s.mode];
   document.querySelectorAll('[data-theme-cycle]').forEach(button=>{
     button.setAttribute('aria-label',label);button.title='Select to change the colour mode';
     button.querySelector('use').setAttribute('href','#i-'+icon);
@@ -1050,6 +996,7 @@ for(const dialog of document.querySelectorAll('dialog')){
   dialog.addEventListener('click',e=>{if(pressed&&onBackdrop(dialog,e))dialog.close();pressed=false});
 }
 
+api('preferences').then(value=>AssistantDaylight.configure(value.daylight)).catch(()=>{});
 const LOADERS={agenda:loadAgenda,requests:loadRequests,digest:loadDigest,notes:loadNotes,followups:loadFollowups,documents:loadDocuments,profile:loadProfile};
 document.fonts&&document.fonts.ready.then(placePill);
 show(currentPage(),false);

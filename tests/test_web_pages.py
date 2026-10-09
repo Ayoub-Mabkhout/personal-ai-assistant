@@ -66,7 +66,7 @@ class WebPageContracts(unittest.TestCase):
         root = APPS / 'groceries'
         sw = (root / 'sw.js').read_text(encoding='utf-8')
         precache = set(re.findall(r"'/groceries/([^']*)'", re.search(r'ASSETS=\[(.*?)\]', sw).group(1)))
-        shell = {re.sub(r'\?.*', '', ref) for ref in page('groceries').refs}
+        shell = {re.sub(r'\?.*', '', ref).removeprefix('/groceries/') for ref in page('groceries').refs}
         self.assertLessEqual(shell, precache, 'the offline shell would miss a file the page loads')
         with tempfile.TemporaryDirectory() as raw, TestClient(create_app(Path(raw) / 'q.sqlite3', 's' * 48, 'w' * 48, groceries={
                 'path': Path(raw) / 'g.sqlite3', 'internal_token': 'g' * 48, 'ha_url': 'http://unused', 'assets': root,

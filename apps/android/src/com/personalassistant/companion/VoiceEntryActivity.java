@@ -11,13 +11,11 @@ import android.widget.*;
 
 /** Lightweight voice entry above keyguard; never requests device unlock. */
 public final class VoiceEntryActivity extends Activity {
-    private AppUi ui;private ChatTimeline chat;private AppUi.Meter meter;private AppUi.VoiceButton talk;private TextView status,detail;private boolean registered,startPending=true,themeRecreate,orbLive;
-    private final Handler handler=new Handler(Looper.getMainLooper());
-    private final Runnable themeCheck=this::checkTheme;
+    private AppUi ui;private AppUi.ThemeWatcher themeWatcher;private long themeBusyUntil;private ScrollView contentScroll;private ChatTimeline chat;private AppUi.Meter meter;private AppUi.VoiceButton talk;private TextView status,detail;private boolean registered,resumed,startPending=true,orbLive;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if("voice_level".equals(key)&&meter!=null){boolean mic=AppUi.micActive(this);float level=AppUi.level(this);meter.value(level,mic);if(talk!=null)talk.level(level,mic&&orbLive);}else refresh();};
     private final BroadcastReceiver voiceState=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){refresh();}};
     @Override public void onCreate(Bundle state){
-        AppUi.theme(this);super.onCreate(state);ui=new AppUi(this);ui.window();startPending=state==null||!state.getBoolean("themed");
+        AppUi.theme(this);super.onCreate(state);startPending=state==null||state.getBoolean("startPending",false);if(state!=null)themeBusyUntil=SystemClock.elapsedRealtime()+Math.min(2000,Math.max(0,state.getLong("themeBusyRemaining",0)));ui=new AppUi(this);themeWatcher=new AppUi.ThemeWatcher(this,()->ui.dark,this::themeReady,this::recreate);ui.window();
         if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(true);setTurnScreenOn(true);}
         else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         boolean locked=getSystemService(KeyguardManager.class).isDeviceLocked();
@@ -32,20 +30,20 @@ public final class VoiceEntryActivity extends Activity {
         MainParts.conversationLabel(ui,box);chat=new ChatTimeline(ui);box.addView(chat.rows);
         box.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));ui.space(box,12);
         box.addView(ui.ghostButton("Close",this::finish),new LinearLayout.LayoutParams(-1,-2));ui.space(box,2);TextView note=ui.detail("Close hides this screen. Stop microphone ends listening.");note.setTextSize(13);note.setGravity(Gravity.CENTER);box.addView(note,new LinearLayout.LayoutParams(-1,-2));
-        ScrollView scroll=new ScrollView(this);scroll.setFitsSystemWindows(true);scroll.setFillViewport(true);scroll.setBackground(ui.pageBackground());scroll.addView(box);setContentView(scroll);
+        contentScroll=new ScrollView(this);contentScroll.setFitsSystemWindows(true);contentScroll.setFillViewport(true);contentScroll.setBackground(ui.pageBackground());contentScroll.addView(box);setContentView(contentScroll);if(state!=null){final int offset=state.getInt("voiceScrollY",0);contentScroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener(){@Override public void onLayoutChange(View v,int l,int t,int r,int b,int ol,int ot,int or,int ob){if(r>l&&b>t){v.scrollTo(0,offset);v.removeOnLayoutChangeListener(this);}}});}
         Cloud.prefs(this).edit().putLong("voice_entry_created_elapsed",SystemClock.elapsedRealtime()).putLong("voice_entry_created_ns",SystemClock.elapsedRealtimeNanos()).putBoolean("voice_entry_created_locked",locked).commit();
         refresh();
     }
-    @Override public void onSaveInstanceState(Bundle state){state.putBoolean("themed",themeRecreate&&!startPending);super.onSaveInstanceState(state);}
+    @Override public void onSaveInstanceState(Bundle state){state.putBoolean("startPending",startPending);state.putLong("themeBusyRemaining",Math.max(0,themeBusyUntil-SystemClock.elapsedRealtime()));state.putInt("voiceScrollY",contentScroll.getScrollY());super.onSaveInstanceState(state);}
     @Override public void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);startPending=true;}
     @Override public void onStart(){super.onStart();IntentFilter filter=new IntentFilter("com.personalassistant.companion.VOICE_STATE");if(Build.VERSION.SDK_INT>=33)registerReceiver(voiceState,filter,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(voiceState,filter);registered=true;Cloud.prefs(this).registerOnSharedPreferenceChangeListener(preferences);}
-    @Override public void onResume(){super.onResume();if(ui==null)return;if(AppUi.dark(this)!=ui.dark){themeRecreate=true;recreate();return;}ui.window();if(startPending){startPending=false;startTalk();}refresh();watchTheme();}
-    @Override public void onPause(){handler.removeCallbacks(themeCheck);super.onPause();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null)ui.window();}
+    @Override public void onResume(){super.onResume();resumed=true;if(ui==null)return;ui.window();if(startPending){startPending=false;startTalk();}refresh();if(themeWatcher!=null)themeWatcher.resume();}
+    @Override public void onPause(){resumed=false;if(themeWatcher!=null)themeWatcher.stop();super.onPause();}
+    @Override public void onDestroy(){if(themeWatcher!=null)themeWatcher.stop();super.onDestroy();}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null)ui.window();if(focus&&themeWatcher!=null)themeWatcher.check();}
     @Override public void onStop(){if(registered){unregisterReceiver(voiceState);registered=false;}Cloud.prefs(this).unregisterOnSharedPreferenceChangeListener(preferences);super.onStop();}
-    /** The sunrise and sunset theme flips while the screen is open, so re-check at the computed moment. */
-    private void watchTheme(){handler.removeCallbacks(themeCheck);long wait=AppUi.sunDelay(this);if(wait>0)handler.postDelayed(themeCheck,wait);}
-    private void checkTheme(){if(isFinishing()||isDestroyed())return;if(AppUi.dark(this)!=ui.dark){themeRecreate=true;recreate();}else watchTheme();}
+    /** Recreation for a palette change waits until the screen is focused and no recording is starting or active; it never starts a new one. */
+    private boolean themeReady(){android.content.SharedPreferences p=Cloud.prefs(this);return resumed&&hasWindowFocus()&&!startPending&&!p.getBoolean("voice_conversation_active",false)&&!p.getBoolean("voice_listening_test",false)&&SystemClock.elapsedRealtime()>=themeBusyUntil;}
     private void refresh(){
         VoiceStatus s=AppUi.voiceStatus(this,false);boolean mic=AppUi.micActive(this);
         orbLive=s.live();if(talk!=null){talk.state(s.orb);talk.level(AppUi.level(this),mic&&orbLive);}
@@ -54,6 +52,7 @@ public final class VoiceEntryActivity extends Activity {
         if(chat!=null)chat.render(null);
     }
     private void startTalk(){
+        themeBusyUntil=SystemClock.elapsedRealtime()+2000L;
         if(checkSelfPermission("android.permission.RECORD_AUDIO")!=PackageManager.PERMISSION_GRANTED){Cloud.prefs(this).edit().putString("voice_status","Grant microphone permission in Companion while unlocked, then try again.").commit();refresh();return;}
         try{Cloud.prefs(this).edit().putLong("voice_entry_talk_request_ns",SystemClock.elapsedRealtimeNanos()).apply();startForegroundService(new Intent(this,VoiceService.class).setAction(VoiceService.TALK));Cloud.prefs(this).edit().putLong("voice_entry_talk_elapsed",SystemClock.elapsedRealtime()).commit();}
         catch(Exception error){Cloud.prefs(this).edit().putString("voice_status","Microphone could not start · reopen Companion").commit();}
