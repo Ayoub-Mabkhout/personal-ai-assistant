@@ -40,8 +40,12 @@ function timeNode(seconds,timeOnly){const date=new Date(seconds*1000),node=el('t
 const authButton=()=>{$('signin').hidden=!!viewToken;$('signin').textContent=tokens?'Sign out':'Sign in'};
 function signIn(){const state=crypto.randomUUID();write('task-oauth-state:'+state,{state,target,time:Date.now()});const redirect=client+(validTarget(target)?'?task='+encodeURIComponent(target):'');location.href=location.origin+'/auth/authorize?'+new URLSearchParams({client_id:client,redirect_uri:redirect,response_type:'code',state})}
 async function exchange(body){const response=await fetch('/auth/token',{method:'POST',body:new URLSearchParams({...body,client_id:client})});if(!response.ok){tokens=null;remove('task-login');authButton();throw fatal('Sign in again to view this task.')}const next=await response.json();tokens={...next,refresh_token:next.refresh_token||body.refresh_token,expires_at:Date.now()+next.expires_in*1000};write('task-login',tokens)}
-async function access(){if(!tokens)throw fatal('Sign in with your Home Assistant account to view this task.');if(tokens.expires_at<Date.now()+60000)await exchange({grant_type:'refresh_token',refresh_token:tokens.refresh_token});return tokens.access_token}
+let accessRefresh=null;
+async function access(){if(!tokens)throw fatal('Sign in with your Home Assistant account to view this task.');if(tokens.expires_at<Date.now()+60000){if(!accessRefresh)accessRefresh=exchange({grant_type:'refresh_token',refresh_token:tokens.refresh_token}).finally(()=>accessRefresh=null);await accessRefresh}return tokens.access_token}
+let preferencesLoaded=false,preferencesLoading=false;
+async function loadPreferences(){if(preferencesLoaded||preferencesLoading||!tokens)return;preferencesLoading=true;try{const r=await fetch('/tasks/v1/preferences',{headers:{Authorization:'Bearer '+await access()},cache:'no-store',signal:timeout()});if(r.ok){AssistantDaylight.configure((await r.json()).daylight);preferencesLoaded=true}}catch{}finally{preferencesLoading=false}}
 async function taskResponse(){
+  loadPreferences();
   const headers=viewToken?{'X-Task-View':viewToken}:{Authorization:'Bearer '+await access()};
   let response=await fetch('/tasks/v1/'+target,{headers,cache:'no-store',signal:timeout()});
   if(response.status===401&&viewToken){remove('task-view:'+target);viewToken=null;authButton();if(tokens)response=await fetch('/tasks/v1/'+target,{headers:{Authorization:'Bearer '+await access()},cache:'no-store',signal:timeout()})}
@@ -247,6 +251,7 @@ $('instruction').addEventListener('keydown',event=>{if(event.key==='Enter'&&(eve
 let historyCursor=null,historyBusy=false,historyLoaded=false,historyPages=0,historySeq=0,historyStamp=0;
 const historyRows=new Map(),historyNodes=new Map();
 async function loadHistory(mode='fresh'){
+  loadPreferences();
   if(target||document.hidden)return;
   if(mode!=='fresh'&&historyBusy)return;
   if(mode==='more'&&!historyCursor)return;

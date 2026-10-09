@@ -36,6 +36,15 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertIn('sample',response.json()['themes'][0]['content'])
 
+    def test_daylight_preferences_remain_private_and_source_is_generic(self):
+        prefs=self.root/'runtime/companion-preferences.json'
+        prefs.write_text(json.dumps({'daylight':{'latitude':35.0,'longitude':-20.0},'secret':'omit'}))
+        self.assertEqual(self.client.get('/api/preferences').status_code,401)
+        value=self.client.get('/api/preferences',headers=self.headers)
+        self.assertEqual(value.json(),{'daylight':{'latitude':35.0,'longitude':-20.0}})
+        prefs.unlink()
+        self.assertEqual(self.client.get('/api/preferences',headers=self.headers).json(),{'daylight':None})
+
     def test_dns_rebinding_host_rejected(self):
         self.assertEqual(self.client.get('/',headers={'Host':'attacker.example'}).status_code,400)
 

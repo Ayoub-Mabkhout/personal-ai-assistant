@@ -16,6 +16,7 @@ import android.view.animation.*;
 import android.widget.*;
 import java.util.*;
 import java.util.function.IntConsumer;
+import java.util.function.BooleanSupplier;
 
 /**
  * Dusk Aurora presentation toolkit shared by the app, locked voice entry and dialogs.
@@ -51,9 +52,27 @@ final class AppUi {
         soft=accentSoft;warm=muted;cool=surfaceAlt;coolAccent=accent;
     }
     private int pick(int light,int night){return dark?night:light;}
-    /** ui_theme is sun (default: dark from sunset to sunrise), system, light or dark. */
-    static boolean dark(Context c){String v=Cloud.prefs(c).getString("ui_theme","sun");if(v.equals("sun"))return DaylightTheme.dark(System.currentTimeMillis());return v.equals("dark")||(v.equals("system")&&(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES);}
+    /** Sun follows System until this deployment explicitly configures private coordinates. */
+    private static Double coordinate(Context c,String key){try{return Double.valueOf(Cloud.prefs(c).getString(key,""));}catch(RuntimeException error){return null;}}
+    static boolean daylightConfigured(Context c){Double latitude=coordinate(c,"daylight_latitude"),longitude=coordinate(c,"daylight_longitude");return latitude!=null&&longitude!=null&&DaylightTheme.valid(latitude,longitude);}
+    static boolean dark(Context c){return dark(c,System.currentTimeMillis());}
+    static boolean dark(Context c,long at){boolean system=(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;return DaylightTheme.resolve(Cloud.prefs(c).getString("ui_theme","sun"),system,at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
+    static long nextThemeChange(Context c,long at){if(!"sun".equals(Cloud.prefs(c).getString("ui_theme","sun"))||!daylightConfigured(c))return Long.MAX_VALUE;return DaylightTheme.nextChange(at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
     static void theme(Activity activity){activity.setTheme(dark(activity)?R.style.AssistantDarkTheme:R.style.AssistantLightTheme);}
+    /** Foreground-only scheduling; the host decides when recreation is safe. */
+    static final class ThemeWatcher {
+        final Activity activity;final BooleanSupplier displayedDark,ready;final Runnable apply;
+        final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
+        boolean active,refreshPending;
+        final Runnable evaluate=()->evaluate();
+        final BroadcastReceiver clock=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){check();}};
+        final SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if("ui_theme".equals(key)||"daylight_latitude".equals(key)||"daylight_longitude".equals(key))check();};
+        ThemeWatcher(Activity activity,BooleanSupplier displayedDark,BooleanSupplier ready,Runnable apply){this.activity=activity;this.displayedDark=displayedDark;this.ready=ready;this.apply=apply;}
+        void resume(){if(active)return;active=true;refreshPending=false;IntentFilter filter=new IntentFilter(Intent.ACTION_TIME_CHANGED);filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);filter.addAction(Intent.ACTION_DATE_CHANGED);filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);if(Build.VERSION.SDK_INT>=33)activity.registerReceiver(clock,filter,Context.RECEIVER_NOT_EXPORTED);else activity.registerReceiver(clock,filter);Cloud.prefs(activity).registerOnSharedPreferenceChangeListener(preferences);check();}
+        void stop(){if(!active)return;active=false;main.removeCallbacks(evaluate);Cloud.prefs(activity).unregisterOnSharedPreferenceChangeListener(preferences);activity.unregisterReceiver(clock);}
+        void check(){main.removeCallbacks(evaluate);if(active&&!refreshPending)main.post(evaluate);}
+        private void evaluate(){if(!active||refreshPending||activity.isFinishing()||activity.isDestroyed())return;long at=System.currentTimeMillis();DaylightTheme.Refresh plan=DaylightTheme.refresh(displayedDark.getAsBoolean(),dark(activity,at),ready.getAsBoolean(),at,nextThemeChange(activity,at));if(plan.apply){refreshPending=true;apply.run();}else if(plan.delay!=Long.MAX_VALUE)main.postDelayed(evaluate,plan.delay);}
+    }
     int dp(float n){return Math.round(n*density);}
     float dpf(float n){return n*density;}
     static int mix(int a,int b,float fraction){return Color.rgb(Math.round(Color.red(a)*(1-fraction)+Color.red(b)*fraction),Math.round(Color.green(a)*(1-fraction)+Color.green(b)*fraction),Math.round(Color.blue(a)*(1-fraction)+Color.blue(b)*fraction));}

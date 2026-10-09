@@ -32,6 +32,7 @@ def build(output, root=ROOT):
     paths.extend((root / 'src/personal_assistant').rglob('*.py'))
     paths.extend((root / 'apps/groceries').glob('*'))
     paths.extend((root / 'apps/tasks').glob('*'))
+    paths.extend((root / 'apps/shared').glob('*.js'))
     paths.extend((root / 'integrations/home_assistant/custom_components').rglob('*.py'))
     paths.extend((root / 'integrations/home_assistant/custom_components').rglob('manifest.json'))
     for path in paths:

@@ -108,13 +108,13 @@ and scale are removed: state changes apply immediately or crossfade in under
 ## Theme modes
 
 Every surface offers **Sunrise & sunset** (the default), **System**, **Light**
-and **Dark**. Sunrise & sunset is light from sunrise to sunset and dark
-otherwise, for one fixed place (Munich, 48.137° N, 11.575° E). The sun times
-are computed on the device with the standard solar-position equations (upper
-limb at −0.833°), so no network request or location permission is involved.
-An open screen switches at the computed moment and re-checks when it returns
-to the foreground. Android keeps the place in `DaylightTheme.java`; each web
-page keeps the same constants next to its theme code.
+and **Dark**. Sunrise & sunset uses a deployment's privately configured coarse
+coordinates, fetched through an authenticated preferences API and cached for
+offline use. A clone without these settings follows the device's System theme.
+No location permission, GPS or external geolocation service is involved. The
+solar calculation uses the sun's upper limb at −0.833°; open screens switch at
+the next transition and recheck when they return to the foreground. Android and
+web surfaces use the same runtime location, never a place baked into source.
 
 ## Platform notes
 

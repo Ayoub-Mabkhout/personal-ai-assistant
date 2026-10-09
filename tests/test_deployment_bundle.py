@@ -17,6 +17,9 @@ class DeploymentBundleTests(unittest.TestCase):
             module = root / 'src/personal_assistant/main.py'
             module.parent.mkdir(parents=True)
             module.write_text('print("public code")')
+            shared = root / 'apps/shared/daylight.js'
+            shared.parent.mkdir(parents=True)
+            shared.write_text('/* generic solar calculator */')
             for name in ('private/profile/PROFILE.md', 'config/local/.env',
                          'infra/server/.env', 'state/queue/private.sqlite3',
                          'src/personal_assistant/__pycache__/private.pyc'):
@@ -28,6 +31,7 @@ class DeploymentBundleTests(unittest.TestCase):
             with tarfile.open(output) as archive:
                 names = archive.getnames()
                 self.assertIn('src/personal_assistant/main.py', names)
+                self.assertIn('apps/shared/daylight.js', names)
                 for member in archive:
                     self.assertNotIn(b'PRIVATE_SENTINEL_NOT_FOR_DEPLOYMENT', archive.extractfile(member).read())
                     self.assertFalse(member.name.startswith(('private/', 'state/', 'config/local/')))

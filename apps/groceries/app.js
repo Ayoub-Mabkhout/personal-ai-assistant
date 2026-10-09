@@ -157,6 +157,7 @@ async function sync(){
       queue.shift();saveQueue();
     }
     snapshot={items:[],recipes:[],...await api('list')};
+    AssistantDaylight.configure(snapshot.daylight);
     persist();synced=true;
     setStatus('ok','Cloud saved','works while the laptop is asleep');
   }catch(error){report(error)}

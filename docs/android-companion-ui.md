@@ -1,9 +1,11 @@
 # Phone companion
 
 The native app opens on Voice. Its bottom tabs are Voice, Shopping, Activity and
-Settings. Theme follows the phone by default; Light and Dark can be selected
-under Appearance. Light uses warm ivory and slate with plum/periwinkle accents; Dark uses ink
-and plum with muted lavender. A layered circular Talk control anchors Voice,
+Settings. Sunrise & sunset appearance uses explicitly configured private
+coordinates and follows System when none are configured; Light, Dark and System
+can also be selected under Appearance. See [private daylight preferences](mobile-preferences.md).
+The exact Dusk Aurora palette and assets remain shared across those choices.
+A layered circular Talk control anchors Voice,
 Shopping uses an inline quick-add and compact rows, Activity uses a dated
 timeline, and Settings groups compact icon actions. Tonal backgrounds and
 short status/page transitions stay understated. Animation respects Android
@@ -18,6 +20,13 @@ Start conversation explicitly to allow continuing turns; That was all or the
 End conversation control finishes them without changing the wake setting.
 Timestamped chat shows user requests and responses, with native task links for
 queued work.
+
+Chat uses the shared Dusk Aurora bubble faces, with timestamps and semantic
+state chips below each response. Task actions keep a 48 dp touch target;
+streaming revisions retain their original timestamp and do not replay entry
+motion. Task history and continuations use the supplied full-screen sheet
+theme. Native task notifications and the microphone tile use the supplied
+monochrome vector assets.
 
 Background listening is a
 separate desired setting for Hey Chat while the app is closed or the phone is

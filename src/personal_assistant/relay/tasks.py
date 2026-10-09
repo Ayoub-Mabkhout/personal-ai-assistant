@@ -11,8 +11,15 @@ from fastapi.responses import FileResponse
 from .continuations import Continuations,Followup
 
 
-def task_router(queues,ha_url,assets,user_verifier=None,task_links=None):
+def task_router(queues,ha_url,assets,user_verifier=None,task_links=None,mobile_settings_file=None):
     api=APIRouter(prefix='/tasks');cache={};lock=threading.Lock();continuations=Continuations(queues['agent'])
+    @api.get('/v1/preferences')
+    def preferences(authorization:str|None=Header(default=None)):
+        authorize(authorization)
+        from .mobile_settings import MobileSettings
+        from fastapi.responses import JSONResponse
+        value=MobileSettings(mobile_settings_file).snapshot() if mobile_settings_file else {'daylight':None}
+        return JSONResponse(value,headers={'Cache-Control':'private, no-store'})
     @api.get('/v1/history')
     def history(authorization:str|None=Header(default=None),q:str=Query(default='',max_length=300),
                 cursor:str|None=Query(default=None,max_length=500),limit:int=Query(default=30,ge=1,le=100)):
@@ -115,6 +122,7 @@ def task_router(queues,ha_url,assets,user_verifier=None,task_links=None):
 
     @api.get('/{filename}')
     def asset(filename:str):
-        if filename not in ('app.js','style.css','theme.js'): raise HTTPException(404)
-        return FileResponse(Path(assets)/filename,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
+        if filename not in ('app.js','style.css','theme.js','daylight.js'): raise HTTPException(404)
+        target=Path(assets).parent/'shared'/filename if filename=='daylight.js' else Path(assets)/filename
+        return FileResponse(target,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
     return api

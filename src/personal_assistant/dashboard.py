@@ -93,6 +93,15 @@ def create_app(config):
     def link_whatsapp():
         return (ROOT/'apps/dashboard/whatsapp.html').read_text(encoding='utf-8').replace('__DASHBOARD_TOKEN__',token)
 
+    @app.get('/daylight.js')
+    def daylight_script():
+        return FileResponse(ROOT/'apps/shared/daylight.js',media_type='text/javascript')
+
+    @app.get('/api/preferences')
+    def preferences():
+        from personal_assistant.relay.mobile_settings import MobileSettings
+        return MobileSettings(config.get('mobile_settings_file',runtime/'companion-preferences.json')).snapshot()
+
     @app.get('/api/profile')
     def profile_data():
         manifest=json.loads((profile/'manifest.json').read_text(encoding='utf-8'))

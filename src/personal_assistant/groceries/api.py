@@ -54,12 +54,14 @@ class RecipeImport(BaseModel):
     source: str = Field(default='', max_length=1000)
 
 
-def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=None, phone_sender=None):
+def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=None, phone_sender=None, mobile_settings_file=None):
     if len(internal_token) < 32:
         raise ValueError('Use a dedicated grocery credential of at least 32 characters.')
     store = Groceries(path)
     api = APIRouter(prefix='/groceries')
     cache, lock = {}, threading.Lock()
+    from personal_assistant.relay.mobile_settings import MobileSettings
+    settings = MobileSettings(mobile_settings_file or Path(path).with_name('companion-preferences.json'))
 
     def authorize(authorization: str | None = Header(default=None)):
         if not authorization or not authorization.startswith('Bearer '):
@@ -94,7 +96,7 @@ def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=
 
     @api.get('/v1/list', dependencies=[Depends(authorize)])
     def snapshot():
-        return {**store.snapshot(), 'store': store_info or {}}
+        return {**store.snapshot(), 'store': store_info or {}, **settings.snapshot()}
 
     def change(value):
         try:
@@ -153,9 +155,10 @@ def router(path, internal_token, ha_url, assets, store_info=None, user_verifier=
 
     @api.get('/{filename}')
     def asset(filename: str):
-        if filename not in ('app.js','theme.js','style.css','sw.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png'):
+        if filename not in ('app.js','theme.js','daylight.js','style.css','sw.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png'):
             raise HTTPException(404)
-        response = FileResponse(Path(assets)/filename, headers={'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff'})
+        target = Path(assets).parent/'shared'/filename if filename == 'daylight.js' else Path(assets)/filename
+        response = FileResponse(target, headers={'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff'})
         if filename == 'manifest.webmanifest':
             response.media_type = 'application/manifest+json'
         return response

@@ -6,60 +6,8 @@
 <meta name="color-scheme" content="light dark">
 <title>Link WhatsApp</title>
 <meta name="theme-color" content="#FAF5EC">
-<script>
-// Follows the dashboard's saved colour mode. Sunrise & sunset is computed here for Munich: no network, no geolocation.
-(()=>{
-const KEY='personal-theme',MODES=['sun','system','light','dark'],MUNICH={ lat: 48.137, lon: 11.575 };
-// Sunrise and sunset for a latitude/longitude from the standard solar-position equations
-// (upper limb at -0.833 degrees incl. refraction). Returns epoch milliseconds.
-function sunTimes(ms, lat, lon) {
-  const rad = Math.PI / 180, day = 86400000, J1970 = 2440588, J2000 = 2451545, J0 = 0.0009;
-  const d = ms / day - 0.5 + J1970 - J2000;
-  const lw = -lon * rad, phi = lat * rad;
-  const n = Math.round(d - J0 - lw / (2 * Math.PI));
-  const ds = J0 + lw / (2 * Math.PI) + n;
-  const M = rad * (357.5291 + 0.98560028 * ds);
-  const C = rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
-  const L = M + C + rad * 102.9372 + Math.PI;
-  const dec = Math.asin(Math.sin(L) * Math.sin(rad * 23.4397));
-  const transit = J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
-  const cosW = (Math.sin(-0.833 * rad) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec));
-  if (cosW >= 1) return { rise: null, set: null, polar: 'night' };
-  if (cosW <= -1) return { rise: null, set: null, polar: 'day' };
-  const w = Math.acos(cosW);
-  const set = J2000 + J0 + (w + lw) / (2 * Math.PI) + n + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
-  const rise = transit - (set - transit);
-  const toMs = j => (j + 0.5 - J1970) * day;
-  return { rise: toMs(rise), set: toMs(set) };
-}
-// Dark between sunset and the next sunrise; also returns when the answer next changes.
-function sunPhase(ms, place) {
-  const t = sunTimes(ms, place.lat, place.lon);
-  if (t.polar) return { dark: t.polar === 'night', next: ms + 3600000 };
-  if (ms < t.rise) return { dark: true, next: t.rise };
-  if (ms < t.set) return { dark: false, next: t.set };
-  const tomorrow = sunTimes(ms + 86400000, place.lat, place.lon);
-  return { dark: true, next: tomorrow.rise || ms + 3600000 };
-}
-const root=document.documentElement,meta=document.querySelector('meta[name=theme-color]'),system=matchMedia('(prefers-color-scheme: dark)');
-function stored(){try{const v=localStorage.getItem(KEY);return MODES.includes(v)?v:'sun'}catch{return 'sun'}}
-let mode=stored(),timer=0;
-function apply(){
-  clearTimeout(timer);
-  const phase=mode==='sun'?sunPhase(Date.now(),MUNICH):null;
-  const theme=phase?(phase.dark?'dark':'light'):mode==='system'?(system.matches?'dark':'light'):mode;
-  if(root.dataset.theme!==theme)root.dataset.theme=theme;
-  if(meta)meta.content=theme==='dark'?'#130E1C':'#FAF5EC';
-  if(phase)timer=setTimeout(apply,Math.max(phase.next-Date.now(),250));
-}
-apply();
-system.addEventListener('change',()=>{if(mode==='system')apply()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)apply()});
-addEventListener('focus',apply);
-addEventListener('pageshow',apply);
-addEventListener('storage',e=>{if(e.key===KEY||e.key===null){mode=stored();apply()}});
-})();
-</script>
+<script src="/daylight.js"></script>
+<script>window.personalTheme=AssistantDaylight.create("personal-theme");</script>
 <style>
 :root{
   color-scheme:light dark;
@@ -209,6 +157,7 @@ setInterval(()=>{
   remaining.textContent=!qr.hidden&&expires?'New code in '+seconds+' seconds.':'';
   if(expires&&seconds===0)showQr(false)
 },500);
+fetch('/api/preferences',{headers:{'X-Dashboard-Token':token}}).then(r=>r.ok?r.json():null).then(value=>{if(value)AssistantDaylight.configure(value.daylight)}).catch(()=>{});
 refresh();setInterval(refresh,1500);
 </script>
 </body>

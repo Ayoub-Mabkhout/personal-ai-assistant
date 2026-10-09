@@ -104,6 +104,7 @@ class PhoneNotificationTests(unittest.TestCase):
                 response=client.get('/tasks/'+name)
                 self.assertEqual(response.status_code,200,name)
                 self.assertEqual(response.content,(assets/name).read_bytes())
+            self.assertEqual(client.get('/tasks/daylight.js').content,(assets.parent/'shared/daylight.js').read_bytes())
             index=client.get('/tasks/agent/task-test-123')
             self.assertIn('/tasks/theme.js',index.text)
             self.assertIn("script-src 'self'",index.headers['content-security-policy'])

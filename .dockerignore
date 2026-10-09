@@ -13,6 +13,8 @@
 !apps/groceries/*
 !apps/tasks/
 !apps/tasks/*
+!apps/shared/
+!apps/shared/*.js
 !infra/
 !infra/server/
 !infra/server/Dockerfile
