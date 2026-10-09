@@ -45,7 +45,15 @@ def execute(args, client):
         return {'phones':client.call(BASE+'phones')}
     if args.action == 'status':
         return client.call(BASE+'alarms/'+args.id)
+    if args.action == 'termux-status':
+        return client.call(BASE+'termux/commands/'+args.id)
+    if args.action == 'termux-capabilities':
+        return client.call(BASE+'termux/capabilities')
     phone = select_phone(client.call(BASE+'phones'), args.phone)
+    if args.action == 'termux':
+        script=args.script_file.read_text(encoding='utf-8') if args.script_file else args.script
+        return client.call(BASE+'termux/commands',{'id':args.id,'phone':phone,'script':script,
+                                                'workdir':args.workdir,'label':args.label,'timeout':args.timeout,'ttl':args.ttl})
     hour, minute = args.time
     return client.call(BASE+'alarms', {'id':args.id, 'phone':phone, 'hour':hour, 'minute':minute,
                                      'label':args.label, 'launch':args.launch})
@@ -67,6 +75,18 @@ def parser():
                             'The native Companion cannot be launched this way: it always shows a tap-to-set-alarm card, even with --launch.')
     status = commands.add_parser('status', help='Read the saved alarm delivery state.')
     status.add_argument('id', type=identifier)
+    termux=commands.add_parser('termux',help='Queue a phone script; Termux installation and command permission required.')
+    termux.add_argument('--id',type=identifier,required=True)
+    source=termux.add_mutually_exclusive_group(required=True)
+    source.add_argument('--script');source.add_argument('--script-file',type=Path)
+    termux.add_argument('--phone',type=identifier)
+    termux.add_argument('--workdir',default='~/')
+    termux.add_argument('--label',default='Phone command')
+    termux.add_argument('--timeout',type=int,default=60)
+    termux.add_argument('--ttl',type=int,default=3600)
+    commands.add_parser('termux-capabilities',help='Check installation, permission and bridge enablement reported by paired phones.')
+    termux_status=commands.add_parser('termux-status',help='Read saved stdout, stderr, exit code and command state.')
+    termux_status.add_argument('id',type=identifier)
     return cli
 
 

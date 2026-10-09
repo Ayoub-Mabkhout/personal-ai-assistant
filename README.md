@@ -32,6 +32,7 @@ public source files. A clone does not inherit a deployed owner's connections.
 - [Cloud calendar reminders](docs/calendar-reminders.md)
 - [Background mail collection and follow-ups](docs/mail-automation.md)
 - [Phone widget and alarms](docs/phone-companion.md)
+- [Phone scripting through Termux (Claude/Codex/shared CLI)](docs/termux-bridge.md)
 - [Companion app and local wake testing](docs/companion-app.md)
 - [Native task history, notifications and Firebase setup](docs/native-companion.md)
 - [Signed releases and GitHub Actions](docs/releases.md)

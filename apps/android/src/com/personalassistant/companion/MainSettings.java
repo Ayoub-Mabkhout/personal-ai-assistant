@@ -25,6 +25,7 @@ final class MainSettings {
         ui.label(page,"Phone setup");LinearLayout setup=ui.rowsCard();
         LinearLayout mic=tileRow("voice",a::microphonePermission);mic.addView(ui.type("Microphone permission",15,21,500,0,ui.text),MainParts.weighted(ui,1,14,0,8,0));micChip=ui.statusChip("Allowed","success");mic.addView(micChip);micChevron=MainParts.icon(ui,"arrow",ui.muted);mic.addView(micChevron,new LinearLayout.LayoutParams(ui.dp(18),ui.dp(18)));setup.addView(mic);
         assistant=row(setup,"Digital assistant","sparkle","Set up",a::chooseAssistant);battery=row(setup,"Battery settings","battery","",()->a.openSettings(new android.content.Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
+        row(setup,"Phone scripting","code","Termux",()->TermuxSetup.show(a,ui)).setTag("termux_setup");
         line(setup);note(setup,"Choose Unrestricted for battery. Enable Background listening, wait until ready, then lock your phone.");page.addView(setup);
 
         ui.label(page,"Voice & appearance");LinearLayout voice=ui.rowsCard();

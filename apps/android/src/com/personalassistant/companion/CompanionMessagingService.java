@@ -17,6 +17,7 @@ public class CompanionMessagingService extends FirebaseMessagingService {
         // Job is durable before the short push callback tries delivery. On failure,
         // the server journal and recovery cursor prevent lost task updates.
         TaskSyncJob.schedule(this,false);
+        TermuxSyncJob.schedule(this,false);
         try{NativeNotifications.sync(this);}catch(Exception error){Cloud.prefs(this).edit().putString("push_status","Update saved on the server · retrying delivery").commit();}
     }
 }

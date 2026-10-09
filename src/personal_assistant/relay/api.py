@@ -26,6 +26,8 @@ class BodyLimit:
         path=scope.get('path','')
         limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else (
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
+        if path.startswith('/groceries/v1/mobile/termux/'):
+            limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
         while True:
             message = await receive()
             if message['type'] == 'http.disconnect':

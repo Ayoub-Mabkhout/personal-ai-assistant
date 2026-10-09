@@ -139,6 +139,8 @@ def mobile_router(store,owner_auth,grocery_store,change,sender=None,apk=None):
         if not authorization or not authorization.startswith('Bearer pa_mobile_'): raise HTTPException(401,'Pair the companion app.')
         try:return store.authenticate(authorization[7:])
         except ValueError as error:raise HTTPException(401,str(error)) from None
+    from personal_assistant.relay.termux import termux_router
+    api.include_router(termux_router(store,device,owner_auth))
     @api.post('/pairing',dependencies=[Depends(owner_auth)])
     def pair():return store.pairing()
     @api.post('/exchange')
