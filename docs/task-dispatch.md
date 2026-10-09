@@ -50,6 +50,14 @@ references resolve against the skill folder. Skills do not install into global
 CLI configuration. Account metadata, communication preferences and logs stay
 private; generic workflows remain reusable.
 
+Requests to get, send or download a specific file to the phone ("send me the March
+invoice PDF", "get me the slides from my thesis folder") select
+`skills/send-to-phone/SKILL.md`, together with the email skill when the file is an
+attachment. The worker locates the file, sends it with `scripts/send_to_phone.py`
+using a task-derived stable ID, and reports the relay state; ambiguous matches
+return needs_input. Files are sent only on the owner's request, never in bulk or by
+a background scan.
+
 CLI workers explicitly enable apps/plugins and use existing ChatGPT authentication.
 An already connected Gmail plugin is available to live searches and thread reads;
 the archive is supplementary. Independent unattended crawls use separate OAuth

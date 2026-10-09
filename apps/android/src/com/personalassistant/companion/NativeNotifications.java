@@ -22,12 +22,13 @@ final class NativeNotifications {
         for(int i=0;i<events.length();i++){
             JSONObject event=events.getJSONObject(i);long sequence=event.getLong("sequence");String id=event.getString("id");JSONObject body=event.getJSONObject("payload");body.put("created",event.optDouble("created",System.currentTimeMillis()/1000.0));
             if(event.optDouble("expires",Double.MAX_VALUE)>System.currentTimeMillis()/1000.0){
-                boolean release="release".equals(body.optString("type"));
+                boolean release="release".equals(body.optString("type")),file="file".equals(body.optString("type"));
                 // A blocked card stays unreceived so the server reports it and it shows once unblocked. A full page is never held:
                 // the server would keep serving the same 100 events and nothing behind them, reminders included, would arrive.
-                if(!release&&!more&&blocked(c,body))held=true;
+                // A file is saved even while its card is blocked, so file events are never held.
+                if(!release&&!file&&!more&&blocked(c,body))held=true;
                 else{
-                    if(!shown.contains(id)){if(release){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}else show(c,id,body);}
+                    if(!shown.contains(id)){if(release){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}else if(file)FileDrops.due(c);else show(c,id,body);}
                     if(held)kept.add(id);
                 }
             }
@@ -39,10 +40,12 @@ final class NativeNotifications {
             Cloud.call(c,"events/receipt",new JSONObject().put("cursor",next),true);
             if(!Cloud.prefs(c).edit().putLong("push_cursor",next).commit())throw new Exception("Phone storage failed");
         }
+        // Also the recovery path: a download that failed or was stopped is rescheduled by the next event sync.
+        if(Cloud.prefs(c).getBoolean("file_drops_due",false))FileDropJob.schedule(c);
         if(events.length()>0)NativeTasks.changed(c);
         Cloud.prefs(c).edit().putBoolean("push_more",more).commit();
     }
-    static String channel(String type){return type.equals("reminder")?"calendar_reminders":type.equals("alarm")?"phone_actions":"task_updates";}
+    static String channel(String type){return type.equals("reminder")?"calendar_reminders":type.equals("alarm")?"phone_actions":type.equals("file")?"files":"task_updates";}
     static boolean blocked(Context c,JSONObject body){
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         if(!manager.areNotificationsEnabled())return true;
@@ -53,6 +56,7 @@ final class NativeNotifications {
         NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from tasks running on your laptop");
         NotificationStyle.channel(manager,"calendar_reminders","Calendar reminders",NotificationManager.IMPORTANCE_HIGH,"Upcoming events from your assistant's calendar");
         NotificationStyle.channel(manager,"phone_actions","Phone actions",NotificationManager.IMPORTANCE_HIGH,"Alarms and other requests your assistant sends to this phone");
+        NotificationStyle.channel(manager,"files","Files",NotificationManager.IMPORTANCE_HIGH,"Files you asked your assistant to send to this phone");
     }
     /** Glyph and medallion tone for a task state. */
     static Object[] look(String state){

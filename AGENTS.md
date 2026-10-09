@@ -55,6 +55,7 @@ launching unrelated CLI sessions directly. Consult private
 continuity for actual service state and authentication status.
 
 For phone alarms and companion widget setup, use `skills/phone-control/SKILL.md`.
+To deliver a requested file to the phone's Downloads, use `skills/send-to-phone/SKILL.md`.
 Background Gmail collection and email-derived obligations run through the same
 Luna queue; see `docs/mail-automation.md`. No automatic outgoing correspondence is
 authorized by a background scan.
