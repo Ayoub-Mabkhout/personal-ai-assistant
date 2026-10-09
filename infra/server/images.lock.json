@@ -1,18 +1,10 @@
 {
   "checked_on": "2026-10-01",
   "images": {
-    "home-assistant/home-assistant": "ghcr.io/home-assistant/home-assistant@sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76",
     "library/python": "library/python@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b",
-    "rhasspy/wyoming-whisper": "rhasspy/wyoming-whisper@sha256:ba6fcb6056ebe237d15a325381763a80af2fc8fcedaa04f6a714a7375eb20d80",
-    "rhasspy/wyoming-piper": "rhasspy/wyoming-piper@sha256:7d39aafac409c2b6b09d999ed04d84c311d632e558b35baa60fad6aac722af7a",
     "library/caddy": "library/caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b"
   },
   "platforms": {
-    "home-assistant/home-assistant": [
-      "linux/amd64",
-      "linux/arm64",
-      "unknown/unknown"
-    ],
     "library/python": [
       "linux/386",
       "linux/amd64",
@@ -21,16 +13,6 @@
       "linux/ppc64le",
       "linux/riscv64",
       "linux/s390x",
-      "unknown/unknown"
-    ],
-    "rhasspy/wyoming-whisper": [
-      "linux/amd64",
-      "linux/arm64",
-      "unknown/unknown"
-    ],
-    "rhasspy/wyoming-piper": [
-      "linux/amd64",
-      "linux/arm64",
       "unknown/unknown"
     ],
     "library/caddy": [

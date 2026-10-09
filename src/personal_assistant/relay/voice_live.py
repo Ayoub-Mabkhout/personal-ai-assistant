@@ -26,7 +26,7 @@ queued-request acknowledgement once; do not announce later task completions.
 Do not invent account, calendar or shopping information.'''
 
 
-def live_action(service,phone,identifier,text,tz,created,session_id=''):
+def live_action(service,phone,identifier,text,tz,created,session_id='',native_timers=False):
     """Persist transcript and receipt; downstream IDs provide retry deduplication."""
     fingerprint=hashlib.sha256(text.encode()).hexdigest()
     with service.lock:
@@ -36,7 +36,7 @@ def live_action(service,phone,identifier,text,tz,created,session_id=''):
             if old and old['result']:return json.loads(old['result'])
             if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,?,NULL,?)',
                 (identifier,phone,fingerprint,json.dumps({'timezone':tz,'created_at':created,'mode':'live','session_id':session_id}),text,time.time()))
-        result=service.dispatch(phone,identifier,text,tz,created,session_id)
+        result=service.dispatch(phone,identifier,text,tz,created,session_id,native_timers)
         with service.ledger.db() as db:db.execute('UPDATE voice_commands SET result=? WHERE id=?',(json.dumps(result),identifier))
         return result
 
@@ -47,7 +47,7 @@ async def live_session(ws,service,phone):
         await ws.send_json({'type':'error','message':'Live speech is not configured. Use command mode.'});await ws.close();return
     started=time.monotonic();spend_id=None;provider=None;tasks=[]
     max_seconds=min(600,max(15,int(service.config.get('max_live_seconds',600))))
-    ended=asyncio.Event();send_lock=asyncio.Lock();user_segments=[];last_offset=-1;received_bytes=0;reply_id=''
+    ended=asyncio.Event();send_lock=asyncio.Lock();user_segments=[];last_offset=-1;received_bytes=0;reply_id='';local_results={}
     async def emit(event):
         async with send_lock:await ws.send_json(event)
     try:
@@ -55,6 +55,7 @@ async def live_session(ws,service,phone):
         if initial.get('type')!='start' or initial.get('sample_rate',16000)!=16000:
             raise ValueError('Start a 16 kHz PCM16 session first.')
         session_id=initial.get('id','')
+        native_timers=initial.get('native_timers') is True
         if not isinstance(session_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}',session_id):raise ValueError('Invalid session ID.')
         tz=initial.get('timezone','Europe/Berlin');ZoneInfo(tz)
         buffered=initial.get('buffered_audio_seconds',2)
@@ -77,6 +78,14 @@ async def live_session(ws,service,phone):
                 while not ended.is_set():
                     event=await ws.receive_json();kind=event.get('type')
                     if kind=='stop':ended.set();return
+                    if kind=='local_result':
+                        identifier=event.get('id');pending=local_results.get(identifier)
+                        if pending is None:raise ValueError('Unexpected native timer result.')
+                        status=event.get('status');reply=event.get('reply')
+                        if status not in ('timer_active','timer_blocked','timer_failed','timer_invalid','timer_expired','timer_finished','timer_cancelled','timer_delegated') or not isinstance(reply,str) or not 1<=len(reply)<=600:
+                            raise ValueError('Invalid native timer result.')
+                        if not pending.done():pending.set_result({'status':status,'reply':reply})
+                        continue
                     if kind!='audio':raise ValueError('Unsupported voice event.')
                     audio=event.get('audio','')
                     if not isinstance(audio,str) or len(audio)>44000:raise ValueError('Voice frame too large.')
@@ -122,10 +131,16 @@ async def live_session(ws,service,phone):
                         identifier=service.identifier(phone,session_id+':'+delegation_id)
                         reply_id=identifier
                         created=datetime.now(timezone.utc).isoformat()
-                        result=await asyncio.to_thread(live_action,service,phone,identifier,text,tz,created,session_id)
+                        result=await asyncio.to_thread(live_action,service,phone,identifier,text,tz,created,session_id,native_timers)
                         user_message_id=session_id+':user:'+str(last_offset)
                         last_offset=max((s[1] for s in relevant),default=last_offset)
-                        await emit({'type':'status',**result,'user_message_id':user_message_id,'acknowledged':True})
+                        if result.get('status')=='local_command':
+                            pending=asyncio.get_running_loop().create_future();local_results[identifier]=pending
+                            await emit({'type':'status',**result,'user_message_id':user_message_id,'acknowledged':False})
+                            try:result={**result,**await asyncio.wait_for(pending,10)}
+                            except asyncio.TimeoutError:result={**result,'status':'timer_uncertain','reply':'The phone did not confirm the timer. Check Companion before starting another timer.'}
+                            finally:local_results.pop(identifier,None)
+                        else:await emit({'type':'status',**result,'user_message_id':user_message_id,'acknowledged':True})
                         await provider.send(json.dumps({'type':'session.commentary.append','delegation_id':delegation_id,'content':result['reply'][:1600]}))
                         if result['status']=='ended':ended.set();return
                     elif kind=='error':

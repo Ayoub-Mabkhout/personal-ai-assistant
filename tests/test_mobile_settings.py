@@ -54,7 +54,7 @@ class MobileSettingsTests(unittest.TestCase):
             configured.write_text(json.dumps({'daylight': {'latitude': 0, 'longitude': 0}}))
             app = create_app(root / 'queue.sqlite3', 'o' * 40, 'w' * 40,
                 groceries={'path': root / 'groceries.sqlite3', 'internal_token': 'g' * 40,
-                           'ha_url': 'http://homeassistant:8123', 'assets': root})
+                           'assets': root})
             devices = app.state.mobile_events.devices
             phone = devices.exchange(devices.pairing()['code'], 'Synthetic phone')
             auth = {'Authorization': 'Bearer ' + phone['token']}
@@ -79,7 +79,7 @@ class MobileSettingsTests(unittest.TestCase):
             override.write_text(json.dumps({'daylight': {'latitude': 10, 'longitude': -20}}))
             app = create_app(root / 'queue.sqlite3', 'o' * 40, 'w' * 40, mobile_settings_file=override,
                 groceries={'path': root / 'groceries.sqlite3', 'internal_token': 'g' * 40,
-                           'ha_url': 'http://homeassistant:8123', 'assets': root})
+                           'assets': root})
             devices = app.state.mobile_events.devices
             phone = devices.exchange(devices.pairing()['code'], 'Synthetic phone')
             response = TestClient(app).get('/groceries/v1/mobile/preferences',

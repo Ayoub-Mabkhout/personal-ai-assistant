@@ -72,6 +72,7 @@ async def realtime_session(ws, service, phone):
     received_bytes = 0
     used = 0.0
     seen, pending_results = set(), []
+    local_results = {}
     user_message_id, reply_id = '', ''
 
     async def emit(event):
@@ -81,6 +82,7 @@ async def realtime_session(ws, service, phone):
     try:
         initial = await asyncio.wait_for(ws.receive_json(), 10)
         session_id = initial.get('id', '')
+        native_timers = initial.get('native_timers') is True
         if initial.get('type') != 'start' or initial.get('sample_rate', 16000) != 16000:
             raise ValueError('Start a 16 kHz PCM16 session first.')
         if not isinstance(session_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', session_id):
@@ -121,6 +123,13 @@ async def realtime_session(ws, service, phone):
                     if event.get('type') == 'stop':
                         ended.set()
                         return
+                    if event.get('type') == 'local_result':
+                        pending=local_results.get(event.get('id'))
+                        status,reply=event.get('status'),event.get('reply')
+                        if pending is None or status not in ('timer_active','timer_blocked','timer_failed','timer_invalid','timer_expired','timer_finished','timer_cancelled','timer_delegated') or not isinstance(reply,str) or not 1<=len(reply)<=600:
+                            raise ValueError('Invalid native timer result.')
+                        if not pending.done():pending.set_result({'status':status,'reply':reply})
+                        continue
                     audio = event.get('audio', '')
                     if event.get('type') != 'audio' or not isinstance(audio, str) or len(audio) > 44000:
                         raise ValueError('Invalid voice frame.')
@@ -184,9 +193,15 @@ async def realtime_session(ws, service, phone):
                             raise ValueError('Incomplete voice request.')
                         identifier = service.identifier(phone, session_id+':'+call_id)
                         result = await asyncio.to_thread(live_action, service, phone, identifier, text,
-                            tz, datetime.now(timezone.utc).isoformat(), session_id)
+                            tz, datetime.now(timezone.utc).isoformat(), session_id, native_timers)
                         reply_id=identifier
-                        await emit({'type': 'status', **result, 'user_message_id':user_message_id,'acknowledged': True})
+                        if result.get('status')=='local_command':
+                            pending=asyncio.get_running_loop().create_future();local_results[identifier]=pending
+                            await emit({'type':'status',**result,'user_message_id':user_message_id,'acknowledged':False})
+                            try:result={**result,**await asyncio.wait_for(pending,10)}
+                            except asyncio.TimeoutError:result={**result,'status':'timer_uncertain','reply':'The phone did not confirm the timer. Check Companion before starting another timer.'}
+                            finally:local_results.pop(identifier,None)
+                        else:await emit({'type': 'status', **result, 'user_message_id':user_message_id,'acknowledged': True})
                         await provider.send(json.dumps({'type': 'conversation.item.create', 'item': {
                             'type': 'function_call_output', 'call_id': call_id, 'output': json.dumps(result)}}))
                         pending_results.append(result)

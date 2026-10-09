@@ -74,7 +74,7 @@ authorizes the owner's task history through the protected mobile API. Cached
 details and unsent follow-up drafts survive a connection loss; stable follow-up
 IDs prevent retries from creating a second turn. Phone-only storage, cloud
 acknowledgement and task completion remain distinct statuses. Legacy browser
-history remains available with its existing Home Assistant sign-in.
+history remains available with its standalone owner sign-in.
 
 ## Features checklist
 
@@ -105,8 +105,7 @@ over the existing app to retain its pairing, recipes and saved commands.
 With Firebase configured and the phone registered, native event hints announce
 task changes, reminders and releases. The paired app fetches the durable event
 journal; push hints contain no task text. Tapping task Details opens the native
-conversation, and Reply uses its existing continuation path. Home Assistant
-supports the legacy channel and an older installation's migration hint.
+conversation, and Reply uses its existing continuation path.
 
 The companion verifies an update's package, version, checksum and installed
 signing identity before offering installation. Android still presents its

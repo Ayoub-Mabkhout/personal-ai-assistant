@@ -382,9 +382,6 @@ def main():
     handler = logging.handlers.RotatingFileHandler(directory / 'worker.log', maxBytes=262144, backupCount=3)
     logging.basicConfig(level=logging.INFO, handlers=[handler], format='%(asctime)s %(levelname)s %(message)s')
     worker = Worker(config)
-    if config.get('homeassistant_auth_file') and config.get('notifications_enabled',False):
-        from .notifications import HomeAssistantNotifier
-        worker.notifier = HomeAssistantNotifier(config)
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: worker.shutdown.set())
     if args.once:

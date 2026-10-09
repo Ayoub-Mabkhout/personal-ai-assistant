@@ -45,7 +45,7 @@ class NotificationReply(BaseModel):
 class ReplyInbox:
     """Persist immutable submission before queueing; recover either crash boundary.
 
-    Event context IDs identify retries of one HA event. A genuinely new event, even
+    Event context IDs identify retries of one notification event. A genuinely new event, even
     with identical text, is a new instruction. No parent task is rerun or reopened.
     """
     def __init__(self, queues, path=None):
@@ -93,7 +93,7 @@ class ReplyInbox:
             raise ValueError('Reply action does not match its notification.')
         if kind not in self.queues:
             raise ValueError('Unknown queue.')
-        # The receipt payload is immutable even if the parent completes while HA
+        # The receipt payload is immutable even if the parent completes while delivery
         # retries. Queue.submit uses this exact envelope again after a crash.
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -130,10 +130,10 @@ class ReplyInbox:
 
 
 def reply_router(queues, authorize, path=None):
-    """`authorize` must be the HA relay service/owner credential dependency.
+    """`authorize` must be the relay service/owner credential dependency.
 
-    Never pass the read-only task-view capability verifier here. HA forwards
-    Companion events with its server-side secret, not a credential from the URL.
+    Never pass the read-only task-view capability verifier here. Headless callers
+    use their protected service secret, not a credential from the URL.
     """
     inbox = ReplyInbox(queues, path)
     api = APIRouter()

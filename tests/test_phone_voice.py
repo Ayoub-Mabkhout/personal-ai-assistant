@@ -44,7 +44,11 @@ class PhoneVoiceTests(unittest.TestCase):
         self.calls=[];self.text='Hey Chat, add bananas and sparkling water to my shopping list.'
         def transcribe(audio,duration,identifier):
             self.calls.append(identifier);return self.text
-        self.service=VoiceService(self.root/'voice.sqlite3',self.devices,self.groceries,self.agents,self.commands,transcribe=transcribe)
+        def grocery_plan(identifier,text,items):
+            from personal_assistant.groceries.store import split_items
+            if not text.lower().startswith('add ') or 'shopping list' not in text.lower(): return {'intent':'other','question':'','changes':[]}
+            return {'intent':'grocery','question':'','changes':[{'operation':'add','target':'','name':name,'quantity':'','complete':False} for name in split_items(text)]}
+        self.service=VoiceService(self.root/'voice.sqlite3',self.devices,self.groceries,self.agents,self.commands,transcribe=transcribe,interpret_groceries=grocery_plan)
         self.app=FastAPI();self.app.add_middleware(BodyLimit);self.app.include_router(voice_router(self.service))
         @self.app.exception_handler(ValueError)
         async def invalid(request,error):return JSONResponse({'detail':str(error)},status_code=422)
@@ -158,7 +162,7 @@ class PhoneVoiceTests(unittest.TestCase):
         response=self.client.post('/groceries/v1/mobile/voice',content=b'x'*(5*1024*1024+1),headers=self.headers)
         self.assertEqual(response.status_code,413)
 
-    def test_budget_reservations_are_transactional_and_local_provider_never_calls_api(self):
+    def test_budget_reservations_are_transactional_and_unconfigured_provider_never_calls_api(self):
         ledger=VoiceLedger(self.root/'budget.sqlite3')
         def reserve(n):
             try:ledger.reserve('unique-'+str(n),0.2,1,'transcription');return True
@@ -166,10 +170,61 @@ class PhoneVoiceTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as pool:results=list(pool.map(reserve,range(10)))
         self.assertEqual(sum(results),5)
         transcriber=Transcriber({'provider':'local'},ledger)
-        with patch.object(transcriber,'local',return_value='local words') as local,patch('urllib.request.urlopen') as remote:
+        with patch('urllib.request.urlopen') as remote:
             audio,duration=decode_audio(Capture(**self.body()))
-            self.assertEqual(transcriber(audio,duration,'local-001'),'local words')
-            local.assert_called_once();remote.assert_not_called()
+            with self.assertRaisesRegex(ValueError,'not configured'):transcriber(audio,duration,'local-001')
+            remote.assert_not_called()
+
+    def test_timer_recognition_returns_phone_action_without_laptop_dispatch(self):
+        for index,text in enumerate(('Hey Chat set a timer for five minutes.', 'start a timer for one hour and thirty minutes', 'set a timer for nonsense')):
+            self.text=text;body=self.body('native-timer-'+str(index),native_timers=True)
+            first=self.post(body).json();self.assertEqual(first,self.post(body).json())
+            self.assertEqual(first['status'],'local_command');self.assertEqual(first['local_command'],'timer')
+            self.assertEqual(first['created_at'],body['created_at']);self.assertEqual(first['text'],text)
+        with self.agents.connection() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],0)
+        self.text='set a timer for five minutes';unsupported=self.post(self.body('old-timer-0001')).json()
+        self.assertEqual(unsupported['status'],'timer_unsupported');self.assertIn('not started',unsupported['reply'])
+
+    def test_live_timer_delegation_is_phone_owned_and_replay_is_stable(self):
+        identifier=self.service.identifier(self.phone,'live-timer-0001');text='set a timer for two hours'
+        created=datetime.now(timezone.utc).isoformat()
+        result=live_action(self.service,self.phone,identifier,text,'Europe/Berlin',created,native_timers=True)
+        self.assertEqual(result['status'],'local_command')
+        self.assertEqual(live_action(self.service,self.phone,identifier,text,'Europe/Berlin',created,native_timers=True),result)
+        with self.agents.connection() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],0)
+
+    def test_both_live_engines_wait_for_authoritative_phone_timer_receipt(self):
+        key=self.root/'mock-api-key';key.write_text('isolated-not-a-real-key')
+        self.service.config.update(key_file=str(key),max_live_seconds=15,max_realtime_seconds=15)
+        for engine in ('live','realtime'):
+            sent=[];text='set a timer for five minutes';reply='Timer set for 5 minutes on this phone.'
+            stream=({'type':'session.started'}, {'type':'session.input_transcript.delta','delta':text,'start_ms':0,'end_ms':500}, {'type':'session.delegation.created','delegation':{'id':'timer-call'},'offset_ms':500}, {'type':'session.closed'}) if engine=='live' else (
+                {'type':'session.updated'}, {'type':'conversation.item.input_audio_transcription.completed','item_id':'timer-user','transcript':text}, {'type':'response.function_call_arguments.done','call_id':'timer-call','name':'dispatch_request','arguments':json.dumps({'text':text})}, {'type':'response.done','response':{'usage':{}}}, {'type':'error'})
+            class Provider:
+                async def __aenter__(self):return self
+                async def __aexit__(self,*args):pass
+                async def send(self,message):sent.append(json.loads(message))
+                def __aiter__(self):
+                    async def events():
+                        for event in stream:
+                            await asyncio.sleep(0);yield json.dumps(event)
+                    return events()
+            with self.subTest(engine=engine),patch('websockets.asyncio.client.connect',return_value=Provider()):
+                with self.client.websocket_connect('/groceries/v1/mobile/voice/live?engine='+engine,headers=self.headers) as ws:
+                    ws.send_json({'type':'start','id':'timer-'+engine+'-session','sample_rate':16000,'native_timers':True})
+                    statuses=[]
+                    while True:
+                        event=ws.receive_json()
+                        if event['type']=='status':
+                            statuses.append(event);self.assertEqual(event['status'],'local_command');self.assertFalse(event['acknowledged'])
+                            self.assertFalse(any(e['type'] in ('session.commentary.append','conversation.item.create') for e in sent))
+                            ws.send_json({'type':'local_result','id':event['task_id'],'status':'timer_active','reply':reply})
+                        if event['type']=='closed':break
+                self.assertEqual(len(statuses),1)
+                outputs=[e for e in sent if e['type']=='session.commentary.append'] if engine=='live' else [e for e in sent if e['type']=='conversation.item.create']
+                self.assertEqual(len(outputs),1)
+                self.assertEqual(outputs[0]['content'] if engine=='live' else json.loads(outputs[0]['item']['output'])['reply'],reply)
+        self.assertEqual(self.agents.status()['queued'],0)
 
     def test_live_requires_paired_auth_and_explains_unconfigured_provider(self):
         with self.assertRaises(WebSocketDisconnect) as raised:

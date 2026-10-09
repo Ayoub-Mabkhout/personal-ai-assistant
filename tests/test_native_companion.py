@@ -19,7 +19,7 @@ class NativeTests(unittest.TestCase):
             path = Path(d)
             app = create_app(path/'queue.sqlite3', 'o'*40, 'w'*40,
                              groceries={'path': path/'groceries.sqlite3', 'internal_token': 'g'*40,
-                                        'ha_url': 'http://homeassistant:8123', 'assets': path})
+                                        'assets': path})
             devices = app.state.mobile_events.devices
             phone = devices.exchange(devices.pairing()['code'], 'Phone')
             client = TestClient(app)
@@ -108,7 +108,7 @@ class NativeTests(unittest.TestCase):
             sender({'title':'Calendar reminder', 'message':'Appointment', 'data':{'tag':'assistant-calendar-reminder123'}})
             sender({'title':'Phone alarm request', 'message':'07:30', 'data':{'tag':'assistant-alarm-alarm123','phone_id':phones[0]['id'],'ttl':600}})
             for version in (1, 2):
-                sender({'message':'command_broadcast_intent','data':{'version_code':version,'sha256':str(version)*64}})
+                sender({'type':'release','data':{'version_code':version,'sha256':str(version)*64}})
             first = store.events(phones[0]['id'])['items']
             second = store.events(phones[1]['id'])['items']
             self.assertEqual(len(first), 5)

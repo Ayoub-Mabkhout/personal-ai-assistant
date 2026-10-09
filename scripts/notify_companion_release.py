@@ -6,7 +6,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
-from personal_assistant.worker.notifications import HomeAssistantNotifier
+from personal_assistant.relay.client import OwnerClient
 
 
 def main():
@@ -16,7 +16,7 @@ def main():
     args=cli.parse_args()
     metadata=json.loads(args.metadata.read_text(encoding='utf-8'))
     config=json.loads(args.config.read_text(encoding='utf-8-sig'))
-    response=HomeAssistantNotifier(config).call('/groceries/v1/mobile/release/published',
+    response=OwnerClient(config).call('/groceries/v1/mobile/release/published',
         {'version_code':metadata['version_code'],'sha256':metadata['sha256']})
     print(json.dumps(response))
 

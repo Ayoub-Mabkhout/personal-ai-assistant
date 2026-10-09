@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 import uuid
 
 
@@ -61,9 +62,19 @@ class Groceries:
     def snapshot(self):
         with self.db() as db:
             db.execute('BEGIN')
-            return {'items': [dict(row) for row in db.execute('SELECT * FROM items ORDER BY complete,created')],
+            snapshot = {'items': [dict(row) for row in db.execute('SELECT * FROM items ORDER BY complete,created')],
                     'recipes': [{**json.loads(row['body']), 'version': row['version']} for row in db.execute('SELECT * FROM recipes')],
                     'server_time': datetime.now(timezone.utc).isoformat()}
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='retailer_status'").fetchone():
+                status = db.execute('SELECT body FROM retailer_status WHERE id=1').fetchone()
+                if status: snapshot['retailer_check'] = json.loads(status['body'])
+                evidence = {r['item_id']: r for r in db.execute('SELECT * FROM retailer_matches')}
+                for item in snapshot['items']:
+                    row = evidence.get(item['id'])
+                    if row and not item['complete'] and row['fingerprint'] == hashlib.sha256(item['name'].encode()).hexdigest():
+                        record = json.loads(row['body'])
+                        if record['expires_at'] > time.time(): item['retailer'] = record
+            return snapshot
 
     def mutate(self, body):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -121,9 +132,43 @@ class Groceries:
                     raise Conflict('This recipe changed on another device. Refresh before editing it.')
                 db.execute('INSERT INTO recipes(id,body,version) VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET body=excluded.body,version=recipes.version+1',
                            (recipe['id'], json.dumps(recipe, ensure_ascii=False)))
+            elif op == 'batch':
+                changes = body.get('changes', [])
+                if not 1 <= len(changes) <= 100: raise ValueError('Use one to 100 grocery changes.')
+                used = set(); descriptions = []
+                for change in changes:
+                    action = change['operation']
+                    name = change.get('name', '').strip(); quantity = change.get('quantity', '').strip()
+                    if len(name) > 300 or len(quantity) > 100: raise ValueError('Grocery item is too long.')
+                    if action == 'add':
+                        if not name: raise ValueError('An item needs a name.')
+                        item_id = str(uuid.uuid4())
+                        db.execute('INSERT INTO items(id,name,quantity,created,updated) VALUES(?,?,?,?,?)', (item_id,name,quantity,now,now))
+                        ids.append(item_id); descriptions.append('Added '+(' '.join([quantity,name]).strip()))
+                        continue
+                    target = change['target']
+                    if target in used: raise ValueError('Resolve each existing item once per request.')
+                    used.add(target)
+                    row = db.execute('SELECT name,version FROM items WHERE id=?', (target,)).fetchone()
+                    if not row or row['version'] != change['version']: raise Conflict('The list changed. Repeat your grocery request against the current list.')
+                    if action == 'delete':
+                        db.execute('DELETE FROM items WHERE id=?', (target,)); descriptions.append('Removed '+row['name'])
+                    elif action == 'complete':
+                        complete = bool(change['complete'])
+                        db.execute('UPDATE items SET complete=?,version=version+1,updated=? WHERE id=?', (int(complete),now,target))
+                        descriptions.append(('Marked as bought: ' if complete else 'Put back on the list: ')+row['name'])
+                    elif action == 'update' and name:
+                        db.execute('UPDATE items SET name=?,quantity=?,version=version+1,updated=? WHERE id=?', (name,quantity,now,target))
+                        descriptions.append('Changed '+row['name']+' to '+(' '.join([quantity,name]).strip()))
+                    else: raise ValueError('Unsupported grocery change.')
             else:
                 raise ValueError('Unsupported change.')
             result = {'saved': True, 'added_ids': ids, 'received_at': now}
+            if op == 'batch':
+                added=[line[6:] for line in descriptions if line.startswith('Added ')]
+                other=[line for line in descriptions if not line.startswith('Added ')]
+                summary='. '.join((['Added '+', '.join(added)] if added else [])+other)+'.'
+                result['summary']=summary if len(summary)<=700 else 'Applied '+str(len(changes))+' grocery changes. '+summary[:620].rstrip()+ '…'
             db.execute('INSERT INTO mutations VALUES(?,?,?,?,?)',
                        (body['id'], fingerprint, json.dumps(result), now, body.get('created_at')))
             return result

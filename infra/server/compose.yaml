@@ -24,29 +24,8 @@ services:
       backend:
         ipv4_address: 172.30.0.2
     depends_on:
-      homeassistant:
-        condition: service_healthy
       relay:
         condition: service_healthy
-    logging: *logging
-
-  homeassistant:
-    image: ghcr.io/home-assistant/home-assistant@sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76
-    restart: unless-stopped
-    environment:
-      TZ: ${ASSISTANT_TIMEZONE:-Europe/Berlin}
-      HA_EXTERNAL_URL: https://${ASSISTANT_DOMAIN}
-    volumes:
-      - ${ASSISTANT_DATA_DIR:?Set the private server data directory}/homeassistant:/config
-    ports:
-      - "127.0.0.1:8123:8123"
-    networks: [backend]
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8123/', timeout=5).close()"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
     logging: *logging
 
   relay:
@@ -78,28 +57,6 @@ services:
       start_period: 30s
     logging: *logging
 
-  whisper:
-    image: rhasspy/wyoming-whisper@sha256:ba6fcb6056ebe237d15a325381763a80af2fc8fcedaa04f6a714a7375eb20d80
-    profiles: [voice]
-    restart: unless-stopped
-    command: ["--model", "${ASSISTANT_WHISPER_MODEL:-base-int8}", "--language", "auto",
-              "--cpu-threads", "2", "--beam-size", "5", "--vad-filter",
-              "--initial-prompt", "Voice commands: add items to my shopping list, ask my assistant, check my calendar, find an email."]
-    volumes:
-      - whisper_data:/data
-    networks: [backend]
-    logging: *logging
-
-  piper:
-    image: rhasspy/wyoming-piper@sha256:7d39aafac409c2b6b09d999ed04d84c311d632e558b35baa60fad6aac722af7a
-    profiles: [voice]
-    restart: unless-stopped
-    command: ["--voice", "en_US-lessac-medium"]
-    volumes:
-      - piper_data:/data
-    networks: [backend]
-    logging: *logging
-
 networks:
   backend:
     ipam:
@@ -118,5 +75,3 @@ secrets:
 volumes:
   caddy_data:
   caddy_config:
-  whisper_data:
-  piper_data:

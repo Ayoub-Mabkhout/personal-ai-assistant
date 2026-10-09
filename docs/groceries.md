@@ -2,8 +2,8 @@
 
 The existing cloud relay hosts `/groceries/` and the private SQLite grocery store.
 The laptop is not part of the path for shopping changes. No extra hosting service
-or subscription is needed. Home Assistant owns login; the phone signs in through
-its OAuth flow, refreshes access tokens, and calls the grocery API directly.
+or subscription is needed. Standalone owner login uses a Secure HttpOnly session cookie; the native phone
+uses its paired credential and calls the grocery API directly.
 
 Open the grocery URL in Chrome on Android and choose **Add to home screen** or
 **Install app**. The list and recipes have light and dark modes. Enter several
@@ -29,13 +29,8 @@ result; reusing its ID with different content returns a conflict. Item and recip
 versions reject stale edits. List additions intentionally remain separate entries;
 no quantity merging guesses are made.
 
-Home Assistant's `todo.groceries` is a view of the same store, exposed by the
-`assistant_groceries` integration. Assist's custom sentence “add bananas and
-sparkling water to my shopping list” calls the cloud service directly and splits
-the items. The older native `todo.shopping_list` is preserved as a legacy list;
-do not build new clients against it. Existing legacy entries must be migrated
-explicitly if any are added there. The custom integration uses a dedicated
-server-side secret, never the phone's login token or the laptop worker credential.
+The dashboard uses this same cloud grocery store. Retired shopping stores must
+be inspected and explicitly migrated before their recovery data is deleted.
 
 The preferred REWE branch is private deployment configuration. Product links open
 REWE search. Store identity is verified; catalog matching and branch availability

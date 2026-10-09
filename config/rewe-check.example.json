@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "market_id": "YOUR_MARKET_ID",
+  "market_url": "https://www.rewe.de/marktseite/YOUR_CITY/YOUR_MARKET_ID/YOUR_MARKET_SLUG",
+  "interval_seconds": 43200,
+  "timezone": "Europe/Berlin"
+}

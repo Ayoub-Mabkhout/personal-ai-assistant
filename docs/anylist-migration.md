@@ -30,7 +30,7 @@ returns proposed recipes, warnings and a source-content checksum. The request is
 and stores through the existing `recipe_save` mutation path. Stable recipe/import
 IDs make identical retries harmless and preserve later manual edits. Editing the
 content produces a different import identity; review before accepting another
-version. Both endpoints require the existing Home Assistant grocery login or the
+version. Both endpoints require the standalone owner grocery login or the
 dedicated internal grocery credential. Import size is bounded to 200 KB, 100
 recipes per request, and 100 ingredients per recipe.
 

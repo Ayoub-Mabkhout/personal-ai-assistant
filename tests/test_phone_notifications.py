@@ -87,7 +87,7 @@ class PhoneNotificationTests(unittest.TestCase):
         app=FastAPI()
         def verify(token):
             if token!='valid-ha-token': raise OSError('Invalid')
-        app.include_router(task_router({'agent':self.queue},'https://ha.example.com',self.root,user_verifier=verify))
+        app.include_router(task_router({'agent':self.queue},self.root,user_verifier=verify))
         with TestClient(app) as client:
             self.assertEqual(client.get('/tasks/v1/agent/task-test-123').status_code,401)
             self.assertEqual(client.get('/tasks/v1/agent/task-test-123',headers={'Authorization':'Bearer bad'}).status_code,401)
@@ -98,7 +98,7 @@ class PhoneNotificationTests(unittest.TestCase):
 
     def test_task_page_serves_only_its_whitelisted_assets(self):
         app=FastAPI();assets=Path(__file__).resolve().parents[1]/'apps/tasks'
-        app.include_router(task_router({'agent':self.queue,'command':self.queue},'https://ha.example.com',assets))
+        app.include_router(task_router({'agent':self.queue,'command':self.queue},assets))
         with TestClient(app) as client:
             for name in ('app.js','theme.js','style.css'):
                 response=client.get('/tasks/'+name)
@@ -116,8 +116,7 @@ class PhoneNotificationTests(unittest.TestCase):
         links=TaskLinks.load(self.root/'task-links.key')
         self.assertEqual(TaskLinks.load(self.root/'task-links.key').token('agent','task-test-123'),links.token('agent','task-test-123'))
         def never_login(token): raise AssertionError('Task link must not require an HA login')
-        app=FastAPI();app.include_router(task_router({'agent':self.queue,'command':self.queue},
-            'https://ha.example.com',Path(__file__).resolve().parents[1]/'apps/tasks',user_verifier=never_login,task_links=links))
+        app=FastAPI();app.include_router(task_router({'agent':self.queue,'command':self.queue},Path(__file__).resolve().parents[1]/'apps/tasks',user_verifier=never_login,task_links=links))
         self.submit();self.submit('other-task-123')
         token=links.token('agent','task-test-123')
         with TestClient(app) as client:

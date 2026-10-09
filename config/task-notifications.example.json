@@ -1,9 +1,6 @@
 {
   "enabled": false,
-  "delivery_mode": "homeassistant",
-  "ha_url": "http://homeassistant:8123",
-  "auth_file": "/data/ha-notifications-auth.json",
-  "mobile_service": "mobile_app_YOUR_DEVICE",
+  "delivery_mode": "native",
   "public_url": "https://YOUR_ASSISTANT_HOST",
   "visibility": "private",
   "companion_push": {

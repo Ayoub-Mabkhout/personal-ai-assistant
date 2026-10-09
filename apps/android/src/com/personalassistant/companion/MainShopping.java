@@ -69,7 +69,7 @@ final class MainShopping {
     private void undo(Row row){handler.removeCallbacks(commitTick);tickId=null;tick=null;row.set(false,true);}
 
     void render(){
-        SharedPreferences p=Cloud.prefs(a);boolean paired=a.paired(),syncing=a.syncing();String key=p.getString("snapshot","")+p.getString("outbox","")+p.getString("status","")+p.getLong("synced",0)+syncing+paired;
+        SharedPreferences p=Cloud.prefs(a);boolean paired=a.paired(),syncing=a.syncing();String key=p.getString("snapshot","")+p.getString("outbox","")+p.getString("status","")+p.getLong("synced",0)+syncing+paired+(System.currentTimeMillis()/60000);
         if(key.equals(renderedKey)||SystemClock.uptimeMillis()<collapsingUntil)return;renderedKey=key;
         rows.removeAllViews();tick=null;int count=0,queued=0;
         try{
@@ -97,6 +97,12 @@ final class MainShopping {
             label.setTextSize(16);label.setTypeface(AppUi.face(500));label.setIncludeFontPadding(false);label.setLineSpacing(0,1.12f);line.addView(label,MainParts.weighted(ui,1,14,10,8,10));
             undo=ui.type("Undo",14,0,700,0,ui.accent);undo.setGravity(Gravity.CENTER);undo.setMinHeight(ui.dp(48));undo.setMinimumWidth(ui.dp(56));undo.setPadding(ui.dp(10),0,ui.dp(10),0);undo.setBackground(ui.pressable(null,20));undo.setClickable(true);undo.setOnClickListener(v->undo(this));undo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             line.addView(undo);box.addView(line);
+            JSONObject retailer=item.optJSONObject("retailer");
+            if(retailer!=null&&!pending&&retailer.optDouble("expires_at",0)*1000>System.currentTimeMillis()){
+                boolean available="available".equals(retailer.optString("state"))&&retailer.optBoolean("stock_verified");String tag=available?"Available in REWE":"REWE · listed for your store";
+                TextView badge=ui.type(tag,12,16,500,0,ui.accent);badge.setContentDescription(tag+". "+retailer.optString("product")+". "+(available?"":"Shelf stock is not confirmed."));
+                box.addView(badge,MainParts.params(ui,-1,-2,54,-3,14,10));
+            }
             if(pending){line.addView(ui.savedChip("Saved on phone"),MainParts.params(ui,-2,-2,0,0,8,0));dot.setAlpha(.45f);}
             else{line.setClickable(true);line.setFocusable(true);line.setOnClickListener(v->{if(id.equals(tickId))undo(this);else tick(this);});AppUi.press(line);}
             set(id.equals(tickId),false);
