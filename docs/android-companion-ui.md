@@ -1,10 +1,11 @@
 # Phone companion
 
 The native app opens on Voice. Its bottom tabs are Voice, Shopping, Activity and
-Settings. Theme follows the phone by default; Light and Dark can be selected
-under Appearance. Light uses warm ivory and slate with plum/periwinkle accents; Dark uses ink
-and plum with muted lavender. A layered circular Talk control anchors Voice,
-Shopping uses an inline quick-add and compact rows, Activity uses a dated
+Settings. The Dusk Aurora design system in `design-system.md` defines tokens,
+type, glyphs and motion. Appearance offers Sunrise & sunset (default: light by
+day and dark after sunset, computed on the phone), System, Light and Dark; the
+open screen flips at the computed moment. A layered circular Talk orb anchors
+Voice, Shopping uses an inline quick-add and compact rows, Activity uses a dated
 timeline, and Settings groups compact icon actions. Tonal backgrounds and
 short status/page transitions stay understated. Animation respects Android
 animation disable; microphone interpolation uses actual input levels and does
@@ -32,8 +33,9 @@ background setting. Settings provides microphone, Digital assistant and app
 battery shortcuts. Choose Unrestricted in the phone's app battery settings.
 The app never selects a Home launcher or dismisses keyguard.
 
-The locked voice entry uses the same theme, timestamped chat and
-microphone meter. Android microphone permission must already be granted.
+The locked voice entry uses the same theme, orb, status wording, timestamped
+chat and microphone meter as the Voice tab. Android microphone permission must
+already be granted. The assistant overlay shows the same state on a themed card.
 The Quick Settings microphone tile offers another explicit stop/resume entry.
 
 ## Shopping, recipes and history
@@ -42,14 +44,19 @@ Shopping projects pending local changes over the cached cloud list. Text entry
 and focus survive asynchronous sync, voice updates and app update checks;
 background callbacks update existing views rather than rebuilding forms.
 
-The native recipe library reads cached recipes and pending recipe saves.
-Choose a recipe, uncheck ingredients already available, and add the selection
-through the same stable offline outbox. Recipe import previews existing shared
-text through the server; it needs a connection. The web library remains an
+The Shopping widget's Add button opens Companion on the Shopping tab with the
+add field focused and the keyboard up; the title opens the default tab.
+
+The native recipe library is one full-screen sheet with list, recipe and import
+pages; the system Back key goes up one level. It reads cached recipes and pending
+recipe saves. Choose a recipe, uncheck ingredients already available, and add the
+selection through the same stable offline outbox. Recipe import previews existing
+shared text through the server; it needs a connection. The web library remains an
 optional route.
 
 Activity lists recent durable voice receipts and opens native searchable task
-history/details for reading answers or continuing the recorded worker session.
+history and a task conversation, as full-screen sheets, for reading answers or
+continuing the recorded worker session. Task bubbles match the Voice chat.
 Settings retains pairing, notifications,
 APK updates and widget setup. Pairing uses a separate connection thread so an
 update download or shopping sync cannot delay its exchange. A failed/revoked

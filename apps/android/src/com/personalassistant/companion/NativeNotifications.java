@@ -6,6 +6,8 @@ import org.json.*;
 
 /** In-app task notification targets; no browser or Home Assistant dependency. */
 final class NativeNotifications {
+    /** Mid-violet that keeps contrast on both the light and the dark notification shade. */
+    static final int ACCENT=0xFF7B58E8;
     static synchronized void sync(Context c)throws Exception{
         long cursor=Cloud.prefs(c).getLong("push_cursor",0);
         JSONObject response=(JSONObject)Cloud.call(c,"events?cursor="+cursor,null,true);JSONArray events=response.optJSONArray("items");if(events==null)return;
@@ -35,7 +37,7 @@ final class NativeNotifications {
         if(type.equals("alarm"))open.setAction(Intent.ACTION_VIEW).setData(android.net.Uri.parse("personalassistant://sync"));
         PendingIntent pending=PendingIntent.getActivity(c,identifier.hashCode(),open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         boolean active=body.optBoolean("active",false);
-        Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(body.optString("title","Assistant"))
+        Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(body.optString("title","Assistant"))
             .setContentText(body.optString("message")).setStyle(new Notification.BigTextStyle().bigText(body.optString("message")))
             .setContentIntent(pending).setAutoCancel(!active).setOngoing(active).setOnlyAlertOnce(active).setVisibility(body.optString("visibility").equals("public")?Notification.VISIBILITY_PUBLIC:Notification.VISIBILITY_PRIVATE)
             .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000));
