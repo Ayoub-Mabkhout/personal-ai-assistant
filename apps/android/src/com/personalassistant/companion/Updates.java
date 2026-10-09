@@ -80,9 +80,11 @@ final class Updates {
         long code=release.getLong("version_code");if(Cloud.prefs(c).getLong("update_notified",0)==code)return;
         if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED)return;
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(new NotificationChannel("app-updates","App updates",NotificationManager.IMPORTANCE_DEFAULT));
+        NotificationStyle.channel(manager,"app-updates","App updates",NotificationManager.IMPORTANCE_DEFAULT,"New Assistant Companion versions, downloaded and verified");
         PendingIntent open=PendingIntent.getActivity(c,301,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        manager.notify(301,new Notification.Builder(c,"app-updates").setSmallIcon(R.drawable.ic_stat_assistant).setColor(NativeNotifications.ACCENT).setContentTitle("Assistant Companion update ready").setContentText("Open the app to install version "+release.getString("version_name")).setContentIntent(open).setAutoCancel(true).build());
+        String text="Version "+release.getString("version_name")+" is downloaded and verified. Open the app to install it.";
+        manager.notify(301,new Notification.Builder(c,"app-updates").setSmallIcon(R.drawable.ic_stat_assistant).setColor(NativeNotifications.ACCENT).setLargeIcon(NotificationStyle.icon(c,"download",NotificationStyle.BRAND))
+            .setContentTitle("Update ready to install").setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text)).setSubText("App update").setShowWhen(true).setContentIntent(open).setAutoCancel(true).build());
         Cloud.prefs(c).edit().putLong("update_notified",code).commit();
     }
     static void install(Activity activity){

@@ -1,7 +1,11 @@
 package com.personalassistant.companion;
 import android.app.*;
 import android.content.*;
+import android.graphics.Typeface;
 import android.os.Build;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.StyleSpan;
 import java.util.HashSet;
 import java.util.Set;
 import org.json.*;
@@ -45,19 +49,56 @@ final class NativeNotifications {
         NotificationChannel channel=manager.getNotificationChannel(channel(body.optString("type","task")));
         return channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE;
     }
+    static void channels(NotificationManager manager){
+        NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from tasks running on your laptop");
+        NotificationStyle.channel(manager,"calendar_reminders","Calendar reminders",NotificationManager.IMPORTANCE_HIGH,"Upcoming events from your assistant's calendar");
+        NotificationStyle.channel(manager,"phone_actions","Phone actions",NotificationManager.IMPORTANCE_HIGH,"Alarms and other requests your assistant sends to this phone");
+    }
+    /** Glyph and medallion tone for a task state. */
+    static Object[] look(String state){
+        switch(state){
+            case "queued":return new Object[]{"clock",NotificationStyle.PROGRESS};
+            case "running":return new Object[]{"activity",NotificationStyle.PROGRESS};
+            case "completed":return new Object[]{"check",NotificationStyle.DONE};
+            case "needs_input":return new Object[]{"chat",NotificationStyle.ATTENTION};
+            case "failed":return new Object[]{"alert",NotificationStyle.FAILED};
+            case "cancelled":return new Object[]{"stop",NotificationStyle.BRAND};
+            case "expired":return new Object[]{"history",NotificationStyle.BRAND};
+            default:return new Object[]{"sparkle",NotificationStyle.BRAND};
+        }
+    }
     static void show(Context c,String identifier,JSONObject body)throws Exception{
         String type=body.optString("type","task"),channel=channel(type);
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(new NotificationChannel(channel,channel.equals("task_updates")?"Task updates":channel.equals("calendar_reminders")?"Calendar reminders":"Phone actions",NotificationManager.IMPORTANCE_HIGH));
+        channels(manager);
         String kind=body.optString("task_kind","agent"),task=body.optString("task_id");
         Intent open=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra("task_kind",kind).putExtra("task_id",task).putExtra("push_event_id",identifier);
         if(type.equals("alarm"))open.setAction(Intent.ACTION_VIEW).setData(android.net.Uri.parse("personalassistant://sync"));
         PendingIntent pending=PendingIntent.getActivity(c,identifier.hashCode(),open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         boolean active=body.optBoolean("active",false);
-        Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(body.optString("title","Assistant"))
-            .setContentText(body.optString("message")).setStyle(new Notification.BigTextStyle().bigText(body.optString("message")))
-            .setContentIntent(pending).setAutoCancel(!active).setOngoing(active).setOnlyAlertOnce(active).setVisibility(body.optString("visibility").equals("public")?Notification.VISIBILITY_PUBLIC:Notification.VISIBILITY_PRIVATE)
-            .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000));
+        String title=body.optString("title","Assistant"),message=body.optString("message"),label,glyph;CharSequence headline=title,text=message,expanded=message;int[] tone;
+        if(type.equals("task")){
+            // Producers append the short task reference to the title and put the request before the status; the header carries the reference.
+            int mark=title.lastIndexOf(" · ");String reference=mark>0?title.substring(mark+3):"";if(mark>0)headline=title.substring(0,mark);
+            int split=message.indexOf("\n\n");String request=split<0?"":message.substring(0,split).trim(),status=split<0?message.trim():message.substring(split+2).trim();
+            text=status.isEmpty()?request:status;
+            if(!request.isEmpty()&&!status.isEmpty()){SpannableStringBuilder rich=new SpannableStringBuilder(request);rich.setSpan(new StyleSpan(Typeface.BOLD),0,rich.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);expanded=rich.append("\n").append(status);}
+            label=(kind.equals("command")?"Command":"Laptop task")+(reference.isEmpty()?"":" "+reference);
+            Object[] look=look(body.optString("state"));glyph=(String)look[0];tone=(int[])look[1];
+        }else if(type.equals("reminder")){
+            // Reminder messages are the event title, then its time and optional location.
+            String[] lines=message.split("\n");
+            if(lines.length>1&&!lines[0].trim().isEmpty()){headline=lines[0].trim();StringBuilder rest=new StringBuilder();for(int i=1;i<lines.length;i++)if(!lines[i].trim().isEmpty())rest.append(rest.length()==0?"":" · ").append(lines[i].trim());text=expanded=rest.toString();}
+            label="Calendar reminder";glyph="bell";tone=NotificationStyle.ATTENTION;
+        }else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
+        boolean hidden=!body.optString("visibility").equals("public");
+        Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(headline)
+            .setContentText(text).setStyle(new Notification.BigTextStyle().bigText(expanded)).setSubText(label).setLargeIcon(NotificationStyle.icon(c,glyph,tone))
+            .setContentIntent(pending).setAutoCancel(!active).setOngoing(active).setOnlyAlertOnce(active).setVisibility(hidden?Notification.VISIBILITY_PRIVATE:Notification.VISIBILITY_PUBLIC)
+            .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).setShowWhen(true);
+        if(type.equals("reminder"))notification.setCategory(Notification.CATEGORY_EVENT);else if(active)notification.setCategory(Notification.CATEGORY_PROGRESS);
+        // The lock screen shows only the kind of update, never the request, result or event.
+        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):label).setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
         if(body.optString("state").equals("running"))notification.setProgress(0,0,true);
         if(!task.isEmpty()){
             notification.addAction(new Notification.Action.Builder(null,"Details",pending).build());

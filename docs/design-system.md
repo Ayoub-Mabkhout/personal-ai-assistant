@@ -126,6 +126,29 @@ tab and the scroll position survive. Web pages share one controller,
 before first paint and rechecks on focus, page show and visibility. Android and
 web surfaces use the same runtime location, never a place baked into source.
 
+## App icon and notifications
+
+- **Launcher icon: the Aurora Orb.** A glass sphere carrying two aurora bands
+  (rose-orchid and periwinkle-ice) over a night-violet sky, with a window
+  highlight, light refracted to the lower right, a fresnel rim and a star glint
+  on the upper-right rim. It is an adaptive vector icon: background
+  `ic_assistant_background`, foreground `ic_assistant_foreground` (inside the
+  66 dp safe zone), and `ic_assistant_monochrome` for Android 13+ themed icons.
+  The status-bar icon `ic_stat_assistant` reduces it to a ring, one band and
+  the star, and is the only small icon notifications use.
+- **Notifications.** All channels sit in one "Assistant" group with
+  descriptions. Cards use the accent `#7B58E8` and show their timestamp. Each one
+  carries a glass medallion large icon in a state tone: progress (periwinkle to
+  violet, clock or pulse), done (orchid, check), needs you (rose, chat or bell),
+  failed (rose to danger red, alert). Brand violet is used for everything else.
+  Task cards move the short task reference into the header ("Laptop task
+  1a2b3c4d"). The collapsed text is the latest status. Expanded, the request
+  appears in bold above it. Reminder cards are titled with the event and show
+  its time and place. Private cards show only the kind of update on the lock
+  screen. The microphone service notification is colorized in the accent.
+  Home Assistant payloads carry the same colour and a matching Material Design
+  icon for the status bar.
+
 ## Platform notes
 
 - Android draws everything with framework Views, `GradientDrawable`, and

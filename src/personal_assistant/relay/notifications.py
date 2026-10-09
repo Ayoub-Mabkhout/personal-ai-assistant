@@ -12,6 +12,10 @@ import urllib.request
 
 
 ACTIVE={'queued','running'}
+# Home Assistant tints the card and swaps its status-bar icon; the native Companion ignores these keys.
+COLOR='#7B58E8'
+ICONS={'queued':'mdi:clock-outline','running':'mdi:progress-clock','completed':'mdi:check-circle-outline',
+    'failed':'mdi:alert-circle-outline','needs_input':'mdi:message-question-outline','cancelled':'mdi:cancel','expired':'mdi:clock-alert-outline'}
 TITLES={'queued':'Task queued','running':'Task in progress','completed':'Task completed',
     'failed':'Task failed','needs_input':'Task needs your input','cancelled':'Task cancelled','expired':'Task expired'}
 
@@ -32,7 +36,7 @@ def notification(kind,job,connection,public_url,visibility='private',task_links=
     return {'title':title+' · '+short,'message':request+'\n\n'+str(status)[:1800],
         'data':{'tag':'assistant-'+kind+'-'+job['id'],'group':'assistant-tasks','channel':'Assistant tasks',
             'persistent':state in ACTIVE,'sticky':state in ACTIVE,'alert_once':state in ACTIVE,
-            'visibility':visibility,'priority':'high','ttl':86400,'clickAction':link,
+            'visibility':visibility,'priority':'high','ttl':86400,'clickAction':link,'color':COLOR,'notification_icon':ICONS[state],
             'progress_indeterminate':state=='running','progress':0 if state=='running' else -1,
             'actions':[{'action':'URI','title':'Details','uri':link},
                 {'action':reply_action(kind,job['id']),'title':'Reply','behavior':'textInput'}]}}

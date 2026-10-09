@@ -179,6 +179,7 @@ class ReminderPump:
             payload = {'title': 'Calendar reminder', 'message': message,
                        'data': {'tag': 'assistant-calendar-' + row['id'], 'group': 'assistant-calendar',
                                 'channel': 'Calendar reminders', 'priority': 'high',
+                                'color': '#7B58E8', 'notification_icon': 'mdi:calendar-clock',
                                 'ttl': min(86400, remaining), 'visibility': self.visibility}}
             try:
                 self.sender(payload)
