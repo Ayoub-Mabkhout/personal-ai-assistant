@@ -65,14 +65,29 @@ Sol and Astra model family and their supported effort settings. Assignments with
 one decision currently execute sequentially. Luna does not need a permanently
 running model process: `codex exec resume <session-id>` provides the continuity.
 
+Workers run on one of two agents, named in each assignment. `codex` workers use
+Luna, Sol or Astra through `codex exec`. `claude` workers run headless Claude Code
+(`claude -p --output-format stream-json`) with Haiku, Sonnet, Opus or Fable and efforts
+low to max, using the laptop's Claude subscription login rather than an API key. They
+share the same record, trace, cancellation and recovery contract. The model must
+belong to its agent. Continuations resume the session on the agent that started it.
+Only codex workers have the connected Gmail plugin, so email tasks stay on codex. The
+Claude executable is found on `PATH` or in `~/.local/bin`; set `claude` in the worker
+config to pin it.
+
 Every dispatcher turn, both the first decision and each results review, carries an
-`agent_capacity` snapshot: the remaining five-hour and weekly allowance, reset times,
-plan and any reached limit. It is read from the newest rate-limit record in the
-local Codex session logs (`CODEX_HOME`, or `codex_home` in the worker config), so it
-costs no model call and Luna never has to check usage itself. The limits are
-account-wide and shared by Luna, Sol and Astra. When little allowance is left, Luna
-prefers lighter models and effort unless the user named one. Missing or unreadable
-logs report `available: false` and never block dispatch.
+`agent_capacity` snapshot with each agent's remaining five-hour and weekly allowance,
+reset times and any reached limit, so Luna never has to check usage itself.
+- **Codex** figures come from the newest rate-limit record in the local Codex session
+  logs (`CODEX_HOME`, or `codex_home` in the worker config).
+- **Claude** figures come from the `rate_limit_event` of each headless Claude run, cached
+  in the orchestrator folder. With `claude_capacity_refresh: true` in the worker config,
+  figures older than an hour trigger a background one-line Haiku call, at most every
+  30 minutes.
+
+When both agents suit a task, Luna chooses the one with more remaining allowance and
+avoids an agent whose five-hour window is under 20% or weekly window under 10%.
+Missing or unreadable figures report `available: false` and never block dispatch.
 
 ## Submit a task
 

@@ -16,7 +16,7 @@ class FakeCLI:
             body=json.loads(prompt)
             if 'user_request' in body:
                 output={'action':'dispatch','summary':'A worker will write the artifact.','tasks':[{
-                    'model':'gpt-6.1-sol','effort':'medium','prompt':'Write artifact','workspace':str(workspace),
+                    'agent':'codex','model':'gpt-6.1-sol','effort':'medium','prompt':'Write artifact','workspace':str(workspace),
                     'resume_session':'','expected_artifacts':['artifact.txt'],'task_type':'general','skills':[]}]}
             else: output={'action':'complete','summary':'Artifact verified.','tasks':[]}
             identity='persistent-luna'

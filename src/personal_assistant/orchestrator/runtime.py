@@ -14,12 +14,14 @@ from personal_assistant.orchestrator import capacity
 
 
 MODELS=('gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
+CLAUDE_MODELS=('claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5')
 EFFORTS=('low','medium','high','xhigh','max','ultra')
 
 
 class Assignment(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    model:Literal['gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra']
+    agent:Literal['codex','claude']
+    model:Literal['gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']
     effort:Literal['low','medium','high','xhigh','max','ultra']
     prompt:str=Field(min_length=1,max_length=24000)
     workspace:str=Field(min_length=1,max_length=1000)
@@ -135,6 +137,76 @@ class CLI:
         return record
 
 
+class ClaudeCLI:
+    """Headless Claude Code worker with the same record, trace and recovery contract as CLI."""
+    def __init__(self,config):
+        self.config=config
+
+    def run(self,prompt,directory,workspace,model,effort,cancelled,session=None,schema=None,instructions=None):
+        directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
+        record_path=directory/'record.json'
+        if record_path.is_file():
+            previous=json.loads(record_path.read_text(encoding='utf-8'))
+            if previous['state']=='completed':
+                return previous
+            # Recover a finished call whose final result event was written before the process died.
+            done=[e for e in events(directory/'events.jsonl') if e.get('type')=='result' and not e.get('is_error')]
+            if done:
+                (directory/'result.txt').write_text(str(done[-1].get('result') or ''),encoding='utf-8')
+                previous.update(state='completed',exit_code=0,recovered=True,session_id=done[-1].get('session_id') or previous.get('session_id'))
+                write_json(record_path,previous)
+                return previous
+            raise InterruptedRun('An earlier agent call was interrupted. Its effects need reconciliation before rerunning it.')
+        executable=capacity.claude_executable(self.config)
+        if not executable: raise InterruptedRun('Claude Code is not installed for the worker.')
+        args=[executable,'-p','--output-format','stream-json','--verbose','--model',model,'--effort',effort,
+              '--permission-mode','bypassPermissions']
+        if session: args+=['--resume',session]
+        if instructions:
+            (directory/'instructions.txt').write_text(instructions,encoding='utf-8')
+            args+=['--append-system-prompt-file',str(directory/'instructions.txt')]
+        record={'state':'running','agent':'claude','model':model,'effort':effort,'session_id':session,
+                'started_at':datetime.now(timezone.utc).isoformat(),'workspace':str(workspace),
+                'permission_mode':'bypassPermissions','args':args,'result':str(directory/'result.txt'),
+                'trace':str(directory/'events.jsonl')}
+        (directory/'prompt.txt').write_text(prompt,encoding='utf-8')
+        write_json(record_path,record)
+        # Subscription login rather than an API key; never inherit a parent Claude session's markers.
+        environment={k:v for k,v in os.environ.items() if k!='ANTHROPIC_API_KEY' and not k.startswith(('ASSISTANT_','OCI_','OPENAI_','CLAUDECODE','CLAUDE_CODE_'))}
+        deadline=time.monotonic()+self.config.get('agent_call_timeout',1800)
+        with (directory/'events.jsonl').open('wb') as out,(directory/'stderr.log').open('wb') as err:
+            process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=out,stderr=err,cwd=workspace,
+                env=environment,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,
+                start_new_session=os.name!='nt')
+            record['pid']=process.pid;write_json(record_path,record)
+            process.stdin.write(prompt.encode());process.stdin.close()
+            while process.poll() is None:
+                if cancelled.wait(.5) or time.monotonic()>deadline:
+                    if os.name=='nt':
+                        subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,
+                            timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+                    else:
+                        import signal
+                        os.killpg(process.pid,signal.SIGKILL)
+                    process.wait(timeout=15)
+                    record.update(state='interrupted',exit_code=process.returncode)
+                    write_json(record_path,record)
+                    raise InterruptedRun('Agent cancelled, disconnected or timed out. Inspect its captured trace before resuming work.')
+        history=events(directory/'events.jsonl')
+        capacity.save_claude(self.config,history)
+        final=[e for e in history if e.get('type')=='result']
+        for event in history:
+            if event.get('session_id'): record['session_id']=event['session_id']
+        ok=process.returncode==0 and bool(final) and not final[-1].get('is_error')
+        record.update(state='completed' if ok else 'failed',exit_code=process.returncode,finished_at=datetime.now(timezone.utc).isoformat())
+        if final:
+            record['usage']={**(final[-1].get('usage') or {}),'total_cost_usd':final[-1].get('total_cost_usd')}
+            if ok:(directory/'result.txt').write_text(str(final[-1].get('result') or ''),encoding='utf-8')
+        write_json(record_path,record)
+        if not ok: raise InterruptedRun('Claude run failed. Its private stderr and trace are preserved.')
+        return record
+
+
 DISPATCH_INSTRUCTIONS='''You are the owner's persistent lightweight Luna dispatch orchestrator.
 Every agent-queue prompt comes to this SAME session. Decide which workers, models,
 reasoning efforts and directories are needed. You are not the worker: do not perform
@@ -158,11 +230,20 @@ provide a useful concise final answer and empty tasks. For missing information,
 return needs_input and a self-contained question. Resume only worker sessions named
 in the provided previous-results data; never guess an ID or use --last. Return only
 the Decision JSON requested by the output schema. Remember each task and its results.
-agent_capacity is a fresh snapshot of the account's remaining five-hour and weekly
-allowance, shared by every model; you do not need to check usage yourself. When the
-five-hour window has under 20% left or the weekly window under 10%, prefer Luna and
-lower effort unless the user asked for a specific model, and say so in the summary.
-When a limit is reached, do not dispatch large work: report when it resets.
+Each assignment names its agent. codex workers use Luna, Sol or Astra (efforts up
+to ultra; Luna never ultra). claude workers are headless Claude Code with
+claude-haiku-5-5 for narrow tasks, claude-sonnet-5-5 for general work,
+claude-opus-5-5 for difficult work and claude-fable-5-1 for the hardest work, with
+efforts low to max (never ultra). Only codex workers have the connected Gmail plugin,
+so email tasks use codex. A continuation stays with the agent that started it.
+agent_capacity is a fresh snapshot of each agent's remaining five-hour and weekly
+allowance; you do not need to check usage yourself. Respect an explicitly requested
+agent or model. Otherwise, when both agents suit the task, choose the one with more
+remaining allowance, weighing the five-hour window first and the weekly window to
+avoid exhausting either. When an agent's five-hour window has under 20% left or its
+weekly window under 10%, prefer the other agent, or a lighter model and effort, and
+say so in the summary. When both are limited, do not dispatch large work: report
+when the sooner window resets.
 '''
 
 SKILL_DISPATCH='''The skill_catalog is the portable agent skill repository. Select relevant
@@ -186,11 +267,12 @@ through worker follow-up, or report an actual access/coverage limitation.
 class Orchestrator:
     capabilities=['agent.orchestrator','agent.worker']
 
-    def __init__(self,config,cli=None):
+    def __init__(self,config,cli=None,claude=None):
         self.config=config
         self.root=Path(config['orchestrator_dir'])
         self.root.mkdir(parents=True,exist_ok=True)
         self.cli=cli or CLI(config)
+        self.claude=claude or ClaudeCLI(config)
         self.session_path=self.root/'session.json'
         self.skills=SkillRepository(config['repository'])
 
@@ -256,7 +338,8 @@ class Orchestrator:
                    'latest_result':{'state':'unconfirmed','instruction':instruction,
                                     'trace_ref':str(directory/'continuation'),
                                     'note':'If this turn was interrupted, inspect its trace before repeating effects.'}})
-        record=self.cli.run(prompt,directory/'continuation',workspace,worker['model'],worker['effort'],cancelled,
+        runner=self.claude if worker.get('agent')=='claude' else self.cli
+        record=runner.run(prompt,directory/'continuation',workspace,worker['model'],worker['effort'],cancelled,
                             session=worker['session_id'],instructions=instructions)
         if record['session_id']!=worker['session_id']:raise InterruptedRun('Continuation did not retain the original session.')
         summary=Path(record['result']).read_text(encoding='utf-8')[:24000]
@@ -307,9 +390,11 @@ class Orchestrator:
                     completed=[]
                     for index,task in enumerate(decision.tasks):
                         if task.model=='gpt-6-luna' and task.effort=='ultra': raise ValueError('Luna does not support ultra')
+                        if (task.model in CLAUDE_MODELS)!=(task.agent=='claude'): raise ValueError('Assignment model does not belong to its agent')
+                        if task.agent=='claude' and task.effort=='ultra': raise ValueError('Claude does not support ultra')
                         workspace=Path(task.workspace)
                         if not workspace.is_absolute() or not workspace.is_dir(): raise ValueError('Worker workspace must be an existing absolute directory')
-                        known={w.get('session_id') for w in state['workers']}
+                        known={w.get('session_id') for w in state['workers'] if w.get('agent','codex')==task.agent}
                         if task.resume_session and task.resume_session not in known:
                             raise ValueError('Worker resume session is not in this task history')
                         run_directory=directory/f'worker-{round_number}-{index}'
@@ -333,7 +418,8 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                         write_json(run_directory.parent/(run_directory.name+'-skills.json'),
                                    {'task_type':task.task_type,'selected_skills':selected,
                                     'sources':[s for s in self.skills.catalog() if s['name'] in selected]})
-                        record=self.cli.run(task.prompt,run_directory,workspace,task.model,task.effort,cancelled,
+                        runner=self.claude if task.agent=='claude' else self.cli
+                        record=runner.run(task.prompt,run_directory,workspace,task.model,task.effort,cancelled,
                                             session=task.resume_session or None,instructions=worker_instructions)
                         checks=[]
                         for value in task.expected_artifacts:
@@ -341,7 +427,7 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                             if not artifact.is_absolute(): artifact=workspace/artifact
                             checks.append({'path':str(artifact),'exists':artifact.is_file(),
                                 'sha256':hashlib.sha256(artifact.read_bytes()).hexdigest() if artifact.is_file() else None})
-                        completed.append({'model':task.model,'effort':task.effort,'session_id':record['session_id'],
+                        completed.append({'agent':task.agent,'model':task.model,'effort':task.effort,'session_id':record['session_id'],
                             'result':Path(record['result']).read_text(encoding='utf-8')[:24000],
                             'trace':record['trace'],'artifacts':checks,'usage':record.get('usage',{}),
                             'task_type':task.task_type,'skills':selected,'workspace':str(workspace)})
