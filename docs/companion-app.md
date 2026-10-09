@@ -73,6 +73,25 @@ IDs prevent retries from creating a second turn. Phone-only storage, cloud
 acknowledgement and task completion remain distinct statuses. Legacy browser
 history remains available with its existing Home Assistant sign-in.
 
+## Features checklist
+
+**Settings → App & shortcuts → Features checklist** opens the shared list of the
+assistant's features that the dashboard also shows; the row reports how many are
+open. Add a feature with an area (Assistant, Companion or Dashboard). Tapping a
+row ticks and strikes it, then moves it to the collapsible **Finished** section
+with its finish date; tapping a finished row moves it back. The options button
+(or a long press) edits, deletes or toggles an entry.
+
+The list works offline like Shopping: the last server list is cached, and every
+add, tick, edit or delete is saved on the phone first with a stable client ID,
+shown with a "Saved on phone" chip, and sent in order when a connection returns
+(also from the background task sync job). Repeated ticks of one item fold into a
+single waiting change. Edits use the server's `POST features/{id}` and
+`POST features/{id}/delete` aliases because Android's `HttpURLConnection` has no
+PATCH. Permanent rejections (unknown item, deleted ID, invalid input) are removed
+from the outbox; other failures retry. The add field's draft and caret, the
+selected area and the Finished section's open state survive refreshes.
+
 ## Connection and updates
 
 Internet availability describes the phone's network, not laptop readiness.

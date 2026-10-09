@@ -52,6 +52,8 @@ final class Cloud {
         if(!"https".equals(uri.getScheme())||uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null||!(uri.getPath().isEmpty()||uri.getPath().equals("/"))) throw new Exception("Enter the HTTPS server address without a path");
         return "https://"+uri.getRawAuthority();
     }
+    /** Non-2xx reply; the message is unchanged for older callers, the status lets newer ones tell a gone item from a retryable failure. */
+    static final class HttpError extends Exception {final int status;HttpError(int status,String message){super(message);this.status=status;}}
     static Object call(Context c,String path,JSONObject body,boolean auth) throws Exception {
         final String base,token;synchronized(Cloud.class){SharedPreferences p=prefs(c);base=p.getString("origin","");token=auth?p.getString("token",""):"";}
         if(base.isEmpty()) throw new Exception("Pair the companion first");
@@ -61,7 +63,7 @@ final class Cloud {
         try {
             if(body!=null){connection.setRequestMethod("POST");connection.setRequestProperty("Content-Type","application/json");connection.setDoOutput(true);try(OutputStream out=connection.getOutputStream()){out.write(body.toString().getBytes("UTF-8"));}}
             int status=connection.getResponseCode();
-            if(status<200||status>=300) throw new Exception(status==401?"Disconnected. Pair the companion again.":"Server rejected change ("+status+"). Your saved changes remain on this phone.");
+            if(status<200||status>=300) throw new HttpError(status,status==401?"Disconnected. Pair the companion again.":"Server rejected change ("+status+"). Your saved changes remain on this phone.");
             ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;
             try(InputStream in=connection.getInputStream()){while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>2097152)throw new Exception("Server response too large");}}
             return new JSONTokener(out.toString("UTF-8")).nextValue();

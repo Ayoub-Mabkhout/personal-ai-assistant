@@ -16,7 +16,7 @@ import android.widget.*;
 final class MainSettings {
     private final MainActivity a;private final AppUi ui;
     final EditText server,code;final Button connect,install;final TextView pairStatus,accountStatus,pushStatus,updateStatus;final LinearLayout pairBox;
-    private long checkedAt;private boolean online,granted,role,unrestricted,notifying=true;private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,sensitivity,appearance,notifications,disconnect;
+    private long checkedAt;private boolean online,granted,role,unrestricted,notifying=true;private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,sensitivity,appearance,notifications,disconnect,features;
 
     MainSettings(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;SharedPreferences prefs=Cloud.prefs(a);
@@ -47,6 +47,7 @@ final class MainSettings {
         disconnect=ui.dangerRow("Disconnect phone","logout",a::disconnect);account.addView(disconnect,new LinearLayout.LayoutParams(-1,-2));page.addView(account);
 
         ui.label(page,"App & shortcuts");LinearLayout app=ui.rowsCard();
+        features=row(app,"Features checklist","checklist","",a::features);features.setTag("features_checklist");
         row(app,"Check for updates","download","",()->a.checkUpdates(true));updateStatus=ui.type("",13,18,400,0,ui.muted);updateStatus.setTag("update_status");app.addView(updateStatus,MainParts.params(ui,-1,-2,66,0,14,8));
         install=ui.primaryButton("Install update",()->Updates.install(a));install.setTag("install_update");install.setVisibility(View.GONE);app.addView(install,MainParts.params(ui,-1,-2,14,2,14,10));
         notifications=row(app,"Notifications","bell","",a::notificationSettings);row(app,"Microphone Quick Settings tile","tile","",a::addMicrophoneTile).setTag("add_mic_tile");
@@ -92,6 +93,7 @@ final class MainSettings {
         String access=granted?"Allowed":"Off";if(!access.equals(micChip.getText().toString())){micChip.setText(access);micChip.tone(granted?"success":"warning");}micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
         value(assistant,role?"Selected":"Set up");value(battery,unrestricted?"Unrestricted":"Optimized");
         value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,p.getString("ui_theme","sun"),false));value(notifications,notifying?"On":"Off");
+        String open="";try{java.util.List<FeatureBoard.Item> list=Features.board(a);int count=FeatureBoard.open(list);open=list.isEmpty()?"":count==0?"All done":count+" open";}catch(RuntimeException ignored){}value(features,open);
     }
     void refreshNow(boolean paired){checkedAt=0;refresh(true,paired);}
 }

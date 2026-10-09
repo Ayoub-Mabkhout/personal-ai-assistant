@@ -1,8 +1,9 @@
 """Companion classes that need no Android framework, compiled with javac and driven through tests/jvm/AndroidLogicProbe.java.
 
 Covers the sunrise and sunset maths behind the Sunrise & sunset theme (synthetic coordinates only; deployments configure
-the real place privately), quick-add splitting and the voice status wording shared by the Voice tab, the locked entry
-and the assistant overlay, and runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
+the real place privately), quick-add splitting, the voice status wording shared by the Voice tab, the locked entry
+and the assistant overlay, and the features checklist rules (offline replay, ordering, folding, retry outcomes), and
+runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
 import json
 import math
 import os
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPANION = ROOT / 'apps/android/src/com/personalassistant/companion'
 PROBE = ROOT / 'tests/jvm/AndroidLogicProbe.java'
 HARNESS = ROOT / 'tests/jvm/DaylightThemeHarness.java'
-SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java')] + [PROBE, HARNESS]
+SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java')] + [PROBE, HARNESS]
 MAIN = 'com.personalassistant.companion.AndroidLogicProbe'
 # Synthetic round values; none of them stands for a real person's location.
 PLACES = ((0.0, 0.0), (35.0, 120.0), (-33.0, -75.0))
@@ -233,6 +234,60 @@ class VoiceStatusTests(unittest.TestCase):
         inside, outside = self.status([(raw, 0, 0, 0, 0, 0, 1), (raw, 0, 0, 0, 0, 0, 0)])
         self.assertEqual((outside[0], outside[2]), ('Open the app to start', 'attention'))
         self.assertNotEqual(inside[0], outside[0])
+
+
+@unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')
+class FeatureBoardTests(unittest.TestCase):
+    # id,done,created,doneAt: two open, two finished (d most recently).
+    ITEMS = 'a,0,1,0;b,0,2,0;c,1,0.5,5;d,1,0.7,9'
+
+    def board(self, changes, items=ITEMS):
+        order, open_count, pending = ask(['board\t%s\t%s' % (items, changes)])[0].split('\t')
+        return order, int(open_count), pending
+
+    def fold(self, queue, change, sending=''):
+        folded, rows = ask(['fold\t%s\t%s\t%s' % (queue, change, sending)])[0].split('\t')
+        return folded == 'true', rows
+
+    def test_open_items_come_first_in_creation_order_then_most_recently_finished(self):
+        self.assertEqual(self.board(''), ('a,b,d+,c+', 2, ''))
+
+    def test_checking_moves_an_item_to_the_top_of_finished_until_the_server_confirms(self):
+        self.assertEqual(self.board('u1,update,a,1,10,,-'), ('b,a+,d+,c+', 1, 'a'))
+
+    def test_unchecking_moves_a_finished_item_back_to_open(self):
+        self.assertEqual(self.board('u1,update,d,0,10,,-'), ('d,a,b,c+', 3, 'd'))
+
+    def test_offline_adds_show_at_once_and_can_be_finished_before_they_sync(self):
+        self.assertEqual(self.board('c1,create,n1,-,20,,New'), ('a,b,n1,d+,c+', 3, 'n1'))
+        self.assertEqual(self.board('c1,create,n1,-,20,,New;u1,update,n1,1,21,,-'), ('a,b,n1+,d+,c+', 2, 'n1'))
+        self.assertEqual(self.board('c1,create,n1,-,20,,New', items=''), ('n1', 1, 'n1'))
+
+    def test_deletes_hide_the_item_and_rejected_or_unknown_changes_do_not_apply(self):
+        self.assertEqual(self.board('x1,delete,b,-,10,,-'), ('a,d+,c+', 1, ''))
+        self.assertEqual(self.board('u1,update,a,1,10,needs_review,-'), ('a,b,d+,c+', 2, ''))
+        self.assertEqual(self.board('u1,update,zz,1,10,,-'), ('a,b,d+,c+', 2, ''))
+
+    def test_a_second_tick_folds_into_the_waiting_update_but_never_into_one_being_sent(self):
+        self.assertEqual(self.fold('u1,update,a,1,10,,-', 'u2,update,a,0,11,,-'), (True, 'u1,update,a,0,-'))
+        self.assertEqual(self.fold('u1,update,a,1,10,,-', 'u2,update,a,0,11,,-', 'u1'), (False, 'u1,update,a,1,-;u2,update,a,0,-'))
+        self.assertEqual(self.fold('u1,update,a,1,10,,-;u2,update,b,1,10,,-', 'u3,update,a,-,11,,Renamed'), (True, 'u1,update,a,1,Renamed;u2,update,b,1,-'))
+        self.assertEqual(self.fold('c1,create,n,-,10,,New', 'u1,update,n,1,11,,-'), (False, 'c1,create,n,-,New;u1,update,n,1,-'))
+        self.assertEqual(self.fold('u1,update,a,1,10,needs_review,-', 'u2,update,a,0,11,,-'), (False, 'u1,update,a,1,-;u2,update,a,0,-'))
+
+    def test_a_delete_drops_waiting_updates_but_keeps_the_create_and_anything_in_flight(self):
+        self.assertEqual(self.fold('c1,create,n,-,10,,New;u1,update,n,1,11,,-', 'd1,delete,n,-,12,,-'), (False, 'c1,create,n,-,New;d1,delete,n,-,-'))
+        self.assertEqual(self.fold('u1,update,a,1,10,,-', 'd1,delete,a,-,12,,-', 'u1'), (False, 'u1,update,a,1,-;d1,delete,a,-,-'))
+
+    def test_titles_are_trimmed_and_kept_within_the_server_limit(self):
+        rows = ask(['title\t  Wake   word  ', 'title\t   ', 'title\t' + 'x' * 250])
+        self.assertEqual(rows, ['9\tWake word', 'null', '200\t' + 'x' * 200])
+
+    def test_only_permanent_rejections_leave_the_retry_queue(self):
+        cases = [('update', 404, 'drop'), ('delete', 404, 'drop'), ('create', 404, 'retry'), ('create', 422, 'drop'), ('create', 409, 'drop'),
+                 ('update', 422, 'drop'), ('update', 400, 'review'), ('update', 500, 'retry'), ('delete', 401, 'retry'), ('update', 405, 'retry')]
+        got = ask(['outcome\t%s\t%d' % (op, status) for op, status, _ in cases])
+        self.assertEqual(got, [expected for _, _, expected in cases])
 
 
 if __name__ == '__main__':
