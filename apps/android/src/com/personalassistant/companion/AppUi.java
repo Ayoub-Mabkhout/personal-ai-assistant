@@ -322,7 +322,9 @@ final class AppUi {
             "info","O12 12 8.5|M12 11 V16|FO12 7.9 1",
             "stop","BR7.5 7.5 9 9 1.6",
             "star","FM12 2 Q12.9 11.1 22 12 Q12.9 12.9 12 22 Q11.1 12.9 2 12 Q11.1 11.1 12 2 Z",
-            "bolt","M13 2.5 L4.5 13.5 H11.5 L10.5 21.5 L19.5 10.5 H12.5 Z"};
+            "bolt","M13 2.5 L4.5 13.5 H11.5 L10.5 21.5 L19.5 10.5 H12.5 Z",
+            "checklist","M3.8 6 L5.6 7.8 L8.8 4.6|M12 6.2 H20.5|M3.8 12 L5.6 13.8 L8.8 10.6|M12 12.2 H20.5|O6.2 18.2 2|M12 18.2 H20.5",
+            "more","FO5.5 12 1.6|FO12 12 1.6|FO18.5 12 1.6"};
         private static HashMap<String,Object[]> cache;
         private static synchronized Object[] get(String kind){
             if(cache==null)cache=new HashMap<>();String k=kind==null?"":kind;Object[] hit=cache.get(k);if(hit!=null)return hit;

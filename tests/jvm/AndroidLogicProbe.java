@@ -3,8 +3,9 @@ package com.personalassistant.companion;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.util.*;
 
-/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split and status. */
+/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split, status and the features checklist rules. */
 public final class AndroidLogicProbe {
     private AndroidLogicProbe(){}
 
@@ -22,7 +23,34 @@ public final class AndroidLogicProbe {
             }else if(f[0].equals("status")){
                 VoiceStatus s=VoiceStatus.of(f[1],f[2].equals("1"),f[3].equals("1"),f[4].equals("1"),f[5].equals("1"),()->Integer.parseInt(f[6]),f[7].equals("1"));
                 out.println(s.title+"\t"+s.detail+"\t"+s.orb+"\t"+s.loading);
+            }else if(f[0].equals("board")){
+                List<FeatureBoard.Item> list=FeatureBoard.replay(items(f[1]),changes(f[2]));StringBuilder ids=new StringBuilder(),pending=new StringBuilder();
+                for(FeatureBoard.Item item:list){ids.append(ids.length()==0?"":",").append(item.id).append(item.done?"+":"");if(item.pending)pending.append(pending.length()==0?"":",").append(item.id);}
+                out.println(ids+"\t"+FeatureBoard.open(list)+"\t"+pending);
+            }else if(f[0].equals("fold")){
+                List<FeatureBoard.Change> queue=changes(f[1]);FeatureBoard.Change next=changes(f[2]).get(0);
+                if(next.op.equals("delete"))FeatureBoard.dropUpdates(queue,next.target,f[3]);
+                boolean folded=FeatureBoard.fold(queue,next,f[3]);if(!folded)queue.add(next);StringBuilder rows=new StringBuilder();
+                for(FeatureBoard.Change ch:queue)rows.append(rows.length()==0?"":";").append(ch.id).append(',').append(ch.op).append(',').append(ch.target).append(',').append(ch.done==null?"-":ch.done?"1":"0").append(',').append(ch.title==null?"-":ch.title);
+                out.println(folded+"\t"+rows);
+            }else if(f[0].equals("title")){
+                String value=FeatureBoard.title(f[1]);out.println(value==null?"null":value.length()+"\t"+value);
+            }else if(f[0].equals("outcome")){
+                out.println(FeatureBoard.outcome(f[1],Integer.parseInt(f[2])));
             }else out.println("unknown request");
         }
+    }
+
+    /** id,done,created,doneAt;... */
+    private static List<FeatureBoard.Item> items(String spec){
+        List<FeatureBoard.Item> list=new ArrayList<>();if(spec.isEmpty())return list;
+        for(String row:spec.split(";")){String[] v=row.split(",",-1);FeatureBoard.Item item=new FeatureBoard.Item();item.id=v[0];item.title="Feature "+v[0];item.done=v[1].equals("1");item.created=Double.parseDouble(v[2]);item.doneAt=Double.parseDouble(v[3]);list.add(item);}
+        return list;
+    }
+    /** id,op,target,done(-|0|1),at,state,title;... */
+    private static List<FeatureBoard.Change> changes(String spec){
+        List<FeatureBoard.Change> list=new ArrayList<>();if(spec.isEmpty())return list;
+        for(String row:spec.split(";")){String[] v=row.split(",",-1);FeatureBoard.Change ch=new FeatureBoard.Change();ch.id=v[0];ch.op=v[1];ch.target=v[2];ch.done=v[3].equals("-")?null:Boolean.valueOf(v[3].equals("1"));ch.at=Double.parseDouble(v[4]);ch.state=v[5];ch.title=v[6].equals("-")?null:v[6];list.add(ch);}
+        return list;
     }
 }

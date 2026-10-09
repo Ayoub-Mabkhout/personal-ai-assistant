@@ -11,6 +11,6 @@ public class TaskSyncJob extends JobService {
         if(periodic)job.setPeriodic(1800000).setPersisted(true);else job.setMinimumLatency(0).setPersisted(true);
         ((JobScheduler)c.getSystemService(Context.JOB_SCHEDULER_SERVICE)).schedule(job.build());
     }
-    @Override public boolean onStartJob(JobParameters p){if(Cloud.prefs(this).getBoolean("push_signing_out",false)||Cloud.prefs(this).getString("token","").isEmpty())return false;executor.execute(()->{boolean retry=false;try{NativeTasks.sync(this);retry=Cloud.prefs(this).getBoolean("push_more",false);}catch(Exception error){retry=true;Cloud.prefs(this).edit().putString("task_sync_error",error.getMessage()).commit();}try{Cloud.syncPreferences(this);}catch(Exception optionalSettingsUnavailable){}jobFinished(p,retry);});return true;}
+    @Override public boolean onStartJob(JobParameters p){if(Cloud.prefs(this).getBoolean("push_signing_out",false)||Cloud.prefs(this).getString("token","").isEmpty())return false;executor.execute(()->{boolean retry=false;try{NativeTasks.sync(this);retry=Cloud.prefs(this).getBoolean("push_more",false);}catch(Exception error){retry=true;Cloud.prefs(this).edit().putString("task_sync_error",error.getMessage()).commit();}if(Features.background(this))retry=true;try{Cloud.syncPreferences(this);}catch(Exception optionalSettingsUnavailable){}jobFinished(p,retry);});return true;}
     @Override public boolean onStopJob(JobParameters p){return true;}
 }

@@ -2,7 +2,7 @@
 
 A native personal assistant app provides one-command voice capture, explicit
 conversation mode, timestamped chat, task history and follow-ups, native push
-notifications, shopping and recipes, a shopping widget, and requested alarm
+notifications, shopping and recipes, an offline-first features checklist, a shopping widget, and requested alarm
 handoff to the installed Clock application. Task details use the phone's paired
 session and open inside the app.
 

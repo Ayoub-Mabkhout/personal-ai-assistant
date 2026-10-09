@@ -117,6 +117,16 @@ class AndroidSourceTests(unittest.TestCase):
         self.assertTrue(icons)
         self.assertEqual(set(icons), {'R.drawable.ic_stat_assistant'})
 
+    def test_features_checklist_uses_the_shared_mobile_contract(self):
+        features = (SRC / 'com/personalassistant/companion/Features.java').read_text(encoding='utf-8')
+        # HttpURLConnection cannot PATCH: edits and deletes use the server's POST aliases under the paired mobile mount.
+        calls = set(re.findall(r'Cloud\.call\(c,("features"|path\(ch\.target\)(?:\+"/delete")?),(null|.+?),true\)', features))
+        self.assertEqual({(path, 'GET' if body == 'null' else 'POST') for path, body in calls},
+                         {('"features"', 'GET'), ('"features"', 'POST'), ('path(ch.target)', 'POST'), ('path(ch.target)+"/delete"', 'POST')})
+        self.assertIn('put("id",ch.target)', features, 'creates carry the stable client ID')
+        settings = (SRC / 'com/personalassistant/companion/MainSettings.java').read_text(encoding='utf-8')
+        self.assertIn('"Features checklist","checklist"', settings)
+
     def test_sources_stay_at_java_8(self):
         later = {
             r'\bvar\s+\w+\s*=': 'var', r'\b(?:List|Set|Map)\.of\(': 'collection factory', r'\.isBlank\(|\.strip\(\)|\.repeat\(': 'String API after 8',

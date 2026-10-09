@@ -29,7 +29,7 @@ public class MainActivity extends Activity {
     @Override public void onPause(){resumed=false;if(themeWatcher!=null)themeWatcher.stop();if(shopping!=null)shopping.commit(false);super.onPause();}
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&ui!=null){ui.window();focusAdd();}if(focus&&themeWatcher!=null)themeWatcher.check();}
     @Override public void onBackPressed(){if(selected!=0){select(0);return;}super.onBackPressed();}
-    @Override public void onDestroy(){if(themeWatcher!=null)themeWatcher.stop();NativeTaskScreens.close(this);Updates.dismissPrompt(this);super.onDestroy();}
+    @Override public void onDestroy(){if(themeWatcher!=null)themeWatcher.stop();NativeTaskScreens.close(this);FeatureScreen.close(this);Updates.dismissPrompt(this);super.onDestroy();}
     @Override public void onStop(){if(shopping!=null)shopping.commit(false);if(registered){unregisterReceiver(receiver);registered=false;}Cloud.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener);super.onStop();}
     boolean paired(){SharedPreferences p=Cloud.prefs(this);return !p.getString("token","").isEmpty()&&!p.getString("status","").startsWith("Disconnected.");}
     boolean syncing(){return syncBusy;}
@@ -85,6 +85,7 @@ public class MainActivity extends Activity {
     private void notificationPermission(){if(!resumed||!paired()||Build.VERSION.SDK_INT<33||checkSelfPermission("android.permission.POST_NOTIFICATIONS")==PackageManager.PERMISSION_GRANTED||Cloud.prefs(this).getBoolean("notification_permission_requested",false)||Updates.promptVisible(this))return;Cloud.prefs(this).edit().putBoolean("notification_permission_requested",true).apply();requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},301);}
     void taskHistory(){if(!paired()){needPairing();return;}NativeTaskScreens.history(this);}
     void openTask(String id){NativeTaskScreens.detail(this,"agent",id);}
+    void features(){if(!paired()){needPairing();return;}FeatureScreen.open(this);}
     private boolean openTaskIntent(Intent intent){String id=intent.getStringExtra("task_id");if(id==null||id.isEmpty())return false;select(2);handler.post(()->NativeTaskScreens.detail(this,intent.getStringExtra("task_kind")==null?"agent":intent.getStringExtra("task_kind"),id));intent.removeExtra("task_id");return true;}
     /** Share intents are consumed once handled and only read on a fresh start, so neither a recreate nor a restore after process death imports the same text again. */
     private boolean shared(Intent intent){
