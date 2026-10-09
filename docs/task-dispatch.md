@@ -113,6 +113,36 @@ mismatch are rejected before any worker of that decision starts. `job.json` keep
 the list Luna saw, `resumed_from_task` (the earlier task IDs) and the same field on
 each resumed worker.
 
+## Forwarding assistant development
+
+Requests to build, change, fix, debug, review, release or deploy the assistant itself
+(this repository: Companion app, dashboard, relay/server, orchestrator, skills, tests,
+docs, releases) go to the owner's interactive development sessions, one Claude Code
+and one Codex, instead of headless workers. Requests that merely use the assistant
+(calendar, email, shopping, files, research, phone actions) are dispatched as usual.
+Luna returns `action: forward` with `forward_to: claude|codex` and no tasks; every
+other action carries `forward_to: none`, and code rejects any other combination. An
+explicitly named agent wins; otherwise Luna picks the one with more `agent_capacity`.
+
+Delivery uses a local coordination bridge outside this repository. Its private
+config (`coordination_config`, default `~/.personal-assistant/coordination/config.json`)
+holds the port, bearer token and session IDs; the orchestrator reads the port and
+token only to send, bypasses proxies, and never logs or stores the token. The first
+dispatcher turn receives `dev_forwarding.available` when that config exists. Code,
+not Luna, writes the message: the task ID, request time and timezone, the owner's
+request verbatim, a `Request SHA-256:` line over it, any follow-up context, Luna's
+routing note, and a request to report directly to the owner. The sender is
+`dev_forward_sender` (default `luna`). The message ID is a UUIDv5 of the task ID, so
+a retry or crash recovery never sends twice. The bridge labels it a claim. Before
+acting, the receiving session runs `scripts/verify_forwarded_task.py <task> --sha256
+<hex>` against the authorized queue entry.
+
+`job.json` records the message ID, digest and the bridge's answer (ID and status,
+never the token). A transmitted, accepted or queued message (the session is offline
+and the bridge retries) completes the task with that status in the summary. A
+missing config, an unreachable bridge, a non-2xx answer, or an `uncertain` or
+`failed` status returns needs_input with the message ID and `reconciliation_required`.
+
 ## Submit a task
 
 ```powershell

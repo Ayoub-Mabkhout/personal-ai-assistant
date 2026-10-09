@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field
 from personal_assistant.worker.runtime import Singleton
 from personal_assistant.skill_repository import SkillRepository
-from personal_assistant.orchestrator import capacity
+from personal_assistant.orchestrator import capacity,forwarding
 
 
 MODELS=('gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
@@ -40,8 +40,10 @@ class Assignment(BaseModel):
 
 class Decision(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    action:Literal['dispatch','complete','needs_input']
+    action:Literal['dispatch','complete','needs_input','forward']
     summary:str=Field(min_length=1,max_length=12000)
+    # The strict output schema requires every property: non-forward actions use 'none'.
+    forward_to:Literal['none','claude','codex']
     tasks:list[Assignment]=Field(max_length=4)
 
 
@@ -273,6 +275,19 @@ avoid exhausting either. When an agent's five-hour window has under 20% left or 
 weekly window under 10%, prefer the other agent, or a lighter model and effort, and
 say so in the summary. When both are limited, do not dispatch large work: report
 when the sooner window resets.
+Development of the assistant itself goes to the owner's interactive development
+sessions. When dev_forwarding.available is true, return action=forward, forward_to
+claude or codex and empty tasks for requests to build, change, fix, debug, review,
+release or deploy this personal assistant: its repository, the Companion Android app,
+dashboard, relay/server, orchestrator, skills, tests, docs and releases. The service
+sends the owner's request verbatim to that session, which reports to the owner
+directly. Do not forward requests that merely use the assistant (calendar, email,
+shopping, files, research, phone actions). An explicitly named session or agent wins
+("ask Claude", "Codex should"); otherwise forward to the agent with more remaining
+agent_capacity, five-hour window first, then weekly. When both are low, still
+forward and say so. If unsure whether it is development work, dispatch normally or
+return needs_input. A forward summary is a short routing note for the receiving
+session. Every other action uses forward_to=none.
 '''
 
 SKILL_DISPATCH='''The skill_catalog is the portable agent skill repository. Select relevant
@@ -332,6 +347,8 @@ class Orchestrator:
                             instructions=instructions)
         self.save_session(record)
         raw=json.loads(Path(record['result']).read_text(encoding='utf-8'))
+        # Decisions saved before forwarding existed have no forward_to.
+        if isinstance(raw,dict):raw.setdefault('forward_to','none')
         return Decision.model_validate(raw)
 
     def recent_tasks(self,current):
@@ -421,6 +438,40 @@ class Orchestrator:
         if not same_directory(earlier['workspace'],workspace):raise ValueError('A resumed earlier session keeps its original workspace')
         return earlier['task_id']
 
+    def forward(self,job,decision,state,state_path,directory):
+        """Send a development request to the owner's interactive session through the local bridge."""
+        target=decision.forward_to;label=forwarding.SESSIONS[target]
+        identity=forwarding.message_id(job['id'])
+        record={'to':target,'message_id':identity,'request_sha256':forwarding.request_digest(job['payload']['command']),
+                'state':'sending','attempted_at':datetime.now(timezone.utc).isoformat()}
+        # Saved before sending: a crash leaves the message ID to check, and a rerun reuses it.
+        state['forward']=record;write_json(state_path,state)
+        result={'executor':'agent.forward','forwarded_to':target,'forward_message_id':identity,
+                'orchestrator_session_id':self.session()['session_id'],'trace_ref':str(directory)}
+        try:
+            body=forwarding.message(self.config,job,target,decision.summary)
+            record['topic']=body['topic']
+            reply=forwarding.send(self.config,body)
+        except forwarding.ForwardError as error:
+            record.update(state='uncertain' if error.uncertain else 'failed',error=str(error));write_json(state_path,state)
+            if error.uncertain:
+                summary=('Delivery of this development task to the '+label+' is uncertain: '+str(error)+' Message '+identity+
+                         '. Check the coordination bridge before resubmitting, so the session does not receive it twice.')
+            else:
+                summary=('Could not forward this development task to the '+label+': '+str(error)+' Message '+identity+
+                         ' was not accepted and nothing else was started. Check the coordination bridge, then resubmit the request.')
+            return {'state':'needs_input','result':{**result,'summary':summary,'reconciliation_required':True}}
+        record.update(state='answered',bridge=reply);write_json(state_path,state)
+        status=str(reply.get('status') or 'unknown');result['forward_status']=status
+        detail=' ('+str(reply['error'])+')' if reply.get('error') else ''
+        if status not in forwarding.DELIVERED:
+            return {'state':'needs_input','result':{**result,'reconciliation_required':True,
+                    'summary':'The coordination bridge reports delivery of this development task to the '+label+' as '+status+detail+
+                              '. Message '+identity+'. Check that session before resubmitting.'}}
+        waiting=' The session is not reachable yet'+detail+'; the bridge delivers the message when it is.' if status=='queued' else ''
+        return {'state':'completed','result':{**result,
+                'summary':'Forwarded to the '+label+' (message '+identity+', '+status+').'+waiting+' '+decision.summary}}
+
     def continue_task(self,job,directory,cancelled):
         root_id=job['payload']['resume_task']['root_id']
         if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}',root_id):raise ValueError('Invalid original task ID.')
@@ -494,15 +545,21 @@ class Orchestrator:
                     'requested_workspace':payload.get('workspace'),
                     'default_repository':self.config['repository'],'original_request_time':payload.get('created_at'),
                     'timezone':payload.get('timezone'),'previous_results':state['workers'],'recent_tasks':recent,
-                    'skill_catalog':self.skills.catalog(),'agent_capacity':capacity.snapshot(self.config)},ensure_ascii=False)
+                    'skill_catalog':self.skills.catalog(),'agent_capacity':capacity.snapshot(self.config),
+                    'dev_forwarding':{'available':forwarding.configured(self.config),'sessions':sorted(forwarding.SESSIONS)}},ensure_ascii=False)
                 for round_number in range(8):
                     if cancelled.is_set(): raise InterruptedRun('Task cancellation was requested.')
                     turn=directory/f'dispatch-{round_number}'
                     decision=self.decision(prompt,turn,cancelled)
                     state.update(phase='decided',decision=decision.model_dump(),round=round_number)
                     write_json(state_path,state)
+                    if (decision.action=='forward')!=(decision.forward_to!='none'):
+                        raise ValueError('A forward decision must name claude or codex, and only a forward decision names one')
                     if decision.action!='dispatch':
                         if decision.tasks: raise ValueError('A terminal decision must have no worker assignments')
+                        if decision.action=='forward':
+                            outcome=self.forward(job,decision,state,state_path,directory)
+                            break
                         outcome={'state':'completed' if decision.action=='complete' else 'needs_input',
                             'result':{'summary':decision.summary,'executor':'agent.orchestrator',
                              'orchestrator_session_id':self.session()['session_id'],
