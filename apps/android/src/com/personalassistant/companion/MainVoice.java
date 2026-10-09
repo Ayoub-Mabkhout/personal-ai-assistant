@@ -64,6 +64,8 @@ final class MainVoice {
         return !answerText.isEmpty()&&System.currentTimeMillis()-answerTime<ANSWER_FRESH_MS;
     }
 
+    private static void label(TextView view,String value){if(!view.getText().toString().equals(value))view.setText(value);}
+
     void update(String title,String text,String orb,boolean loading,boolean mic,boolean testing,boolean wake,boolean paired,boolean conversationOn){
         SharedPreferences p=Cloud.prefs(a);boolean live=orb.equals("listening")||orb.equals("conversation"),engaged=mic||loading;
         talk.state(orb);talk.level(AppUi.level(a),live&&mic);AppUi.update(status,title);AppUi.update(detail,text);
@@ -73,7 +75,7 @@ final class MainVoice {
         if(fresh){AppUi.update(answer,answerText);AppUi.update(answerMeta,"Assistant \u00b7 "+new SimpleDateFormat("MMM d, HH:mm",Locale.getDefault()).format(new Date(answerTime)));answerTask.setVisibility(!answerId.isEmpty()&&answerKind.equals("acknowledgement")?View.VISIBLE:View.GONE);}
         String link=paired?(VoiceOutbox.networkReady(a)?"Online":"Offline"):"Connect phone";if(!link.equals(connection.getText().toString())){AppUi.update(connection,link);connection.tone(link.equals("Online")?"success":link.equals("Offline")?"warning":"neutral");}
         changing=true;background.setChecked(testing?p.getBoolean("ui_test_background_desired",false):wake);changing=false;
-        testCard.setVisibility(testing?View.VISIBLE:View.GONE);testWake.setText(testing?"Finish test":"Test wake");conversation.setText(conversationOn?"End conversation":"Start conversation");
+        testCard.setVisibility(testing?View.VISIBLE:View.GONE);label(testWake,testing?"Finish test":"Test wake");label(conversation,conversationOn?"End conversation":"Start conversation");
         long wakes=AppUi.number(a,"voice_wake_count")-AppUi.number(a,"ui_test_wake_baseline");AppUi.update(testCount,wakes>0?"Heard Hey Chat "+wakes+" time"+(wakes==1?"":"s"):"Waiting for a wake...");AppUi.update(heard,partial.isEmpty()?"No words detected yet.":"Heard: "+partial);
         chat.render(id->a.openTask(id));
     }

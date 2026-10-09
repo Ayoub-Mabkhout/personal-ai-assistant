@@ -15,7 +15,7 @@ import android.widget.*;
 final class MainSettings {
     private final MainActivity a;private final AppUi ui;
     final EditText server,code;final Button connect,install;final TextView pairStatus,accountStatus,pushStatus,updateStatus;final LinearLayout pairBox;
-    private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,sensitivity,appearance,notifications,disconnect;
+    private long checkedAt;private boolean online,granted,role,unrestricted,notifying=true;private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,sensitivity,appearance,notifications,disconnect;
 
     MainSettings(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;SharedPreferences prefs=Cloud.prefs(a);
@@ -72,20 +72,23 @@ final class MainSettings {
     private static void value(AppUi.ActionRow row,String value){if(!row.value.equals(value))row.value(value);}
     static String themeName(String value){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":"Sunrise & sunset";}
 
-    /** Cheap state is refreshed on every update; system queries only while the tab is open. */
+    /** Prefs-derived state refreshes on every call; system queries only while the tab is open and at most every 1.5 s. */
     void refresh(boolean full,boolean paired){
-        SharedPreferences p=Cloud.prefs(a);boolean expired=p.getString("status","").startsWith("Disconnected.");String host=Uri.parse(p.getString("origin","")).getHost();
-        AppUi.update(accountStatus,paired?(host==null?"Phone connected":host):expired?"Connection expired. Pair again; saved changes stay on this phone.":"Connect this phone to your assistant server.");
-        String chip=paired?(VoiceOutbox.networkReady(a)?"Online":"Offline"):expired?"Expired":"Not connected",tone=paired?(chip.equals("Online")?"success":"warning"):expired?"danger":"neutral";
-        if(!chip.equals(accountChip.getText().toString())){accountChip.setText(chip);accountChip.tone(tone);}
-        String glyph=paired?"shield-check":expired?"alert":"link";if(!glyph.equals(accountGlyph.kind)){int[] c=ui.iconTone(glyph);accountGlyph.kind(glyph);accountGlyph.color(c[0]);accountTile.setBackground(ui.outline(c[1],12,0,0));}
+        SharedPreferences p=Cloud.prefs(a);boolean expired=p.getString("status","").startsWith("Disconnected.");
         pairBox.setVisibility(paired?View.GONE:View.VISIBLE);disconnect.setVisibility(paired?View.VISIBLE:View.GONE);
         AppUi.update(pushStatus,p.getString("push_status","Notification connection will be set up after pairing."));AppUi.update(updateStatus,a.updating()?"Checking for updates...":p.getString("update_status","Updates arrive through release notifications."));install.setVisibility(p.contains("update_release")?View.VISIBLE:View.GONE);
         if(!full)return;
-        boolean granted=a.checkSelfPermission("android.permission.RECORD_AUDIO")==PackageManager.PERMISSION_GRANTED,role=false;if(Build.VERSION.SDK_INT>=29){RoleManager manager=a.getSystemService(RoleManager.class);role=manager!=null&&manager.isRoleHeld(RoleManager.ROLE_ASSISTANT);}
-        micChip.setText(granted?"Allowed":"Needs access");micChip.tone(granted?"success":"warning");micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
-        value(assistant,role?"Selected":"Set up");PowerManager power=a.getSystemService(PowerManager.class);value(battery,power!=null&&power.isIgnoringBatteryOptimizations(a.getPackageName())?"Unrestricted":"Optimized");
-        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(p.getString("ui_theme","sun")));
-        NotificationManager notes=a.getSystemService(NotificationManager.class);value(notifications,notes==null||notes.areNotificationsEnabled()?"On":"Off");
+        long now=SystemClock.uptimeMillis();
+        if(now-checkedAt>1500){checkedAt=now;online=VoiceOutbox.networkReady(a);granted=a.checkSelfPermission("android.permission.RECORD_AUDIO")==PackageManager.PERMISSION_GRANTED;role=false;if(Build.VERSION.SDK_INT>=29){RoleManager manager=a.getSystemService(RoleManager.class);role=manager!=null&&manager.isRoleHeld(RoleManager.ROLE_ASSISTANT);}
+            PowerManager power=a.getSystemService(PowerManager.class);unrestricted=power!=null&&power.isIgnoringBatteryOptimizations(a.getPackageName());NotificationManager notes=a.getSystemService(NotificationManager.class);notifying=notes==null||notes.areNotificationsEnabled();}
+        String host=Uri.parse(p.getString("origin","")).getHost();
+        AppUi.update(accountStatus,paired?(host==null?"Phone connected":host):expired?"Connection expired. Pair again; saved changes stay on this phone.":"Connect this phone to your assistant server.");
+        String chip=paired?(online?"Online":"Offline"):expired?"Expired":"Not connected",tone=paired?(online?"success":"warning"):expired?"danger":"neutral";
+        if(!chip.equals(accountChip.getText().toString())){accountChip.setText(chip);accountChip.tone(tone);}
+        String glyph=paired?"shield-check":expired?"alert":"link";if(!glyph.equals(accountGlyph.kind)){int[] c=ui.iconTone(glyph);accountGlyph.kind(glyph);accountGlyph.color(c[0]);accountTile.setBackground(ui.outline(c[1],12,0,0));}
+        String access=granted?"Allowed":"Off";if(!access.equals(micChip.getText().toString())){micChip.setText(access);micChip.tone(granted?"success":"warning");}micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
+        value(assistant,role?"Selected":"Set up");value(battery,unrestricted?"Unrestricted":"Optimized");
+        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(p.getString("ui_theme","sun")));value(notifications,notifying?"On":"Off");
     }
+    void refreshNow(boolean paired){checkedAt=0;refresh(true,paired);}
 }
