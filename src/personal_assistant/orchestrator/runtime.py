@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field
 from personal_assistant.worker.runtime import Singleton
 from personal_assistant.skill_repository import SkillRepository
+from personal_assistant.orchestrator import capacity
 
 
 MODELS=('gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
@@ -157,6 +158,11 @@ provide a useful concise final answer and empty tasks. For missing information,
 return needs_input and a self-contained question. Resume only worker sessions named
 in the provided previous-results data; never guess an ID or use --last. Return only
 the Decision JSON requested by the output schema. Remember each task and its results.
+agent_capacity is a fresh snapshot of the account's remaining five-hour and weekly
+allowance, shared by every model; you do not need to check usage yourself. When the
+five-hour window has under 20% left or the weekly window under 10%, prefer Luna and
+lower effort unless the user asked for a specific model, and say so in the summary.
+When a limit is reached, do not dispatch large work: report when it resets.
 '''
 
 SKILL_DISPATCH='''The skill_catalog is the portable agent skill repository. Select relevant
@@ -283,7 +289,7 @@ class Orchestrator:
                     'requested_workspace':payload.get('workspace'),
                     'default_repository':self.config['repository'],'original_request_time':payload.get('created_at'),
                     'timezone':payload.get('timezone'),'previous_results':state['workers'],
-                    'skill_catalog':self.skills.catalog()},ensure_ascii=False)
+                    'skill_catalog':self.skills.catalog(),'agent_capacity':capacity.snapshot(self.config)},ensure_ascii=False)
                 for round_number in range(8):
                     if cancelled.is_set(): raise InterruptedRun('Task cancellation was requested.')
                     turn=directory/f'dispatch-{round_number}'
@@ -345,7 +351,8 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                     state['phase']='workers_completed';write_json(state_path,state)
                     prompt=json.dumps({'task_id':job['id'],'instruction':'Review these worker results; verify evidence and complete or delegate follow-up.',
                                        'dispatch_protocol':DISPATCH_INSTRUCTIONS+SKILL_DISPATCH,
-                                       'worker_results':completed,'skill_catalog':self.skills.catalog()},ensure_ascii=False)
+                                       'worker_results':completed,'skill_catalog':self.skills.catalog(),
+                                       'agent_capacity':capacity.snapshot(self.config)},ensure_ascii=False)
                 else:
                     outcome={'state':'needs_input','result':{'summary':'This task reached eight delegation rounds. Its results are saved; choose the next step.',
                                                             'trace_ref':str(directory)}}

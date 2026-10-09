@@ -65,6 +65,15 @@ Sol and Astra model family and their supported effort settings. Assignments with
 one decision currently execute sequentially. Luna does not need a permanently
 running model process: `codex exec resume <session-id>` provides the continuity.
 
+Every dispatcher turn, both the first decision and each results review, carries an
+`agent_capacity` snapshot: the remaining five-hour and weekly allowance, reset times,
+plan and any reached limit. It is read from the newest rate-limit record in the
+local Codex session logs (`CODEX_HOME`, or `codex_home` in the worker config), so it
+costs no model call and Luna never has to check usage itself. The limits are
+account-wide and shared by Luna, Sol and Astra. When little allowance is left, Luna
+prefers lighter models and effort unless the user named one. Missing or unreadable
+logs report `available: false` and never block dispatch.
+
 ## Submit a task
 
 ```powershell
