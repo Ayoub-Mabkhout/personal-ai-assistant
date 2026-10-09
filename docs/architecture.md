@@ -47,7 +47,9 @@ background and locked behavior still require handset verification.
 | Laptop worker | Calendar queries, headless AI workers and live-mail maintenance | Agent commands wait |
 | Local calendar | Primary store; versioned reminder projection to cloud | Synced reminder occurrences can notify from cloud |
 
-Shopping-list additions run on the server without a model or laptop. The primary
+Shopping-list additions run on the server without a model or laptop. The
+[features checklist](features-checklist.md) is stored on the relay the same way,
+shared by the Companion and the dashboard. The primary
 calendar remains local and account-independent. The cloud reminder dispatcher
 uses a versioned projection of upcoming reminder occurrences and the configured
 native or legacy notification provider. The local sync service reconciles

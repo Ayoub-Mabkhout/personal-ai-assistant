@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 from fastapi import FastAPI, HTTPException, Request, Query
@@ -12,6 +13,7 @@ import threading
 from typing import Literal
 from personal_assistant.worker.runtime import RelayClient, TransportError
 from personal_assistant.worker.notifications import HomeAssistantNotifier
+from personal_assistant.relay.features import FeatureEdit, NewFeature
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -320,6 +322,40 @@ def create_app(config):
                 'timezone':config.get('timezone','Europe/Berlin'),'created_at':body.created_at})
         except TransportError as error:
             raise HTTPException(503,'The acknowledgement is unavailable. Your prompt remains in this browser; retry keeps the same ID.') from error
+
+    # The features checklist lives on the relay so the paired phone shares it over mobile data.
+    def features_call(path='',payload=None,method=None):
+        if not config.get('relay_url') or not config.get('submit_token_file'):
+            raise HTTPException(503,'The features list is not connected to the relay.')
+        try:
+            return RelayClient(config['relay_url'],config['submit_token_file']).call('/v1/features'+path,payload,method)
+        except TransportError as error:
+            if error.status==404: raise HTTPException(404,'Feature not found. Refresh the list.') from None
+            if error.status==409: raise HTTPException(409,'This feature was deleted on another device.') from None
+            if error.status in (400,422): raise HTTPException(422,'Check the feature title and details.') from None
+            raise HTTPException(503,'The change was not confirmed. Refresh to check the list.' if payload is not None or method else 'The features list is temporarily unreachable.') from None
+        except (OSError,ValueError):
+            raise HTTPException(503,'The features list is not connected to the relay.') from None
+
+    @app.get('/api/features')
+    def features():
+        return features_call()
+
+    @app.post('/api/features')
+    def add_feature(body:NewFeature):
+        return features_call('',body.model_dump(exclude_none=True))
+
+    def feature_path(identity):
+        if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}',identity): raise HTTPException(404,'Feature not found.')
+        return '/'+identity
+
+    @app.patch('/api/features/{identity}')
+    def edit_feature(identity:str,body:FeatureEdit):
+        return features_call(feature_path(identity),body.model_dump(exclude_none=True),'PATCH')
+
+    @app.delete('/api/features/{identity}')
+    def delete_feature(identity:str):
+        return features_call(feature_path(identity),method='DELETE')
 
     @app.post('/api/pause')
     def pause(body:Pause):

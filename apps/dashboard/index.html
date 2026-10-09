@@ -56,7 +56,7 @@
 html{background:var(--bg);-webkit-text-size-adjust:100%}
 body{margin:0;font:15px/22px system-ui,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased}
 body::before{content:'';position:fixed;inset:0 0 auto;height:520px;background:var(--wash);z-index:-1;pointer-events:none}
-button,input,textarea{font:inherit;color:inherit}
+button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer}
 a{color:var(--accent);font-weight:500}
 h1,h2,h3,p{margin:0}
@@ -224,6 +224,36 @@ textarea.field{min-height:120px;resize:vertical;line-height:22px}
 .recent{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .recent .card{box-shadow:none;background:var(--surface-alt);border-color:transparent;padding:18px}
 
+/* features checklist */
+.feature-add{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:stretch}
+.feature-add input.field{border-radius:26px;padding:0 20px}
+.feature-add select.field{width:auto;min-width:150px;border-radius:26px;padding:0 40px 0 18px;appearance:none;background:var(--surface) no-repeat right 16px center/16px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238E829E' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")}
+.checklist{display:grid;margin:0;padding:0;list-style:none}
+.feat{display:flex;align-items:flex-start;gap:6px;border-top:1px solid var(--stroke);overflow:hidden;transition:height 240ms cubic-bezier(.2,0,0,1),opacity 240ms}
+.feat:first-child{border-top:0}
+.feat.collapse{opacity:0}
+.feat-main{display:flex;align-items:flex-start;gap:14px;flex:1;min-width:0;min-height:48px;padding:12px 0;cursor:pointer}
+.check{appearance:none;display:grid;place-items:center;width:24px;height:24px;flex:none;margin:-1px 0 0;border:1.5px solid var(--stroke-strong);border-radius:8px;background:var(--surface);cursor:pointer;transition:background 140ms,border-color 140ms,box-shadow 140ms}
+.check::before{content:'';width:11px;height:6px;margin-top:-3px;border:solid var(--on-accent);border-width:0 0 2.25px 2.25px;transform:rotate(-45deg) scale(0);transition:transform 180ms cubic-bezier(.2,0,0,1) 60ms}
+.check:checked{border-color:transparent;background:linear-gradient(120deg,var(--g1),var(--g2));box-shadow:0 0 0 4px var(--accent-soft)}
+.check:checked::before{transform:rotate(-45deg) scale(1)}
+.check:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.feat-text{display:grid;gap:2px;min-width:0}
+.feat-title{justify-self:start;font-weight:500;overflow-wrap:anywhere;background:linear-gradient(currentColor,currentColor) 0 55%/0 1.5px no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size 220ms cubic-bezier(.2,0,0,1),color 220ms}
+.feat.done .feat-title{background-size:100% 1.5px;color:var(--muted)}
+.feat-detail{font-size:13px;line-height:18px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.feat .chips{margin-top:4px}
+.feat-remove{display:flex;align-items:center;justify-content:center;gap:6px;min-width:48px;height:48px;flex:none;padding:0 12px;border:0;border-radius:24px;background:none;color:var(--muted);font-size:13px;font-weight:700;transition:background 160ms,color 160ms}
+.feat-remove.confirm{background:var(--danger-soft);color:var(--danger)}
+@media (hover:hover){.feat-remove:not(.confirm):hover{background:var(--surface-alt);color:var(--text)}}
+.feature-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 4px}
+.finished{margin-top:16px;border-top:1px solid var(--stroke);padding-top:8px}
+.finished>summary{display:flex;align-items:center;gap:12px;min-height:48px;padding:0 4px;list-style:none;cursor:pointer;border-radius:16px}
+.finished>summary::-webkit-details-marker{display:none}
+.finished>summary .i{color:var(--muted);transition:transform 200ms cubic-bezier(.2,0,0,1)}
+.finished[open]>summary .i{transform:rotate(90deg)}
+.finished .checklist{margin-top:4px}
+
 /* profile */
 .hero{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:32px;align-items:center;margin-bottom:20px;padding:32px;border-radius:28px;overflow:hidden;background:radial-gradient(70% 90% at 100% 0%,rgba(var(--peri-rgb),.28),rgba(var(--peri-rgb),0) 70%),radial-gradient(60% 80% at 0% 100%,rgba(var(--g3-rgb),.12),rgba(var(--g3-rgb),0) 70%),var(--surface)}
 .hero h1{margin:10px 0 14px}
@@ -286,11 +316,11 @@ dialog textarea.field{min-height:84px}
   .shell{display:block}
   .side{position:static;height:auto;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;display:block}
   .side .brand,.side-foot{display:none}
-  .nav{position:fixed;z-index:30;left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));height:64px;padding:0 4px;grid-template-columns:repeat(5,1fr);gap:0;border-radius:28px;background:linear-gradient(180deg,var(--glass),rgba(255,255,255,0) 60%),var(--nav-bg);border:1px solid var(--stroke);box-shadow:var(--e2)}
+  .nav{position:fixed;z-index:30;left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));height:64px;padding:0 4px;grid-template-columns:repeat(6,1fr);gap:0;border-radius:28px;background:linear-gradient(180deg,var(--glass),rgba(255,255,255,0) 60%),var(--nav-bg);border:1px solid var(--stroke);box-shadow:var(--e2)}
   .nav button{flex-direction:column;justify-content:center;gap:3px;min-height:0;padding:6px 0 0;border-radius:0;font-size:11.5px;line-height:14px;text-align:center;white-space:nowrap}
   .nav button.active{color:var(--text)}
   .nav button.active .i{color:var(--on-accent)}
-  .nav-pill{width:58px;height:30px;border-radius:15px;transform:translate(calc(var(--bx,0px) + (var(--bw,0px) - 58px)/2),calc(var(--by,0px) + 8px))}
+  .nav-pill{width:52px;height:30px;border-radius:15px;transform:translate(calc(var(--bx,0px) + (var(--bw,0px) - 52px)/2),calc(var(--by,0px) + 8px))}
   .content{padding:0 20px calc(112px + env(safe-area-inset-bottom))}
   .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 -20px 8px;padding:calc(10px + env(safe-area-inset-top)) 20px 10px;background:var(--bg);background:color-mix(in srgb,var(--bg) 88%,transparent)}
   .topbar .brand{padding:0}
@@ -311,10 +341,14 @@ dialog textarea.field{min-height:84px}
   .compose{flex-wrap:wrap}
   .compose .field{flex-basis:100%}
   .compose .btn{flex:1}
+  .feature-add{grid-template-columns:minmax(0,1fr) auto}
+  .feature-add input.field{grid-column:1/-1}
+  .feature-add select.field{min-width:0;width:100%}
   .toast{bottom:calc(92px + env(safe-area-inset-bottom))}
   dialog{margin:auto 16px 16px;width:calc(100% - 32px);padding:24px}
 }
-@media (max-width:339px){.nav button{font-size:10.5px}}
+@media (max-width:419px){.nav button{font-size:10.5px}}
+@media (max-width:339px){.nav button{font-size:9.5px}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   .page.enter,.rise,dialog[open],.toast.show{animation-name:swap}
@@ -360,6 +394,9 @@ dialog textarea.field{min-height:84px}
 <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17v4M17 19h4"/></symbol>
 <symbol id="i-lightbulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></symbol>
 <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+<symbol id="i-checklist" viewBox="0 0 24 24"><path d="m3.5 6.5 2 2 3.5-4M3.5 15.5l2 2 3.5-4M12.5 7h8M12.5 16h8"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
 <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 20.5l1.6-5A8.4 8.4 0 1 1 21 11.5z"/></symbol>
 </defs></svg>
 <div class="shell">
@@ -371,6 +408,7 @@ dialog textarea.field{min-height:84px}
     <button data-page="followups"><svg class="i" aria-hidden="true"><use href="#i-followups"/></svg><span>Follow-ups</span></button>
     <button data-page="documents"><svg class="i" aria-hidden="true"><use href="#i-documents"/></svg><span>Documents</span></button>
     <button data-page="notes"><svg class="i" aria-hidden="true"><use href="#i-notes"/></svg><span>Notes</span></button>
+    <button data-page="features"><svg class="i" aria-hidden="true"><use href="#i-checklist"/></svg><span>Features</span></button>
     <button data-page="profile"><svg class="i" aria-hidden="true"><use href="#i-profile"/></svg><span>Profile</span></button>
   </nav>
   <div class="side-foot">
@@ -443,6 +481,25 @@ dialog textarea.field{min-height:84px}
     <div id="notes-list" class="notes-list"></div>
   </section>
 
+  <section id="features" class="page" hidden>
+    <header class="page-head"><span class="eyebrow">WHAT THE ASSISTANT CAN DO</span><h1 tabindex="-1">Features<span class="accent">.</span></h1><p class="lede">Features to build for the Companion, this dashboard and the assistant. Check one off when it is implemented and it moves to Finished. The Companion app shows the same list.</p></header>
+    <article class="card">
+      <form id="feature-form" class="feature-add">
+        <input id="feature-title" class="field" placeholder="Add a feature to build…" required maxlength="200" aria-label="New feature">
+        <select id="feature-area" class="field" aria-label="Area"><option value="assistant">Assistant</option><option value="companion">Companion</option><option value="dashboard">Dashboard</option></select>
+        <button class="btn primary"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add</button>
+      </form>
+      <p class="hint">Saved on the relay, so your phone sees it over mobile data.</p>
+      <div class="feature-head"><h2 id="open-heading">To build</h2><button class="btn tonal small" id="refresh-features" type="button"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button></div>
+      <ul id="features-open" class="checklist" aria-labelledby="open-heading"></ul>
+      <details class="finished" id="features-finished">
+        <summary><svg class="i" aria-hidden="true"><use href="#i-chevron"/></svg><h2 id="finished-heading">Finished</h2><span class="chip success" id="finished-count">0</span></summary>
+        <ul id="features-done" class="checklist" aria-labelledby="finished-heading"></ul>
+      </details>
+    </article>
+    <span class="sr" id="feature-status" role="status"></span>
+  </section>
+
   <section id="profile" class="page" hidden>
     <div class="card hero">
       <div class="intro"><span class="eyebrow">A FEW THINGS ABOUT YOU</span><h1 id="profile-name" tabindex="-1"></h1><p class="bio" id="profile-bio"></p><div class="tags" id="identity-tags"></div></div>
@@ -469,8 +526,8 @@ dialog textarea.field{min-height:84px}
 const token='__DASHBOARD_TOKEN__';
 const $=id=>document.getElementById(id);
 const NS='http://www.w3.org/2000/svg';
-const PAGES=['today','followups','documents','notes','profile'];
-const TITLES={today:'Today',followups:'Follow-ups',documents:'Documents',notes:'Notes',profile:'Profile'};
+const PAGES=['today','followups','documents','notes','features','profile'];
+const TITLES={today:'Today',followups:'Follow-ups',documents:'Documents',notes:'Notes',features:'Features',profile:'Profile'};
 const STALE_MS=30000;
 let profile={},notes=[],documents=[],activity=[],category=null,followupFilter='open',qrTimer=null;
 
@@ -483,13 +540,13 @@ const store=(key,value)=>{try{value===null?localStorage.removeItem(key):localSto
 const humanize=text=>{const s=String(text||'').replace(/_/g,' ');return s.charAt(0).toUpperCase()+s.slice(1)};
 const link=(text,href,icon)=>{const a=el('a',undefined,'btn tonal small');a.href=href;a.target='_blank';a.rel='noopener noreferrer';a.append(el('span',text),svg(icon));return a};
 
-async function api(path,body){
-  let response;
-  try{response=await fetch('/api/'+path,{method:body?'POST':'GET',headers:{'X-Dashboard-Token':token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined})}
+async function api(path,body,method){
+  let response;const verb=method||(body?'POST':'GET');
+  try{response=await fetch('/api/'+path,{method:verb,headers:{'X-Dashboard-Token':token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined})}
   catch{throw Error('The dashboard service is not reachable.')}
-  if(!response.ok){let message='Unable to load this right now.';try{const j=await response.json();if(typeof j.detail==='string')message=j.detail}catch{}throw Error(message)}
+  if(!response.ok){let message='Unable to load this right now.';try{const j=await response.json();if(typeof j.detail==='string')message=j.detail}catch{}const error=Error(message);error.status=response.status;throw error}
   const result=await response.json();
-  if(body){readEpoch++;inflight.clear()}
+  if(verb!=='GET'){readEpoch++;inflight.clear()}
   return result;
 }
 const inflight=new Map();
@@ -612,7 +669,7 @@ new ResizeObserver(()=>{nav.classList.add('still');placePill();requestAnimationF
 
 /* data loading: each key loads once per visit window and shares in-flight requests */
 const loaded={};
-const PAGE_DATA={today:['agenda','requests','digest','notes'],followups:['followups'],documents:['documents'],notes:['notes'],profile:['profile']};
+const PAGE_DATA={today:['agenda','requests','digest','notes'],followups:['followups'],documents:['documents'],notes:['notes'],features:['features'],profile:['profile']};
 function ensure(key,force){
   if(!force&&loaded[key]&&Date.now()-loaded[key]<STALE_MS)return;
   loaded[key]=Date.now();LOADERS[key]();
@@ -910,6 +967,111 @@ $('note-form').onsubmit=e=>{e.preventDefault();saveNote($('note-text').value.tri
 const draft=readJSON('personal-unsaved-note');
 if(draft&&draft.text){$('note-text').value=draft.text;$('capture-text').value=draft.text}
 
+/* features checklist: one list on the relay, shared with the Companion app */
+const AREAS={assistant:'Assistant',companion:'Companion',dashboard:'Dashboard'};
+const QUICK=matchMedia('(prefers-reduced-motion: reduce)');
+const pause=ms=>new Promise(done=>setTimeout(done,QUICK.matches?0:ms));
+const featureOrder=(a,b)=>(a.done-b.done)||(a.done?b.done_at-a.done_at:a.created-b.created);
+const finishedOn=t=>new Date(t*1000).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+const listItem=node=>{const li=el('li');li.append(node);return li};
+let features=[],featuresShown=false;
+function featureRow(entry,fresh){
+  const li=el('li',undefined,'feat'+(entry.done?' done':'')+(fresh?' rise':'')),main=el('label',undefined,'feat-main'),box=el('input',undefined,'check'),text=el('span',undefined,'feat-text'),meta=el('span',undefined,'chips');
+  li.dataset.id=entry.id;box.type='checkbox';box.checked=entry.done;box.setAttribute('aria-label',entry.title);
+  box.onchange=()=>{if(entry.busy){box.checked=!box.checked;return}toggleFeature(entry,box.checked,li)};
+  text.append(el('span',entry.title,'feat-title'));
+  if(entry.detail)text.append(el('span',entry.detail,'feat-detail'));
+  meta.append(chip(AREAS[entry.area]||humanize(entry.area),'accent'));
+  if(entry.done&&entry.done_at)meta.append(el('span','Finished '+finishedOn(entry.done_at),'meta'));
+  text.append(meta);main.append(box,text);
+  const remove=el('button',undefined,'feat-remove');remove.type='button';remove.setAttribute('aria-label','Remove '+entry.title);remove.append(svg('x'));
+  remove.onclick=()=>removeFeature(entry,remove);
+  li.append(main,remove);return li;
+}
+function renderFeatures(fresh){
+  const active=document.activeElement,row=active&&active.closest?active.closest('.feat'):null,focusId=row&&row.dataset.id,onRemove=active&&active.classList.contains('feat-remove');
+  const open=features.filter(x=>!x.done),done=features.filter(x=>x.done),isFresh=x=>Boolean(fresh&&fresh.has(x.id));
+  $('features-open').replaceChildren(...open.map(x=>featureRow(x,isFresh(x))));
+  if(!open.length)$('features-open').append(listItem(features.length?empty('check-circle','Everything is built','Every feature on the list is finished. Add the next one above.'):empty('checklist','No features yet','Add a feature you want the assistant to have.',{label:'Add a feature',run:()=>$('feature-title').focus()})));
+  $('features-done').replaceChildren(...done.map(x=>featureRow(x,isFresh(x))));
+  $('features-finished').hidden=!done.length;
+  const count=$('finished-count');
+  if(count.textContent!==String(done.length)){count.textContent=done.length;count.classList.remove('swap');void count.offsetWidth;count.classList.add('swap')}
+  $('features-finished').querySelector('summary').setAttribute('aria-label','Finished, '+done.length+(done.length===1?' feature':' features'));
+  if(focusId){const again=document.querySelector('.feat[data-id="'+CSS.escape(focusId)+'"] '+(onRemove?'.feat-remove':'.check'));if(again&&again.offsetParent)again.focus({preventScroll:true})}
+}
+async function loadFeatures(){
+  if(!featuresShown)$('features-open').replaceChildren(...skeleton(3).map(listItem));
+  try{const result=await shared('features');features=result.items;featuresShown=true;renderFeatures()}
+  catch(error){
+    if(featuresShown)toast(error.message,'error');
+    else{$('features-open').replaceChildren(listItem(failure('Features unavailable',error.message,()=>ensure('features',true))));$('features-finished').hidden=true}
+    missed('features');
+  }
+}
+async function collapse(li){
+  if(QUICK.matches)return;
+  li.style.height=li.offsetHeight+'px';void li.offsetHeight;
+  li.classList.add('collapse');li.style.height='0px';
+  await pause(240);
+}
+function refocus(id,list,index){
+  const own=document.querySelector('.feat[data-id="'+CSS.escape(id)+'"] .check');
+  if(own&&own.offsetParent)return own.focus({preventScroll:true});
+  const rows=list.querySelectorAll('.check');(rows[Math.min(index,rows.length-1)]||$('feature-title')).focus({preventScroll:true});
+}
+async function toggleFeature(entry,done,li){
+  const focused=li.contains(document.activeElement),list=li.parentElement,index=[...list.children].indexOf(li),before={done:entry.done,done_at:entry.done_at};
+  entry.busy=true;li.classList.toggle('done',done);
+  const saving=api('features/'+encodeURIComponent(entry.id),{done},'PATCH');
+  saving.catch(()=>{});
+  // A refresh may have replaced the list meanwhile; always change the current copy.
+  const apply=values=>{const current=features.find(x=>x.id===entry.id);if(current)Object.assign(current,values);features.sort(featureOrder)};
+  await pause(400);await collapse(li);
+  apply({done,done_at:done?entry.done_at||Date.now()/1000:null});renderFeatures(new Set([entry.id]));
+  if(focused)refocus(entry.id,list,index);
+  $('feature-status').textContent=done?entry.title+' moved to Finished.':entry.title+' moved back to To build.';
+  try{apply(await saving);renderFeatures()}
+  catch(error){apply(before);renderFeatures();toast(error.message,'error')}
+  finally{entry.busy=false}
+}
+function removeFeature(entry,button){
+  const reset=()=>{button.classList.remove('confirm');button.replaceChildren(svg('x'));button.setAttribute('aria-label','Remove '+entry.title)};
+  if(!button.classList.contains('confirm')){
+    button.classList.add('confirm');button.replaceChildren(svg('x'),el('span','Remove?'));button.setAttribute('aria-label','Select again to remove '+entry.title);
+    clearTimeout(button.timer);button.timer=setTimeout(reset,4000);return;
+  }
+  clearTimeout(button.timer);
+  const li=button.closest('.feat'),list=li.parentElement,index=[...list.children].indexOf(li),focused=li.contains(document.activeElement);
+  api('features/'+encodeURIComponent(entry.id),undefined,'DELETE').then(async()=>{
+    await collapse(li);features=features.filter(x=>x.id!==entry.id);renderFeatures();
+    if(focused)refocus(entry.id,list,index);
+    $('feature-status').textContent=entry.title+' removed.';toast('Feature removed.','success');
+  },error=>{reset();toast(error.message,'error')});
+}
+$('feature-form').onsubmit=async e=>{
+  e.preventDefault();
+  const title=$('feature-title').value.trim(),area=$('feature-area').value;if(!title)return;
+  // The ID is kept with the draft, so a retry after a lost reply cannot add the feature twice.
+  const saved=readJSON('personal-feature-draft'),body=saved&&saved.title===title&&saved.area===area?saved:{id:crypto.randomUUID(),title,area};
+  store('personal-feature-draft',body);busy($('feature-form'),true);
+  try{
+    const added=await api('features',body);
+    store('personal-feature-draft',null);
+    if($('feature-title').value.trim()===title)$('feature-title').value='';
+    features=features.filter(x=>x.id!==added.id).concat(added).sort(featureOrder);featuresShown=true;
+    renderFeatures(new Set([added.id]));$('feature-status').textContent=added.title+' added to To build.';
+  }catch(error){
+    if(error.status===409)store('personal-feature-draft',null);
+    toast(error.message+(error.status===409?'':' Your entry remains in this browser.'),'error');
+  }finally{busy($('feature-form'),false)}
+};
+$('refresh-features').onclick=()=>{forget('features');ensure('features',true)};
+$('features-finished').open=Boolean(readJSON('personal-features-finished'));
+$('features-finished').ontoggle=()=>store('personal-features-finished',$('features-finished').open||null);
+const featureDraft=readJSON('personal-feature-draft');
+if(featureDraft&&featureDraft.title){$('feature-title').value=featureDraft.title;if(AREAS[featureDraft.area])$('feature-area').value=featureDraft.area}
+
 /* profile */
 const PROFILE_FIELDS=[['profile-bio','bio'],['location','location'],['profile-subtitle','subtitle'],['focus','focus'],['outside-title','outside_title'],['outside-copy','outside_copy'],['career-title','career_title'],['planning','planning_preferences'],['language-goal','language_goal']];
 let profileShown=false,portraitTried=false;
@@ -997,7 +1159,7 @@ for(const dialog of document.querySelectorAll('dialog')){
 }
 
 api('preferences').then(value=>AssistantDaylight.configure(value.daylight)).catch(()=>{});
-const LOADERS={agenda:loadAgenda,requests:loadRequests,digest:loadDigest,notes:loadNotes,followups:loadFollowups,documents:loadDocuments,profile:loadProfile};
+const LOADERS={agenda:loadAgenda,requests:loadRequests,digest:loadDigest,notes:loadNotes,followups:loadFollowups,documents:loadDocuments,features:loadFeatures,profile:loadProfile};
 document.fonts&&document.fonts.ready.then(placePill);
 show(currentPage(),false);
 requestAnimationFrame(()=>nav.classList.add('ready'));

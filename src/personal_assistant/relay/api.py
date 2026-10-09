@@ -164,6 +164,12 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     worker = authorization(worker_token)
     from .replies import reply_router
     app.include_router(reply_router({'command':queue,'agent':agent_queue},submit))
+    from .features import Features,device_auth,features_router
+    features=Features(Path(path).with_name('features.sqlite3'),**({'clock':clock} if clock else {}))
+    app.state.features=features
+    app.include_router(features_router(features,submit,'/v1/features'))
+    if groceries:
+        app.include_router(features_router(features,device_auth(groceries_api.devices),'/groceries/v1/mobile/features'))
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))

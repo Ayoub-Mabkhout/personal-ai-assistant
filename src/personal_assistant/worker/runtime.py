@@ -41,11 +41,11 @@ class RelayClient:
         self.base, self.token_file, self.timeout = base.rstrip('/'), Path(token_file), timeout
         self.opener = urllib.request.build_opener(NoRedirect)
 
-    def call(self, path, payload=None):
+    def call(self, path, payload=None, method=None):
         token = self.token_file.read_text().strip()
         request = urllib.request.Request(self.base + path,
             data=json.dumps(payload).encode() if payload is not None else None,
-            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method=method)
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 return json.load(response)

@@ -61,7 +61,8 @@ an encrypted/private backup workflow rather than adding them to Git.
 ## Local dashboard
 
 Open `http://127.0.0.1:8787/`. It serves the profile, calendar, shopping list,
-execution history, document catalog, and workbench inventory. Shopping checkboxes
+execution history, document catalog, workbench inventory and the shared
+[features checklist](features-checklist.md), which it reads and changes on the relay. Shopping checkboxes
 update the actual HA list. Request submission preserves a UUID and original time
 in the browser until server receipt is confirmed; retrying uses the same ID.
 

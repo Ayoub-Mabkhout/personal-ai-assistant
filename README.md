@@ -23,6 +23,7 @@ public source files. A clone does not inherit a deployed owner's connections.
 - [Per-task coding environments](docs/coding-workbench.md)
 - [Themed personal context](docs/personal-profile.md)
 - [Phone shopping and recipes](docs/groceries.md)
+- [Shared features checklist (Companion and dashboard)](docs/features-checklist.md)
 - [Android and extended voice options](docs/phone-voice.md)
 - [Custom wake-word and buffered capture design](docs/custom-phone-voice.md)
 - [Receiving-only WhatsApp bridge](docs/whatsapp.md)
