@@ -89,6 +89,30 @@ When both agents suit a task, Luna chooses the one with more remaining allowance
 avoids an agent whose five-hour window is under 20% or weekly window under 10%.
 Missing or unreadable figures report `available: false` and never block dispatch.
 
+## Resuming earlier sessions without a Reply
+
+An explicit follow-up (Reply, or a task-page instruction) resumes its task's session
+directly. A newly enqueued prompt can also continue earlier work: the first dispatcher
+turn carries `recent_tasks`, the newest finished tasks (at most 12, up to 7 days old,
+about 8,000 characters). Each entry gives the task ID, request and finish times, the
+truncated request and outcome summary, and each worker's agent, model, effort,
+workspace, task type, skills and session ID. A session is listed once, at its
+newest task. Left out: background mail scans, the Luna session itself, tasks needing
+reconciliation, and sessions whose newer use was interrupted or failed. The
+`recent_task_limit`, `recent_task_days` and `recent_task_chars` worker config keys
+change the bounds.
+
+Luna resumes a listed session only when the new request clearly continues that task
+(same files, thread or topic, "also", "now do X to it", a correction or an answer),
+prefers an explicit `followup_context` link, never resumes across unrelated topics,
+and names the reused task in its summary. Code accepts `resume_session` only from
+this job's own results or the listed sessions. An earlier session must keep its
+agent, its model (its context was built by that model) and its workspace (Claude
+resolves sessions per project directory); effort may change. Guessed IDs and any
+mismatch are rejected before any worker of that decision starts. `job.json` keeps
+the list Luna saw, `resumed_from_task` (the earlier task IDs) and the same field on
+each resumed worker.
+
 ## Submit a task
 
 ```powershell
