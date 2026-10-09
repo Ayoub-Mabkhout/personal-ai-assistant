@@ -15,10 +15,19 @@ final class TermuxSetup {
         Switch enabled=ui.switchControl(TermuxBridge.enabled(a),"Enable phone commands");enabled.setText("Enable phone commands");enabled.setOnCheckedChangeListener((b,on)->{Cloud.prefs(a).edit().putBoolean("termux_enabled",on).commit();TermuxSyncJob.schedule(a,true);TermuxSyncJob.schedule(a,false);});box.addView(enabled);
         box.addView(ui.primaryButton(TermuxBridge.installed(a)?"Open Termux":"Install Termux",()->{try{Intent i=TermuxBridge.installed(a)?a.getPackageManager().getLaunchIntentForPackage("com.termux"):new Intent(Intent.ACTION_VIEW,Uri.parse("https://f-droid.org/packages/com.termux/"));if(i!=null)a.startActivity(i);}catch(Exception e){Toast.makeText(a,e.getMessage(),Toast.LENGTH_LONG).show();}}));
         box.addView(ui.primaryButton("Copy Termux setup command",()->{String command="mkdir -p ~/.termux; touch ~/.termux/termux.properties; grep -q '^allow-external-apps=true$' ~/.termux/termux.properties || printf '\\nallow-external-apps=true\\n' >> ~/.termux/termux.properties; termux-reload-settings";((ClipboardManager)a.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Termux setup",command));Toast.makeText(a,"Paste and run in Termux",Toast.LENGTH_LONG).show();}));
-        box.addView(ui.primaryButton("Grant command permission",()->{if(TermuxBridge.installed(a)&&!TermuxBridge.permission(a))a.requestPermissions(new String[]{TermuxBridge.PERMISSION},303);else a.startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+a.getPackageName())));}));
+        box.addView(ui.primaryButton("Open command permission settings",()->permissionSettings(a)));
         box.addView(ui.primaryButton("Test connection",()->{try{TermuxBridge.test(a);Toast.makeText(a,"Test sent. Reopen this page to see the result.",Toast.LENGTH_LONG).show();}catch(Exception e){Toast.makeText(a,e.getMessage(),Toast.LENGTH_LONG).show();}}));
         String last=Cloud.prefs(a).getString("termux_last_result","");if(!last.isEmpty())try{JSONObject r=new JSONObject(last);box.addView(ui.type("Latest result\n"+r.optString("stdout")+"\n"+r.optString("stderr")+"\n"+r.optString("error"),13,18,400,0,ui.text));}catch(Exception ignored){}
         box.addView(ui.type("Background execution uses Android permissions and battery settings. Install Termux:API from the same source for contacts, sensors and other phone APIs. Commands have a time limit; uncertain results are never automatically rerun.",12,18,400,0,ui.muted));
         ScrollView scroll=new ScrollView(a);scroll.addView(box);new AlertDialog.Builder(a).setTitle("Phone scripting").setView(scroll).setPositiveButton("Close",null).show();
+    }
+    private static void permissionSettings(Activity a){
+        if(!TermuxBridge.installed(a)){Toast.makeText(a,"Install and open Termux first",Toast.LENGTH_LONG).show();return;}
+        // Termux documents granting its custom permission through App info.
+        // requestPermissions can return denied without showing a system prompt.
+        try{
+            a.startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+a.getPackageName())));
+            Toast.makeText(a,"Permissions > Additional permissions > Run commands in Termux > Allow",Toast.LENGTH_LONG).show();
+        }catch(Exception e){new AlertDialog.Builder(a).setTitle("Command permission").setMessage("Open Android Settings > Apps > Assistant Companion > Permissions > Additional permissions, then allow Run commands in Termux.").setPositiveButton("Close",null).show();}
     }
 }
