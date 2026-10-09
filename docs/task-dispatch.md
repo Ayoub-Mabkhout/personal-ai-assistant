@@ -83,6 +83,60 @@ When both agents suit a task, Luna chooses the one with more remaining allowance
 avoids an agent whose five-hour window is under 20% or weekly window under 10%.
 Missing or unreadable figures report `available: false` and never block dispatch.
 
+## Resuming earlier sessions without a Reply
+
+An explicit follow-up (Reply, or a task-page instruction) resumes its task's session
+directly. A newly enqueued prompt can also continue earlier work: the first dispatcher
+turn carries `recent_tasks`, the newest finished tasks (at most 12, up to 7 days old,
+about 8,000 characters). Each entry gives the task ID, request and finish times, the
+truncated request and outcome summary, and each worker's agent, model, effort,
+workspace, task type, skills and session ID. A session is listed once, at its
+newest task. Left out: background mail scans, the Luna session itself, tasks needing
+reconciliation, and sessions whose newer use was interrupted or failed. The
+`recent_task_limit`, `recent_task_days` and `recent_task_chars` worker config keys
+change the bounds.
+
+Luna resumes a listed session only when the new request clearly continues that task
+(same files, thread or topic, "also", "now do X to it", a correction or an answer),
+prefers an explicit `followup_context` link, never resumes across unrelated topics,
+and names the reused task in its summary. Code accepts `resume_session` only from
+this job's own results or the listed sessions. An earlier session must keep its
+agent, its model (its context was built by that model) and its workspace (Claude
+resolves sessions per project directory); effort may change. Guessed IDs and any
+mismatch are rejected before any worker of that decision starts. `job.json` keeps
+the list Luna saw, `resumed_from_task` (the earlier task IDs) and the same field on
+each resumed worker.
+
+## Forwarding assistant development
+
+Requests to build, change, fix, debug, review, release or deploy the assistant itself
+(this repository: Companion app, dashboard, relay/server, orchestrator, skills, tests,
+docs, releases) go to the owner's interactive development sessions, one Claude Code
+and one Codex, instead of headless workers. Requests that merely use the assistant
+(calendar, email, shopping, files, research, phone actions) are dispatched as usual.
+Luna returns `action: forward` with `forward_to: claude|codex` and no tasks; every
+other action carries `forward_to: none`, and code rejects any other combination. An
+explicitly named agent wins; otherwise Luna picks the one with more `agent_capacity`.
+
+Delivery uses a local coordination bridge outside this repository. Its private
+config (`coordination_config`, default `~/.personal-assistant/coordination/config.json`)
+holds the port, bearer token and session IDs; the orchestrator reads the port and
+token only to send, bypasses proxies, and never logs or stores the token. The first
+dispatcher turn receives `dev_forwarding.available` when that config exists. Code,
+not Luna, writes the message: the task ID, request time and timezone, the owner's
+request verbatim, a `Request SHA-256:` line over it, any follow-up context, Luna's
+routing note, and a request to report directly to the owner. The sender is
+`dev_forward_sender` (default `luna`). The message ID is a UUIDv5 of the task ID, so
+a retry or crash recovery never sends twice. The bridge labels it a claim. Before
+acting, the receiving session runs `scripts/verify_forwarded_task.py <task> --sha256
+<hex>` against the authorized queue entry.
+
+`job.json` records the message ID, digest and the bridge's answer (ID and status,
+never the token). A transmitted, accepted or queued message (the session is offline
+and the bridge retries) completes the task with that status in the summary. A
+missing config, an unreachable bridge, a non-2xx answer, or an `uncertain` or
+`failed` status returns needs_input with the message ID and `reconciliation_required`.
+
 ## Submit a task
 
 ```powershell
