@@ -111,11 +111,11 @@ h3{font-size:17px;line-height:24px;font-weight:700;letter-spacing:-.1px}
 
 #add{padding-bottom:12px}
 .add-row{display:flex;gap:10px}
-.add-row input{height:52px;min-height:52px;border-radius:26px;padding:0 20px;font-size:15.5px;margin:0}
+.add-row input{height:52px;border-radius:26px;padding:0 20px;margin:0}
 .fab{width:52px;height:52px;border-radius:26px;border:0;padding:0;flex:none;display:grid;place-items:center;color:var(--on-accent);background:var(--aurora);box-shadow:0 10px 20px -8px rgba(var(--g2-rgb),.75),inset 0 1px 0 var(--sheen);transition:transform .16s var(--ease)}
 .fab .i{width:24px;height:24px;stroke-width:2.2}
 
-input,textarea{display:block;width:100%;min-height:48px;padding:12px 16px;border-radius:16px;border:1.5px solid var(--stroke-strong);background:var(--surface);color:var(--text);margin-top:6px;transition:border-color .16s,box-shadow .16s}
+input,textarea{display:block;width:100%;min-height:52px;padding:12px 16px;border-radius:16px;border:1.5px solid var(--stroke-strong);background:var(--surface);color:var(--text);font-size:16px;margin-top:6px;transition:border-color .16s,box-shadow .16s}
 textarea{resize:vertical;line-height:22px}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:1}
 input:focus,textarea:focus{outline:2px solid transparent;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
@@ -130,9 +130,9 @@ label>input,label>textarea{font-weight:400}
 .btn.danger{background:var(--danger-soft);color:var(--danger)}
 .btn:disabled,.fab:disabled{opacity:.5;cursor:default}
 .btn[aria-busy=true]{opacity:.7;cursor:progress}
-.chip{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px 0 12px;border-radius:20px;border:1.5px solid var(--stroke-strong);background:transparent;color:var(--accent);font-size:13.5px;font-weight:700;position:relative;transition:transform .16s var(--ease)}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px 0 12px;border-radius:20px;border:1.5px solid var(--stroke-strong);background:transparent;color:var(--text);font-size:13.5px;font-weight:500;position:relative;transition:transform .16s var(--ease)}
 .chip::before{content:"";position:absolute;inset:-4px -2px}
-.chip .i{width:18px;height:18px}
+.chip .i{width:18px;height:18px;color:var(--accent)}
 .link-btn{min-height:48px;padding:0 8px;border:0;background:transparent;color:var(--accent);font-size:13.5px;font-weight:700}
 
 .card{background:linear-gradient(180deg,var(--glass),rgba(255,255,255,0) 46%),var(--surface);border:1px solid var(--stroke);border-radius:24px;box-shadow:var(--e1)}
@@ -264,7 +264,7 @@ footer .label{padding:0 4px 8px}
 @media(hover:hover){.cell:hover{background:var(--surface-alt)}}
 
 .tabs{position:fixed;left:50%;translate:-50% 0;bottom:calc(14px + env(safe-area-inset-bottom,0px));width:min(380px,calc(100% - 28px));z-index:50}
-.tabs-in{position:relative;display:grid;grid-template-columns:1fr 1fr;padding:6px;height:64px;border-radius:30px;background:var(--nav);border:1px solid var(--stroke);box-shadow:var(--e2)}
+.tabs-in{position:relative;display:grid;grid-template-columns:1fr 1fr;padding:6px;height:64px;border-radius:28px;background:var(--nav);border:1px solid var(--stroke);box-shadow:var(--e2)}
 .indicator{position:absolute;top:6px;bottom:6px;left:6px;width:calc(50% - 6px);border-radius:24px;background:var(--aurora);box-shadow:0 6px 14px -5px rgba(var(--g2-rgb),.7),inset 0 1px 0 var(--sheen);transition:transform 260ms var(--ease)}
 .tabs-in[data-active=recipes] .indicator{transform:translateX(100%)}
 .tab{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 8px;border:0;border-radius:24px;background:transparent;color:var(--muted);font-size:14px;line-height:18px;font-weight:500;transition:color 160ms var(--ease)}
@@ -302,7 +302,7 @@ footer .label{padding:0 4px 8px}
 .copyfield[data-state=expired] code{color:var(--muted);text-decoration:line-through}
 .copyfield .chip[disabled]{opacity:.45;cursor:default}
 .expiry{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
-.expiry .pill{height:28px;font-variant-numeric:tabular-nums}
+.expiry .pill{font-variant-numeric:tabular-nums}
 .expiry .link-btn{padding-right:0}
 
 @media(prefers-reduced-motion:reduce){
