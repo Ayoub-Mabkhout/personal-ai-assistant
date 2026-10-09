@@ -5,7 +5,7 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.util.*;
 
-/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split, status and the features checklist rules. */
+/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split, status, the features checklist rules and the task voice rules. */
 public final class AndroidLogicProbe {
     private AndroidLogicProbe(){}
 
@@ -37,6 +37,16 @@ public final class AndroidLogicProbe {
                 String value=FeatureBoard.title(f[1]);out.println(value==null?"null":value.length()+"\t"+value);
             }else if(f[0].equals("outcome")){
                 out.println(FeatureBoard.outcome(f[1],Integer.parseInt(f[2])));
+            }else if(f[0].equals("control")){
+                String control=TaskTurns.control(f[1]);out.println(control==null?"none":control);
+            }else if(f[0].equals("turn")){
+                out.println(TaskTurns.turnId(f[1]));
+            }else if(f[0].equals("insert")){
+                TaskTurns.Insertion r=TaskTurns.insert(f[1],Integer.parseInt(f[2]),Integer.parseInt(f[3]),f[4]);out.println(r.text+"\t"+r.caret+"\t"+r.start+"\t"+r.piece);
+            }else if(f[0].equals("settle")){
+                out.println(TaskTurns.outcome(f[1])+"\t"+TaskTurns.spoken(f[1],f[2].replace("\\n","\n")));
+            }else if(f[0].equals("note")){
+                out.println(TaskTurns.note(f[1],f[2]));
             }else out.println("unknown request");
         }
     }

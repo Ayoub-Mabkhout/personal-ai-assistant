@@ -78,7 +78,8 @@ connection preserves cached lists and pending commands for reconnection.
 
 Native UI automation uses stable view tags, including `nav_voice`,
 `background_listening`, `test_wake`, `resume_listening`, `server_address`,
-`pairing_code`, `pair`, `shopping_item` and `recipe_add_selected`. UI tests run
+`pairing_code`, `pair`, `shopping_item`, `recipe_add_selected`,
+`task_followup_input`, `task_voice_dictate` and `task_voice_talk`. UI tests run
 on an isolated emulator with generic data and do not call paid voice APIs.
 Light/dark screenshots, narrow screens and larger fonts are separate visual
 checks. Physical Samsung microphone, locked service lifetime and battery

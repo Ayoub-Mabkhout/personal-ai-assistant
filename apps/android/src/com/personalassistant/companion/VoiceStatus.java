@@ -17,6 +17,8 @@ final class VoiceStatus {
         if(inApp&&wake&&!mic&&!loading)return new VoiceStatus(test?"Wake test paused":"Listening paused","Background listening is enabled, but the microphone is off. Resume to restart it.","idle",loading);
         if(test)return new VoiceStatus(loading?"Getting ready...":"Wake test","Local only. Say Hey Chat at your normal volume.",loading?"working":"idle",loading);
         if(loading)return new VoiceStatus("Getting ready...","The microphone and wake model are starting.","working",true);
+        if(mic&&low.contains("transcribing"))return new VoiceStatus("Transcribing...","Turning your words into text.","working",false);
+        if(mic&&low.contains("waiting for the task"))return new VoiceStatus("Waiting for the answer","Your follow-up was sent to the task. Its answer will be read aloud.","working",false);
         if(low.contains("sending")||low.contains("connecting"))return new VoiceStatus("Connecting...","Your audio is buffered while the connection starts.","working",false);
         if(!inApp&&low.startsWith("open "))return new VoiceStatus("Open the app to start",raw,"attention",false);
         if(low.contains("no internet")||low.contains("saved on this phone")||low.contains("cloud unavailable"))return new VoiceStatus(pending.getAsInt()>0?"Saved offline":wake&&mic?"Listening offline":"Offline",raw,"offline",false);
