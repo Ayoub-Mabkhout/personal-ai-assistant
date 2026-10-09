@@ -131,7 +131,7 @@ and runtime evidence in the ignored private workspace.
       queue/completion wording and measured latency/cost.
 - [x] Lock-screen assistant entry and warm screen-off capture verified on an emulator.
 - [ ] Verify locked-phone voice and wake detection on the Galaxy handset.
-- [ ] Measure wake-word battery use after latency and locked operation are established.
+- [ ] Measure wake-word battery use on the phone with Settings > Hey Chat battery ([how](docs/listener-battery.md)).
 - [x] Phone-local command capture and durable replay when the cloud is unreachable.
 - [ ] Verify offline voice capture/reconnect and exactly one result on the handset.
 - [x] Paired companion alarm queue and Clock-intent handoff with delivery status.

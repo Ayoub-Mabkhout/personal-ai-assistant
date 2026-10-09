@@ -16,7 +16,7 @@ import android.widget.*;
 final class MainSettings {
     private final MainActivity a;private final AppUi ui;
     final EditText server,code;final Button connect,install;final TextView pairStatus,accountStatus,pushStatus,updateStatus;final LinearLayout pairBox;
-    private long checkedAt;private boolean online,granted,role,unrestricted,notifying=true;private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,sensitivity,appearance,notifications,disconnect,features;
+    private long checkedAt;private boolean online,granted,role,unrestricted,notifying=true;private String batteryValue="";private final AppUi.StatusChip micChip,accountChip;private final AppUi.Icon accountGlyph,micChevron;private final FrameLayout accountTile;private final AppUi.ActionRow assistant,battery,batteryUse,sensitivity,appearance,notifications,disconnect,features;
 
     MainSettings(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;SharedPreferences prefs=Cloud.prefs(a);
@@ -33,6 +33,7 @@ final class MainSettings {
         Switch toggle=ui.switchControl(prefs.getBoolean("voice_preview",false),"Transcription preview");toggle.setTag("transcription_preview");
         toggle.setOnCheckedChangeListener((button,on)->Cloud.prefs(a).edit().putBoolean("voice_preview",on).apply());preview.addView(toggle,new LinearLayout.LayoutParams(ui.dp(60),ui.dp(48)));preview.setClickable(true);preview.setFocusable(true);preview.setOnClickListener(v->toggle.performClick());preview.setBackground(ui.pressable(null,16));preview.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);voice.addView(preview);
         sensitivity=row(voice,"Wake sensitivity","waveform","Balanced",a::sensitivity);sensitivity.setTag("wake_sensitivity");appearance=row(voice,"Appearance","appearance","",a::appearance);appearance.setTag("appearance");
+        batteryUse=row(voice,"Hey Chat battery","battery","",()->BatteryScreen.open(a,()->refreshNow(a.paired())));batteryUse.setTag("battery_use");
         line(voice);note(voice,"Hey Chat handles one command, then returns to standby. Start conversation mode keeps listening until you say That was all.");page.addView(voice);
 
         ui.label(page,"Account");LinearLayout account=ui.rowsCard();
@@ -84,7 +85,7 @@ final class MainSettings {
         if(!full)return;
         long now=SystemClock.uptimeMillis();
         if(now-checkedAt>1500){checkedAt=now;online=VoiceOutbox.networkReady(a);granted=a.checkSelfPermission("android.permission.RECORD_AUDIO")==PackageManager.PERMISSION_GRANTED;role=false;if(Build.VERSION.SDK_INT>=29){RoleManager manager=a.getSystemService(RoleManager.class);role=manager!=null&&manager.isRoleHeld(RoleManager.ROLE_ASSISTANT);}
-            PowerManager power=a.getSystemService(PowerManager.class);unrestricted=power!=null&&power.isIgnoringBatteryOptimizations(a.getPackageName());NotificationManager notes=a.getSystemService(NotificationManager.class);notifying=notes==null||notes.areNotificationsEnabled();}
+            PowerManager power=a.getSystemService(PowerManager.class);unrestricted=power!=null&&power.isIgnoringBatteryOptimizations(a.getPackageName());NotificationManager notes=a.getSystemService(NotificationManager.class);notifying=notes==null||notes.areNotificationsEnabled();try{batteryValue=BatterySampler.report(a).summary();}catch(RuntimeException ignored){}}
         String host=Uri.parse(p.getString("origin","")).getHost();
         AppUi.update(accountStatus,paired?(host==null?"Phone connected":host):expired?"Connection expired. Pair again; saved changes stay on this phone.":"Connect this phone to your assistant server.");
         String chip=paired?(online?"Online":"Offline"):expired?"Expired":"Not connected",tone=paired?(online?"success":"warning"):expired?"danger":"neutral";
@@ -92,7 +93,7 @@ final class MainSettings {
         String glyph=paired?"shield-check":expired?"alert":"link";if(!glyph.equals(accountGlyph.kind)){int[] c=ui.iconTone(glyph);accountGlyph.kind(glyph);accountGlyph.color(c[0]);accountTile.setBackground(ui.outline(c[1],12,0,0));}
         String access=granted?"Allowed":"Off";if(!access.equals(micChip.getText().toString())){micChip.setText(access);micChip.tone(granted?"success":"warning");}micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
         value(assistant,role?"Selected":"Set up");value(battery,unrestricted?"Unrestricted":"Optimized");
-        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,p.getString("ui_theme","sun"),false));value(notifications,notifying?"On":"Off");
+        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,p.getString("ui_theme","sun"),false));value(notifications,notifying?"On":"Off");value(batteryUse,batteryValue);
         String open="";try{java.util.List<FeatureBoard.Item> list=Features.board(a);int count=FeatureBoard.open(list);open=list.isEmpty()?"":count==0?"All done":count+" open";}catch(RuntimeException ignored){}value(features,open);
     }
     void refreshNow(boolean paired){checkedAt=0;refresh(true,paired);}

@@ -15,7 +15,7 @@ public class SyncJob extends JobService {
         ((JobScheduler)c.getSystemService(Context.JOB_SCHEDULER_SERVICE)).schedule(b.build());
     }
     @Override public boolean onStartJob(JobParameters p){executor.execute(()->{
-        boolean retry=false;
+        boolean retry=false;BatterySampler.record(this);
         if(p.getJobId()!=212)try{Cloud.sync(this);}catch(Exception e){retry=true;Cloud.prefs(this).edit().putString("status",e.getMessage()).commit();ShoppingWidget.update(this);}
         if(p.getJobId()==212||Cloud.prefs(this).getBoolean("update_pending",false))try{Updates.check(this,true);}catch(Exception e){retry=true;Cloud.prefs(this).edit().putString("update_status","Update check unavailable · will retry").commit();}jobFinished(p,retry);
     });return true;}
