@@ -82,7 +82,7 @@ final class Updates {
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         manager.createNotificationChannel(new NotificationChannel("app-updates","App updates",NotificationManager.IMPORTANCE_DEFAULT));
         PendingIntent open=PendingIntent.getActivity(c,301,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        manager.notify(301,new Notification.Builder(c,"app-updates").setSmallIcon(android.R.drawable.stat_sys_download_done).setContentTitle("Assistant Companion update ready").setContentText("Open the app to install version "+release.getString("version_name")).setContentIntent(open).setAutoCancel(true).build());
+        manager.notify(301,new Notification.Builder(c,"app-updates").setSmallIcon(R.drawable.ic_stat_assistant).setColor(NativeNotifications.ACCENT).setContentTitle("Assistant Companion update ready").setContentText("Open the app to install version "+release.getString("version_name")).setContentIntent(open).setAutoCancel(true).build());
         Cloud.prefs(c).edit().putLong("update_notified",code).commit();
     }
     static void install(Activity activity){

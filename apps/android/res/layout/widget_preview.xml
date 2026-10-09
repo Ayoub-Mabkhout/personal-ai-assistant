@@ -1,0 +1,43 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="14dp" android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <ImageView android:layout_width="40dp" android:layout_height="40dp" android:padding="8dp" android:scaleType="fitCenter" android:src="@drawable/widget_glyph_bag" android:background="@drawable/widget_tile" android:importantForAccessibility="no"/>
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="12dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Shopping list" android:textColor="@color/widget_text" android:textSize="17sp" android:textStyle="bold" android:singleLine="true"/>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cloud saved" android:textColor="@color/widget_muted" android:textSize="12sp" android:singleLine="true"/>
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="6dp" android:orientation="vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/widget_row_ring" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="2" android:textColor="@color/widget_accent" android:textSize="15sp" android:textStyle="bold"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="Oat milk" android:textColor="@color/widget_text" android:textSize="15sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/widget_row_ring" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="Basil" android:textColor="@color/widget_text" android:textSize="15sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/widget_row_ring" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="Sourdough bread" android:textColor="@color/widget_text" android:textSize="15sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/widget_row_ring" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="500 g" android:textColor="@color/widget_accent" android:textSize="15sp" android:textStyle="bold"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="Cherry tomatoes" android:textColor="@color/widget_text" android:textSize="15sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/widget_row_ring" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:text="Parmesan" android:textColor="@color/widget_text" android:textSize="15sp"/>
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center" android:background="@drawable/widget_button_primary">
+            <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/widget_glyph_plus" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:text="Add" android:textColor="@color/widget_on_accent" android:textSize="14sp" android:textStyle="bold"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp" android:layout_marginStart="10dp" android:orientation="horizontal" android:gravity="center" android:background="@drawable/widget_button_tonal">
+            <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/widget_glyph_refresh" android:importantForAccessibility="no"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:text="Refresh" android:textColor="@color/widget_accent" android:textSize="14sp" android:textStyle="bold"/>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
