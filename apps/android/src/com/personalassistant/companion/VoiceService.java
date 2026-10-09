@@ -16,10 +16,10 @@ import org.json.*;
 /** A single microphone producer feeds both wake detection and lossless pre-roll. */
 public class VoiceService extends Service {
     static final String TALK="com.personalassistant.companion.TALK",STOP="com.personalassistant.companion.STOP_VOICE",START_CONVERSATION="com.personalassistant.companion.START_CONVERSATION",END_CONVERSATION="com.personalassistant.companion.END_CONVERSATION";
-    private final AtomicBoolean running=new AtomicBoolean();private volatile boolean requestCapture,waiting,speaking,followup,conversationMode,cancelCapture;private volatile long conversationDeadline;
+    private final AtomicBoolean running=new AtomicBoolean();private volatile boolean requestCapture,waiting,speaking,followup,conversationMode,cancelCapture,awaitingCommand;private volatile long conversationDeadline;
     private AudioRecord recorder;private Thread audioThread;private TextToSpeech tts;private volatile boolean ttsReady;private volatile String utteranceId;private PowerManager.WakeLock lock;private ConnectivityManager.NetworkCallback network;
     private String session=UUID.randomUUID().toString();private final Handler main=new Handler(Looper.getMainLooper());private volatile VoiceSocket live;private volatile boolean liveEnded,liveAcknowledged;private volatile String liveEndReason;private AudioTrack playback;private volatile boolean destroyed;private volatile long playbackGeneration,liveGeneration,turnGeneration;private final StringBuilder liveCaptions=new StringBuilder();private String captionRole="",captionId="",lastReceiptId="",lastReceiptStatus="";private final StringBuilder roleCaption=new StringBuilder();private final java.util.concurrent.ThreadPoolExecutor playbackExecutor=new java.util.concurrent.ThreadPoolExecutor(1,1,0,java.util.concurrent.TimeUnit.SECONDS,new java.util.concurrent.LinkedBlockingQueue<Runnable>());
-    @Override public void onCreate(){super.onCreate();Cloud.prefs(this).edit().putBoolean("voice_conversation_mode",false).apply();tts=new TextToSpeech(this,status->ttsReady=status==TextToSpeech.SUCCESS);tts.setOnUtteranceProgressListener(new UtteranceProgressListener(){public void onStart(String id){if(id.equals(utteranceId))speaking=true;}public void onDone(String id){main.post(()->{if(destroyed||!id.equals(utteranceId))return;utteranceId=null;speaking=false;afterReply();});}public void onError(String id){onDone(id);}});
+    @Override public void onCreate(){super.onCreate();TimerVoice.recover(this);Cloud.prefs(this).edit().putBoolean("voice_conversation_mode",false).apply();tts=new TextToSpeech(this,status->ttsReady=status==TextToSpeech.SUCCESS);tts.setOnUtteranceProgressListener(new UtteranceProgressListener(){public void onStart(String id){if(id.equals(utteranceId))speaking=true;}public void onDone(String id){main.post(()->{if(destroyed||!id.equals(utteranceId))return;utteranceId=null;speaking=false;afterReply();});}public void onError(String id){onDone(id);}});
         network=new ConnectivityManager.NetworkCallback(){@Override public void onAvailable(Network n){if(!Cloud.prefs(VoiceService.this).getBoolean("voice_listening_test",false))VoiceOutbox.retry(VoiceService.this,null);}@Override public void onLost(Network n){if(VoiceOutbox.networkReady(VoiceService.this))return;VoiceSocket current=live;if(current!=null){liveEndReason=null;state("No internet · voice connection interrupted");current.disconnect();liveAcknowledged=current.acknowledged();liveEnded=true;state(liveAcknowledged?"Connection lost · check task notifications; use Talk to retry":"No internet · recording; command will be saved");}else state("No internet · listening locally; commands will be saved");}};((ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE)).registerDefaultNetworkCallback(network);
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId){
@@ -53,7 +53,7 @@ public class VoiceService extends Service {
             if(NoiseSuppressor.isAvailable()){noise=NoiseSuppressor.create(recorder.getAudioSessionId());if(noise!=null)noise.setEnabled(false);}
             if(AcousticEchoCanceler.isAvailable()){echo=AcousticEchoCanceler.create(recorder.getAudioSessionId());if(echo!=null)echo.setEnabled(false);}if(!running.get())return;Cloud.prefs(this).edit().putLong("voice_recorder_start_request_ns",SystemClock.elapsedRealtimeNanos()).apply();recorder.startRecording();Cloud.prefs(this).edit().putBoolean("voice_mic_active",true).putLong("voice_mic_ready_ns",SystemClock.elapsedRealtimeNanos()).apply();if(wake)state("Preparing Hey Chat listening…");
             detector=wake?loadDetector():new DisabledWakeDetector();if(wake&&!detector.available()){state("Wake model not installed · use Talk");wake=false;if(!requestCapture){main.post(this::stopSelf);return;}}Cloud.prefs(this).edit().putString("wake_detector",detector.name()).commit();
-            WakeStreamGate wakeStream=new WakeStreamGate(detector);boolean firstPcm=true;short[] frame=new short[320];int quiet=0,voiced=0,elapsed=0,zeros=0;double noiseFloor=40;long lastMetrics=0,testCooldown=0;boolean wasTest=false,echoEnabled=false;ArrayDeque<Double> ambient=new ArrayDeque<>();state(wake?"Listening locally for Hey Chat · experimental":"Ready for voice");
+            WakeStreamGate wakeStream=new WakeStreamGate(detector);boolean firstPcm=true;short[] frame=new short[320];int quiet=0,voiced=0,elapsed=0,zeros=0;double noiseFloor=40;long lastMetrics=0,testCooldown=0;boolean wasTest=false,echoEnabled=false,wakeCapture=false;ArrayDeque<Double> ambient=new ArrayDeque<>();state(wake?"Listening locally for Hey Chat · experimental":"Ready for voice");
             while(running.get()){
                 if(Cloud.prefs(this).getBoolean("wake_enabled",false)&&!wakeLoaded&&!capture.active()&&live==null&&!speaking&&!waiting){state("Preparing Hey Chat listening…");detector.close();detector=loadDetector();wakeStream=new WakeStreamGate(detector);wakeLoaded=true;Cloud.prefs(this).edit().putString("wake_detector",detector.name()).commit();state(detector.available()?"Listening locally for Hey Chat · experimental":"Wake model not installed · use Talk");}
                 wake=Cloud.prefs(this).getBoolean("wake_enabled",false)&&detector.available();
@@ -77,11 +77,11 @@ public class VoiceService extends Service {
                     if(followup&&System.currentTimeMillis()>=conversationDeadline){followup=false;setConversation(false);session=UUID.randomUUID().toString();if(!wake){main.post(this::stopSelf);break;}state("Listening locally for Hey Chat · experimental");}
                     boolean detected=!trigger&&wake&&now>=testCooldown&&wakeStream.accept(frame,n);
                     if(testing){if(detected){testCooldown=now+2000;wakeStream.pause();capture.cancel();main.post(()->{if(destroyed)return;rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(40,VibrationEffect.DEFAULT_AMPLITUDE));state("Heard Hey Chat · local test");});}continue;}
-                    if(trigger||detected){long wakeClock=SystemClock.elapsedRealtimeNanos();wakeStream.pause();capture.begin(detected||followup);turnGeneration++;if(!conversationMode)session=UUID.randomUUID().toString();long captureClock=SystemClock.elapsedRealtimeNanos();android.content.SharedPreferences.Editor clocks=Cloud.prefs(this).edit().putLong("voice_capture_started_ns",captureClock);if(detected)clocks.putLong("voice_wake_detected_ns",wakeClock);clocks.apply();quiet=elapsed=0;voiced=detected?6400:0;followup=false;final boolean acknowledgeWake=detected;main.post(()->{if(destroyed)return;if(acknowledgeWake){rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(25,VibrationEffect.DEFAULT_AMPLITUDE));}if(!waiting&&!speaking&&live==null)state("Listening to your command…");});if(conversationMode&&!Cloud.prefs(this).getBoolean("voice_preview",false)&&VoiceOutbox.networkReady(this))startLive(capture.snapshot());}
+                    if(trigger||detected){long wakeClock=SystemClock.elapsedRealtimeNanos();wakeStream.pause();capture.begin(detected||followup);turnGeneration++;if(!conversationMode)session=UUID.randomUUID().toString();long captureClock=SystemClock.elapsedRealtimeNanos();android.content.SharedPreferences.Editor clocks=Cloud.prefs(this).edit().putLong("voice_capture_started_ns",captureClock);if(detected)clocks.putLong("voice_wake_detected_ns",wakeClock);clocks.apply();quiet=elapsed=voiced=0;wakeCapture=detected;followup=false;final boolean acknowledgeWake=detected;main.post(()->{if(destroyed)return;if(acknowledgeWake){wakeCue(this);rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(25,VibrationEffect.DEFAULT_AMPLITUDE));}if(!waiting&&!speaking&&live==null)state("Listening to your command…");});if(conversationMode&&!Cloud.prefs(this).getBoolean("voice_preview",false)&&VoiceOutbox.networkReady(this))startLive(capture.snapshot());}
                 }else{
                     wakeStream.pause();elapsed+=n;if(speech){voiced+=n;quiet=0;}else quiet+=n;
-                    if((voiced>=6400&&quiet>=19200)||elapsed>=480000){short[] pcm=capture.finish();waiting=true;state("Sending voice command…");submit(pcm);}
-                    else if(elapsed>=128000&&voiced<6400){capture.cancel();state(wake?"Listening locally for Hey Chat · experimental":"No speech heard");if(!wake){main.post(this::stopSelf);break;}}
+                    if(CaptureTurnPolicy.finished(elapsed,voiced,quiet,wakeCapture)){short[] pcm=capture.finish();waiting=true;state("Sending voice command…");submit(pcm);}
+                    else if(CaptureTurnPolicy.expired(elapsed,voiced)){capture.cancel();state(wake?"Listening locally for Hey Chat · experimental":"No speech heard");if(!wake){main.post(this::stopSelf);break;}}
                 }
             }
         }catch(Exception error){if(running.get())state("Voice stopped: "+error.getMessage());main.post(this::stopSelf);}finally{running.set(false);Cloud.prefs(this).edit().putBoolean("voice_mic_active",false).putBoolean("voice_conversation_active",false).putFloat("voice_level",0f).apply();if(detector!=null)detector.close();if(noise!=null)noise.release();if(echo!=null)echo.release();if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();recorder=null;}if(lock!=null&&lock.isHeld())lock.release();}
@@ -121,6 +121,11 @@ public class VoiceService extends Service {
                 else if("error".equals(type))state(event.optString("message","Conversation unavailable"));
                 else if("closed".equals(type)){if("session_time_limit".equals(event.optString("reason")))liveEndReason="Conversation time limit reached · say Hey Chat to start again";}
                 else if("status".equals(type)){
+                    if("local_command".equals(event.optString("status"))&&"timer".equals(event.optString("local_command"))){
+                        try{JSONObject receipt=TimerVoice.apply(VoiceService.this,event);if(live!=null)live.localResult(receipt);rememberReceipt(receipt,receipt.optString("id"));state(receipt.optString("reply"));}
+                        catch(Exception error){state("Timer could not be confirmed; check Companion before repeating it.");}
+                        return;
+                    }
                     rememberReceipt(event,event.optString("task_id",session));
                     if(event.optBoolean("grocery_changed",false))VoiceOutbox.refreshGroceries(VoiceService.this);
                     if("ended".equals(event.optString("status"))){
@@ -149,7 +154,7 @@ public class VoiceService extends Service {
     }
     /** The same backend receipt path is exercised by isolated native replay tests. */
     protected void acknowledge(JSONObject response,String fallbackId){
-        waiting=false;String transcript=response.optString("text","");String reply=response.optString("reply",response.optString("status","Cloud acknowledged"));
+        waiting=false;awaitingCommand="no_command".equals(response.optString("status"));String transcript=response.optString("text","");String reply=response.optString("reply",response.optString("status","Cloud acknowledged"));
         String resultStatus=response.optString("status");
         if("conversation_started".equals(resultStatus)){setConversation(true);session=UUID.randomUUID().toString();}
         else if("ended".equals(resultStatus))setConversation(false);
@@ -170,10 +175,12 @@ public class VoiceService extends Service {
         else afterReply();
     }
     protected void afterReply(){
-        if(conversationMode){followup=true;conversationDeadline=System.currentTimeMillis()+30000;state("Conversation mode · listening");}
+        if(conversationMode||awaitingCommand){awaitingCommand=false;followup=true;conversationDeadline=System.currentTimeMillis()+30000;state("Conversation mode · listening");}
         else{followup=false;session=UUID.randomUUID().toString();if(Cloud.prefs(this).getBoolean("wake_enabled",false))state("Listening locally for Hey Chat");else stopSelf();}
     }
     private void setConversation(boolean enabled){conversationMode=enabled;Cloud.prefs(this).edit().putBoolean("voice_conversation_mode",enabled).apply();}
+    /** A bounded display cue after capture begins; never unlocks or launches a background Activity. */
+    static void wakeCue(Context c){try{PowerManager power=c.getSystemService(PowerManager.class);PowerManager.WakeLock cue=power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK|PowerManager.ACQUIRE_CAUSES_WAKEUP,"assistant:wake-cue");cue.acquire(3000);Cloud.prefs(c).edit().putLong("voice_wake_cue_elapsed",SystemClock.elapsedRealtime()).apply();}catch(SecurityException denied){Cloud.prefs(c).edit().putString("voice_wake_cue_status","Android blocked screen wake; haptic cue remains available").apply();}}
     private void clearPlayback(){playbackGeneration++;playbackExecutor.getQueue().clear();if(playback!=null)try{playback.pause();playback.flush();playback.play();}catch(Exception ignored){}}
     private void endConversation(){endConversation(true);}
     private synchronized void endConversation(boolean stopWhenIdle){
