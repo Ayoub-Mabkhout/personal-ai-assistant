@@ -5,11 +5,11 @@ publication guard on Linux and Windows for branch pushes and pull requests. It
 does not receive release secrets. Tests use temporary stores and fake providers;
 they do not scan a mailbox, insert live calendar entries, or call paid models.
 
-The release workflow accepts stable tags such as `v0.6.0`. Before a secret-bearing
+The release workflow accepts stable tags such as `v0.7.0`. Before a secret-bearing
 job starts, it requires the tag's commit to be in the repository's default branch
 history and checks that Android `versionName` matches the tag. Increment both
 `versionCode` and `versionName` in `apps/android/AndroidManifest.xml` for changed
-APK bytes. The initial `v0.6.0` release uses code `6` and name `0.6.0`.
+APK bytes. The initial GitHub release `v0.7.0` uses code `7` and name `0.7.0`.
 
 The Windows build uses official Android SDK platform 35/build-tools 35.0.0,
 Temurin JDK 17, the pinned Gradle/AGP project, and the checksum-verified ARM64 Vosk
