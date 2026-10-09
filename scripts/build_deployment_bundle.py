@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import io
 import tarfile
 from pathlib import Path
 
@@ -33,7 +34,13 @@ def build(output, root=ROOT):
     output.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output, 'w:gz') as archive:
         for path in sorted(paths):
-            archive.add(path, arcname=path.relative_to(root).as_posix(), recursive=False)
+            name=path.relative_to(root).as_posix()
+            if path.suffix=='.sh':
+                # Windows checkouts may contain CRLF even when Git stores LF.
+                body=path.read_bytes().replace(b'\r\n',b'\n')
+                info=archive.gettarinfo(path,arcname=name);info.size=len(body)
+                archive.addfile(info,io.BytesIO(body))
+            else: archive.add(path, arcname=name, recursive=False)
     return {'bundle': str(output), 'source_files': len(paths), 'private_directories_included': False}
 
 
