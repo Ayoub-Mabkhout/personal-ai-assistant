@@ -20,7 +20,9 @@ class BodyLimit:
         self.app, self.limit = app, limit
 
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http' or (scope.get('path')=='/companion/v1/releases/artifact' and scope.get('method')=='PUT'):
+        if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
+                                                                       or scope.get('path','').startswith('/v1/files/'))):
+            # Streamed uploads enforce their own declared, bounded size.
             return await self.app(scope, receive, send)
         body = bytearray()
         path=scope.get('path','')
@@ -87,7 +89,7 @@ class Result(BaseModel):
     result: dict
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,file_drops=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
@@ -170,6 +172,11 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.include_router(features_router(features,submit,'/v1/features'))
     if groceries:
         app.include_router(features_router(features,device_auth(groceries_api.devices),'/groceries/v1/mobile/features'))
+        from .file_drops import FileDrops,file_drop_router
+        drops=FileDrops(mobile_events,Path(path).with_name('file-drops'),**(file_drops or {}))
+        app.state.file_drops=drops
+        for drop_router in file_drop_router(drops,(submit_token,worker_token),device_auth(groceries_api.devices)):
+            app.include_router(drop_router)
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))
@@ -286,6 +293,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
 
 
 def from_environment():
+    from .file_drops import settings_from_environment as file_drop_settings
     def credential(name):
         return Path(os.environ[name]).read_text(encoding='utf-8').strip()
     grocery_config = None
@@ -310,4 +318,5 @@ def from_environment():
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
-                      mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'))
+                      mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
+                      file_drops=file_drop_settings())

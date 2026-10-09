@@ -103,6 +103,48 @@ Delivery semantics:
   held, so a long-blocked channel cannot delay later reminders and alarms; its
   events are then receipted without a card.
 
+## Files to the phone
+
+An owner request such as "send me the March invoice PDF" reaches a laptop worker,
+which selects the `send-to-phone` skill, locates the file and runs
+`scripts/send_to_phone.py PATH [--name NAME] [--note TEXT] [--id ID] [--phone ID]`.
+The helper reads `relay_url` and the worker token file (or the submit token file)
+from the protected worker config. Only files the owner asked for are sent.
+
+Relay endpoints (`relay/file_drops.py`):
+
+| Endpoint | Credential | Purpose |
+|---|---|---|
+| `GET /relay/v1/files/phones` | worker or submit | Active phones, `max_bytes`, `ttl` |
+| `PUT /relay/v1/files/{id}` | worker or submit | Streamed upload; `X-File-Manifest` is base64 JSON `{name,size,sha256,mime?,note?,phone?}` |
+| `GET /relay/v1/files/{id}` | worker or submit | Saved state: `ready`, `delivered`, `expired` or `cancelled` |
+| `POST /relay/v1/files/{id}/cancel` | worker or submit | Withdraw a waiting file and delete its bytes |
+| `GET /groceries/v1/mobile/files` | paired phone | Waiting files for this phone (recovery list) |
+| `GET /groceries/v1/mobile/files/{id}` | paired phone | Bytes, with `X-File-Sha256` |
+| `POST /groceries/v1/mobile/files/{id}/receipt` | paired phone | `{sha256}` after a verified save; deletes the relay copy |
+
+The relay checks the declared size and SHA-256 while streaming to its data directory
+(`file-drops/` beside the queue database), then journals one native event:
+`{type: "file", tag: "file-ID", file_id, title: "File ready: NAME", message, name,
+mime, size, sha256}`. The FCM hint still carries only the opaque event ID. An ID that
+already exists with the same manifest returns the existing record without storing or
+announcing anything again; different content under the ID is a 409. The phone must be
+named when more than one is paired. Bytes are deleted on the receipt, on cancel, at
+expiry, or when the phone is revoked; terminal records are kept for 30 days so a late
+retry cannot resend. Limits come from `ASSISTANT_FILE_DROP_MAX_MIB` (default 50),
+`ASSISTANT_FILE_DROP_TTL_DAYS` (7) and `ASSISTANT_FILE_DROP_QUOTA_MIB` (1024 waiting
+bytes in total).
+
+The Companion never holds a file event back: it marks drops due and a persisted
+`FileDropJob` lists waiting drops, streams each to a cache file, verifies size and
+checksum, and saves it. Android 10+ writes MediaStore Downloads; Android 8-9 writes
+app-specific Downloads, shared read-only through `FileDropProvider`. The saved URI is
+recorded per drop ID before the receipt, so a lost receipt never produces a second copy.
+The "File ready" card on the Files channel opens an Open with chooser; Android 10+
+also offers Downloads. A failed or stopped download is retried by the job and by the
+next event sync. Relay acceptance, phone receipt and the owner opening the file are
+separate facts; handset delivery needs its own acceptance check.
+
 ## FCM errors
 
 Sending failures are reduced to a fixed code and recorded per phone in
