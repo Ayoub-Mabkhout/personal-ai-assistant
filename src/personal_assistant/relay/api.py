@@ -93,8 +93,12 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
     agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications),
                         **({'clock':clock} if clock else {}))
-    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None
+    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
     if groceries:
+        if groceries.get('retailer_check', {}).get('enabled'):
+            from personal_assistant.groceries.store import Groceries
+            from personal_assistant.groceries.rewe import RetailerCheck
+            retailer_check=RetailerCheck(Groceries(groceries['path']), groceries['retailer_check'])
         from personal_assistant.groceries.mobile import Devices
         from .mobile_push import MobileEventStore,MobilePushPump
         mobile_events=MobileEventStore(Devices(Path(groceries['path']).with_name('phones.sqlite3'),**({'clock':clock} if clock else {})))
@@ -114,12 +118,14 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         if reminder_pump: reminder_pump.start()
         if release_pump: release_pump.start()
         if native_pump: native_pump.start()
+        if retailer_check: retailer_check.start()
         try: yield
         finally:
             if pump: pump.close()
             if reminder_pump: reminder_pump.close()
             if release_pump: release_pump.close()
             if native_pump: native_pump.close()
+            if retailer_check: retailer_check.close()
     app = FastAPI(title='Personal assistant relay', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
     app.state.notification_pump=pump
     app.state.reminder_pump=reminder_pump
@@ -296,6 +302,7 @@ def from_environment():
             'ha_url': 'http://homeassistant:8123',
             'assets': '/app/apps/groceries',
             'store_info': json.loads(Path('/data/grocery-store.json').read_text()) if Path('/data/grocery-store.json').is_file() else {},
+            'retailer_check': json.loads(Path('/data/rewe-check.json').read_text()) if Path('/data/rewe-check.json').is_file() else {},
         }
     notification_path=Path(os.environ.get('ASSISTANT_NOTIFICATIONS_CONFIG','/data/notifications.json'))
     notifications=json.loads(notification_path.read_text()) if notification_path.is_file() else None

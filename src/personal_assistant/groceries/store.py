@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 import uuid
 
 
@@ -61,9 +62,19 @@ class Groceries:
     def snapshot(self):
         with self.db() as db:
             db.execute('BEGIN')
-            return {'items': [dict(row) for row in db.execute('SELECT * FROM items ORDER BY complete,created')],
+            snapshot = {'items': [dict(row) for row in db.execute('SELECT * FROM items ORDER BY complete,created')],
                     'recipes': [{**json.loads(row['body']), 'version': row['version']} for row in db.execute('SELECT * FROM recipes')],
                     'server_time': datetime.now(timezone.utc).isoformat()}
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='retailer_status'").fetchone():
+                status = db.execute('SELECT body FROM retailer_status WHERE id=1').fetchone()
+                if status: snapshot['retailer_check'] = json.loads(status['body'])
+                evidence = {r['item_id']: r for r in db.execute('SELECT * FROM retailer_matches')}
+                for item in snapshot['items']:
+                    row = evidence.get(item['id'])
+                    if row and not item['complete'] and row['fingerprint'] == hashlib.sha256(item['name'].encode()).hexdigest():
+                        record = json.loads(row['body'])
+                        if record['expires_at'] > time.time(): item['retailer'] = record
+            return snapshot
 
     def mutate(self, body):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
