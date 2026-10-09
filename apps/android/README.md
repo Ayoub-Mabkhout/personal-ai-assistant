@@ -35,7 +35,9 @@ wake test never submits commands or starts a cloud conversation.
 to see the original request and every follow-up in order. **Continue this task**
 saves an instruction durably on the phone before sending it to the same laptop
 session. Offline retries retain the same identifier, and typing survives task
-updates. No browser sign-in is required. Voice chat uses private, bounded local
+updates. Its microphone button dictates into the draft without sending, and
+**Talk about this task** sends each spoken turn as a follow-up of that task and
+reads the answer aloud. No browser sign-in is required. Voice chat uses private, bounded local
 storage; streaming revisions update an existing message with its first timestamp.
 
 App releases use an authenticated publication hook to schedule a verified

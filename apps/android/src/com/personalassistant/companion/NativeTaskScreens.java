@@ -14,6 +14,7 @@ import java.util.concurrent.*;
 /** Authenticated native task history and durable same-session continuation, shown as full-screen sheets. */
 final class NativeTaskScreens {
     private static final ExecutorService network=Executors.newSingleThreadExecutor();
+    private static final String VOICE="com.personalassistant.companion.VOICE_STATE";
     private static final Map<Activity,List<Screen>> openScreens=new WeakHashMap<>();
     static void close(Activity activity){List<Screen> list=openScreens.remove(activity);if(list!=null)for(Screen screen:new ArrayList<>(list))screen.dialog.dismiss();}
     static void history(Activity a){List<Screen> list=openScreens.get(a);if(list!=null)for(Screen screen:list)if(screen instanceof History)return;new History(a).open();}
@@ -24,7 +25,7 @@ final class NativeTaskScreens {
 
     private abstract static class Screen {
         final Activity a;final AppUi ui;final Dialog dialog;final LinearLayout root,bar,body;final ScrollView scroll;final TextView status;final ImageButton refresh;final Handler main=new Handler(Looper.getMainLooper());boolean closed,registered;int inset;
-        final BroadcastReceiver changes=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){changed();}};
+        final BroadcastReceiver changes=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){if(VOICE.equals(i.getAction()))voice();else changed();}};
         Screen(Activity a,String title){
             this.a=a;ui=new AppUi(a);dialog=ui.sheet();root=ui.column();root.setBackground(ui.pageBackground());
             bar=ui.row();bar.setPadding(ui.dp(17),ui.dp(6),ui.dp(17),ui.dp(6));bar.addView(ui.iconButton("back","Back from "+title,dialog::dismiss),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));
@@ -39,7 +40,7 @@ final class NativeTaskScreens {
         }
         void insets(){body.setPadding(ui.dp(20),ui.dp(4),ui.dp(20),ui.dp(24)+inset);}
         // AppUi.lift stops ancestors clipping their children; the root clips again once attached so the scrolled list cannot paint over the header.
-        void open(){List<Screen> list=openScreens.get(a);if(list==null){list=new ArrayList<>();openScreens.put(a,list);}list.add(this);dialog.show();dialog.getWindow().setLayout(-1,-1);root.post(()->{root.setClipChildren(true);root.setClipToPadding(true);});if(Build.VERSION.SDK_INT>=33)a.registerReceiver(changes,new IntentFilter(NativeTasks.ACTION),Context.RECEIVER_NOT_EXPORTED);else a.registerReceiver(changes,new IntentFilter(NativeTasks.ACTION));registered=true;load();}
+        void open(){List<Screen> list=openScreens.get(a);if(list==null){list=new ArrayList<>();openScreens.put(a,list);}list.add(this);dialog.show();dialog.getWindow().setLayout(-1,-1);root.post(()->{root.setClipChildren(true);root.setClipToPadding(true);});IntentFilter filter=new IntentFilter(NativeTasks.ACTION);filter.addAction(VOICE);if(Build.VERSION.SDK_INT>=33)a.registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED);else a.registerReceiver(changes,filter);registered=true;load();}
         void safe(Runnable r){main.post(()->{if(!closed&&!a.isDestroyed())r.run();});}
         void spin(){if(!AppUi.motion())return;refresh.animate().cancel();refresh.setRotation(0);refresh.animate().rotation(360).setDuration(600).setInterpolator(AppUi.SLIDE).start();}
         void note(String text,String icon,boolean warn){int color=warn?ui.warning:ui.muted;status.setVisibility(text.isEmpty()?View.GONE:View.VISIBLE);AppUi.update(status,text);status.setTextColor(color);status.setCompoundDrawablesRelativeWithIntrinsicBounds(icon==null||text.isEmpty()?null:ui.glyph(icon,color,14),null,null,null);}
@@ -49,6 +50,8 @@ final class NativeTaskScreens {
         abstract void load();
         abstract void reload();
         abstract void changed();
+        /** Microphone state changed; only the task conversation shows voice controls. */
+        void voice(){}
     }
 
     private static final class History extends Screen {
@@ -100,8 +103,10 @@ final class NativeTaskScreens {
     }
 
     private static final class Detail extends Screen {
-        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved;final EditText instruction;final AppUi.Fab send;final Set<String> queued=new HashSet<>();
+        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved,voiceNote;final EditText instruction;final AppUi.Fab send;final ImageButton mic;final AppUi.Pill talk;final Set<String> queued=new HashSet<>();
         String rendered;boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder;int total=-1;long lastDay;
+        // Voice: the service owns the microphone; "requested" bridges the moment between a tap and the service starting.
+        String requested="",shownMode,lastNote="";long requestedUntil,requestedAt,noteUntil;boolean ticking;final Runnable tick=()->{ticking=false;voice();};
         Detail(Activity a,String kind,String id){
             super(a,"Task details");this.kind=kind;this.id=id;agent=kind.equals("agent");
             bar.addView(ui.iconButton("history","All tasks",()->{dialog.dismiss();history(a);}),bar.indexOfChild(refresh),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));
@@ -109,17 +114,49 @@ final class NativeTaskScreens {
             meta=ui.row();meta.setPadding(ui.dp(20),0,ui.dp(20),ui.dp(10));meta.addView(chip);LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(0,-2,1);pp.leftMargin=ui.dp(10);meta.addView(provenance,pp);meta.setVisibility(View.GONE);root.addView(meta,1);
             messages=ui.column();messages.setTag("task_messages");body.addView(messages);pendingMessages=ui.column();pendingMessages.setTag("task_pending_messages");body.addView(pendingMessages);
             composer=ui.column();composer.setTag("task_followup_card");composer.setBackground(ui.sheetFace());ui.lift(composer,28,10,true);
-            composer.addView(ui.type("Continue this task",13,18,700,0,ui.text));ui.space(composer,8);
+            LinearLayout head=ui.row();head.addView(ui.type("Continue this task",13,18,700,0,ui.text),new LinearLayout.LayoutParams(0,-2,1));
+            talk=ui.chip("Talk about this task","chat",this::talk);talk.setTag("task_voice_talk");head.addView(talk,new LinearLayout.LayoutParams(-2,ui.dp(48)));composer.addView(head);ui.space(composer,4);
             instruction=ui.field("Add your instruction",Cloud.prefs(a).getString("task_draft:"+id,""),true);instruction.setSingleLine(false);instruction.setMaxLines(5);instruction.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);instruction.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);instruction.setTag("task_followup_input");
             send=ui.fab("send","Send follow-up",this::submit);send.setTag("task_followup_send");
-            LinearLayout compose=ui.row();compose.setGravity(Gravity.BOTTOM);compose.addView(instruction,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52));fp.leftMargin=ui.dp(10);compose.addView(send,fp);composer.addView(compose);
+            mic=ui.iconButton("voice","Dictate an instruction",this::dictate);mic.setTag("task_voice_dictate");
+            LinearLayout compose=ui.row();compose.setGravity(Gravity.BOTTOM);compose.addView(instruction,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48));mp.leftMargin=ui.dp(6);mp.bottomMargin=ui.dp(2);compose.addView(mic,mp);LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52));fp.leftMargin=ui.dp(8);compose.addView(send,fp);composer.addView(compose);
+            voiceNote=ui.type("",12.5f,18,500,0,ui.muted);voiceNote.setTag("task_voice_status");voiceNote.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);voiceNote.setVisibility(View.GONE);voiceNote.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(voiceNote);
             saved=ui.type("",12.5f,18,500,0,ui.muted);saved.setTag("task_followup_status");saved.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);saved.setVisibility(View.GONE);saved.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(saved);
             composer.setVisibility(agent?View.VISIBLE:View.GONE);root.addView(composer,new LinearLayout.LayoutParams(-1,-2));insets();refreshSend();
             instruction.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){Cloud.prefs(a).edit().putString("task_draft:"+id,s.toString()).apply();refreshSend();}public void afterTextChanged(Editable e){}});
             body.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(follow){boolean snap=jump;jump=false;end(snap);}});
             scroll.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{int was=ob-ot;if(was>0&&b-t<was&&body.getHeight()-scroll.getScrollY()-was<=ui.dp(40))scroll.post(()->end(true));});
+            if(agent)voice();
         }
         @Override void insets(){body.setPadding(ui.dp(20),ui.dp(4),ui.dp(20),agent?ui.dp(16):ui.dp(24)+inset);composer.setPadding(ui.dp(16),ui.dp(14),ui.dp(16),ui.dp(14)+inset);}
+        /** Microphone: dictation fills the draft and sends nothing; tapping it again stops. Requests go through the app's permission flow. */
+        void dictate(){String mode=voiceMode();if(mode.equals("dictate"))stopVoice();else if(mode.isEmpty())startVoice("dictate");}
+        /** Talk about this task: each spoken turn becomes a follow-up of this task and its answer is read aloud. */
+        void talk(){String mode=voiceMode();if(mode.equals("talk"))stopVoice();else if(mode.isEmpty())startVoice("talk");}
+        String voiceMode(){String mode=TaskVoice.mode(a,id);return mode.isEmpty()&&System.currentTimeMillis()<requestedUntil?requested:mode;}
+        void startVoice(String mode){
+            if(!canContinue)return;long now=System.currentTimeMillis();
+            if(TaskVoice.busy(a,id)){lastNote="Another voice conversation is using the microphone. End it on the Voice page first.";noteUntil=now+8000;voice();return;}
+            if(!(a instanceof MainActivity)){lastNote="Open this task from Companion to use voice.";noteUntil=now+8000;voice();return;}
+            requested=mode;requestedAt=now;requestedUntil=now+6000;noteUntil=0;((MainActivity)a).taskVoice(mode+":"+id);voice();
+        }
+        void stopVoice(){requested="";requestedUntil=0;try{a.startService(new Intent(a,VoiceService.class).setAction(VoiceService.END_CONVERSATION));}catch(Exception ignored){}voice();}
+        /** Dictated words join the draft at the caret while the field is focused, otherwise at its end; the draft, its caret and stable follow-up IDs are untouched otherwise. */
+        void dictated(){
+            String words=TaskVoice.take(a,id);if(words.isEmpty())return;Editable text=instruction.getText();int length=text.length(),s=instruction.getSelectionStart(),e=instruction.getSelectionEnd();
+            if(!instruction.hasFocus()||s<0||e<0)s=e=length;int lo=Math.max(0,Math.min(Math.min(s,e),length)),hi=Math.max(lo,Math.min(Math.max(s,e),length));
+            TaskTurns.Insertion result=TaskTurns.insert(text.toString(),lo,hi,words);text.replace(lo,hi,result.piece);instruction.setSelection(Math.min(result.caret,instruction.length()));
+        }
+        @Override void voice(){
+            if(closed||!agent)return;long now=System.currentTimeMillis();dictated();
+            String taken=TaskVoice.takeNote(a,id);if(!taken.isEmpty()){lastNote=taken;noteUntil=now+8000;}
+            String mode=TaskVoice.mode(a,id),raw=Cloud.prefs(a).getString("voice_status","");if(!mode.isEmpty())requestedUntil=0;else if(now<requestedUntil)mode=requested;
+            String text=!mode.isEmpty()?TaskTurns.note(mode,raw):now<noteUntil?lastNote:now-requestedAt<120000&&raw.toLowerCase(Locale.ROOT).contains("permission")?raw:"";
+            line(voiceNote,text);boolean dictating=mode.equals("dictate"),talking=mode.equals("talk");
+            if(!mode.equals(shownMode)){shownMode=mode;mic.setImageDrawable(ui.glyph(dictating?"stop":"voice",dictating?ui.accent:ui.text,22));mic.setContentDescription(dictating?"Stop dictation":"Dictate an instruction");talk.setText(talking?"End conversation":"Talk about this task");talk.glyph(talking?"stop":"chat",ui.accent,18);}
+            boolean micOn=canContinue&&!talking,talkOn=canContinue&&!dictating;if(mic.isEnabled()!=micOn){mic.setEnabled(micOn);mic.setAlpha(micOn?1f:.45f);}if(talk.isEnabled()!=talkOn)talk.setEnabled(talkOn);
+            if(!ticking&&(!mode.isEmpty()||now<noteUntil||now<requestedUntil)){ticking=true;main.postDelayed(tick,1000);}
+        }
         void refreshSend(){send.setEnabled(canContinue&&!instruction.getText().toString().trim().isEmpty());}
         void end(boolean snap){follow=false;int to=Math.max(0,body.getHeight()-(scroll.getHeight()-scroll.getPaddingTop()-scroll.getPaddingBottom()));if(snap||!AppUi.motion())scroll.scrollTo(0,to);else scroll.smoothScrollTo(0,to);}
         void settle(){int now=messages.getChildCount()+pendingMessages.getChildCount();if(now>total){follow=true;jump=total<0;}total=now;}
@@ -158,7 +195,7 @@ final class NativeTaskScreens {
                 JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null)exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")));}
                 for(int n=before;before>0&&n<messages.getChildCount();n++)AppUi.enter(messages.getChildAt(n),(n-before)*60);
             }
-            canContinue=agent&&value.optBoolean("can_followup",true);if(instruction.isEnabled()!=canContinue){instruction.setEnabled(canContinue);instruction.setAlpha(canContinue?1f:.55f);}refreshSend();
+            canContinue=agent&&value.optBoolean("can_followup",true);if(instruction.isEnabled()!=canContinue){instruction.setEnabled(canContinue);instruction.setAlpha(canContinue?1f:.55f);}refreshSend();voice();
             if(agent&&!canContinue)line(saved,"This task cannot be continued.");else if(saved.getText().toString().equals("This task cannot be continued."))line(saved,"");
             settle();
         }

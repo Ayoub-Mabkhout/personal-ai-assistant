@@ -126,6 +126,17 @@ a lightweight local or fast acknowledgement model are backlog items; no model
 or new runtime is configured for them. Network
 failure, queue acceptance and task completion are distinct states.
 
+Voice on a native task conversation reuses the same recorder, endpointing and
+conversation state. Dictation binds a task target to exactly one capture,
+uploads it with `dry_run` (not through the command outbox) and returns the words
+to that task's draft; the server transcribes without dispatching. A task
+conversation binds every capture to the task, uploads it with `dry_run`, saves
+the transcript with `NativeTasks.enqueueFollowupWithId` using the capture's ID
+and polls that turn (`continue-` plus the SHA-256 prefix of the ID) until it
+settles, then speaks a bounded plain-text answer. Whole-request end phrases end
+it locally. These turns never start the live WebSocket. No relay change is
+required.
+
 User recordings and generated/augmented evaluation fixtures remain under ignored
 `state/voice/`. Preserve source-family splits: augmentations of training templates
 are not independent held-out evidence. JVM replay verifies actual ring/capture

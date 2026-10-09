@@ -30,6 +30,20 @@ Control phrases act only when they are the whole request. Later completion of a
 queued task is available in its native task conversation; automatic spoken
 completion is a separate backlog item.
 
+A task conversation offers voice in its **Continue this task** composer. The
+microphone button dictates: one capture is transcribed through the same dry-run
+path as Transcription preview and placed at the cursor (or after the draft), and
+nothing is sent until you tap Send; tap it again to stop. **Talk about this task**
+starts a conversation scoped to that task: each spoken turn is saved as a
+stable-ID follow-up of the same task, so it resumes the same worker session, and
+its answer is read aloud and shown in the conversation. Say **That was all** or
+tap **End conversation** to finish. Task turns use the conversation microphone
+and audio routing but never open the live speech provider; with Transcription
+preview on, they only fill the draft. Microphone permission is requested through
+the app's usual prompt. A turn that cannot reach the server stays in the
+follow-up outbox; the spoken reply waits at most ten minutes, after which the
+answer appears in the task later.
+
 **Background listening** keeps the local
 Hey Chat detector running after leaving the app or locking the phone. Turn it on
 while the app is visible and wait until the preparation indicator clears. The

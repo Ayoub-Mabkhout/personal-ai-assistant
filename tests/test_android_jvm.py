@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPANION = ROOT / 'apps/android/src/com/personalassistant/companion'
 PROBE = ROOT / 'tests/jvm/AndroidLogicProbe.java'
 HARNESS = ROOT / 'tests/jvm/DaylightThemeHarness.java'
-SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java')] + [PROBE, HARNESS]
+SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java', 'TaskTurns.java')] + [PROBE, HARNESS]
 MAIN = 'com.personalassistant.companion.AndroidLogicProbe'
 # Synthetic round values; none of them stands for a real person's location.
 PLACES = ((0.0, 0.0), (35.0, 120.0), (-33.0, -75.0))
@@ -166,7 +166,7 @@ class ItemSplitterTests(unittest.TestCase):
 def status_strings():
     """Every status text the voice service, the Voice tab and the overlays write, as far as it is a plain literal."""
     found = set()
-    for name in ('VoiceService.java', 'VoiceOutbox.java', 'MainActivity.java', 'VoiceEntryActivity.java', 'AssistantVoiceSession.java', 'MicrophoneTile.java'):
+    for name in ('VoiceService.java', 'VoiceOutbox.java', 'MainActivity.java', 'VoiceEntryActivity.java', 'AssistantVoiceSession.java', 'MicrophoneTile.java', 'TaskVoice.java'):
         text = (COMPANION / name).read_text(encoding='utf-8')
         for raw in re.findall(r'(?:\bstate\(|"voice_status",)"((?:[^"\\]|\\.)*)"', text):
             if raw:
@@ -234,6 +234,80 @@ class VoiceStatusTests(unittest.TestCase):
         inside, outside = self.status([(raw, 0, 0, 0, 0, 0, 1), (raw, 0, 0, 0, 0, 0, 0)])
         self.assertEqual((outside[0], outside[2]), ('Open the app to start', 'attention'))
         self.assertNotEqual(inside[0], outside[0])
+
+    def test_task_voice_work_reads_as_working_not_as_listening(self):
+        transcribing, waiting = self.status([('Transcribing your words…', 1, 0, 0, 1, 0, 1), ('Sent to this task · waiting for the task\'s answer', 1, 1, 0, 1, 0, 1)])
+        self.assertEqual((transcribing[0], transcribing[2]), ('Transcribing...', 'working'))
+        self.assertEqual((waiting[0], waiting[2]), ('Waiting for the answer', 'working'))
+        # A finished preview receipt is not work in progress.
+        self.assertNotEqual(self.status([('Transcription only. No action taken.', 1, 0, 0, 0, 0, 1)])[0][0], 'Transcribing...')
+
+
+@unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')
+class TaskVoiceRuleTests(unittest.TestCase):
+    PHRASES = ('That was all.', 'That’s all', "that's all!", 'Hey Chat, end the conversation.', 'Please stop listening', 'Goodbye',
+               "I'm done", 'Stop', 'Start conversation mode.', "Let's talk", 'Enter a conversation', 'Email Sam that was all I needed.',
+               'Stop the heater', 'Use the second invoice', '', 'hej chat, that was all', 'Finish conversation mode?')
+
+    def test_whole_request_controls_match_the_relay(self):
+        from personal_assistant.relay.voice import conversation_control
+        got = ask(['control\t' + phrase for phrase in self.PHRASES])
+        for phrase, control in zip(self.PHRASES, got):
+            with self.subTest(phrase=phrase):
+                expected = {'command': 'end', 'conversation': 'start', None: 'none'}[conversation_control(phrase)]
+                self.assertEqual(control, expected)
+
+    def test_turn_ids_match_the_relay_continuation_ledger(self):
+        import hashlib
+        ids = ['3f2c9a6e-1b7d-4c55-9e0f-2a8b6d4c1e00', 'followup-id-001', 'x' * 64]
+        for identifier, turn in zip(ids, ask(['turn\t' + i for i in ids])):
+            self.assertEqual(turn, 'continue-' + hashlib.sha256(identifier.encode()).hexdigest()[:48])
+
+    def test_dictation_joins_the_draft_at_the_caret_without_touching_the_rest(self):
+        cases = [
+            ('', 0, 0, ' Check the totals. ', ('Check the totals.', 17)),
+            ('Use the', 7, 7, 'second invoice', ('Use the second invoice', 22)),
+            ('Use the ', 8, 8, 'second invoice', ('Use the second invoice', 22)),
+            ('Keep paragraph', 5, 5, 'the final', ('Keep the final paragraph', 14)),
+            ('Keep the old paragraph', 9, 12, 'final', ('Keep the final paragraph', 14)),
+            ('Done.', 4, 4, 'quickly', ('Done quickly.', 12)),
+            ('Shorter', 99, 99, 'please', ('Shorter please', 14)),
+            ('Shorter', -3, -3, 'please', ('please Shorter', 6)),
+            ('Unchanged', 3, 3, '   ', ('Unchanged', 3)),
+        ]
+        got = ask(['insert\t%s\t%d\t%d\t%s' % (draft, start, end, words) for draft, start, end, words, _ in cases])
+        for (draft, start, end, words, (text, caret)), row in zip(cases, got):
+            with self.subTest(draft=draft, words=words):
+                result, at, lo, piece = row.split('\t')
+                self.assertEqual((result, int(at)), (text, caret))
+                # The screen applies only the piece at the selection, so the rest of the draft keeps its spans and IME state.
+                self.assertTrue(result.startswith(draft[:int(lo)] + piece))
+
+    def test_settled_turns_are_spoken_briefly_and_waiting_turns_are_not(self):
+        rows = [r.split('\t') for r in ask(['settle\tqueued\t', 'settle\trunning\t', 'settle\tcompleted\tThe invoice is **paid**. See https://example.invalid/x',
+                                             'settle\tneeds_input\tWhich month?', 'settle\tfailed\tNo access.', 'settle\tcancelled\tignored',
+                                             'settle\tcompleted\t', 'settle\tcompleted\t# Totals\\n- one\\n```\\ncode\\n```\\n' + 'Long sentence here. ' * 80])]
+        self.assertEqual([r[0] for r in rows], ['wait', 'wait', 'answer', 'input', 'failed', 'cancelled', 'answer', 'answer'])
+        self.assertEqual(rows[2][1], 'The invoice is paid. See a link')
+        self.assertEqual(rows[3][1], 'Which month?')
+        self.assertEqual(rows[4][1], 'That follow-up failed. No access.')
+        self.assertEqual(rows[5][1], 'That follow-up was cancelled.')
+        self.assertEqual(rows[6][1], 'Done. There is no written answer.')
+        long = rows[7][1]
+        self.assertTrue(long.startswith('Totals one (code is in the task) Long sentence here.'))
+        self.assertTrue(long.endswith('. The full answer is in the task.'))
+        self.assertLessEqual(len(long), 600 + len(' The full answer is in the task.'))
+        self.assertNotIn('```', long)
+
+    def test_composer_line_says_nothing_is_sent_while_dictating(self):
+        rows = ask(['note\tdictate\tListening to your command…', 'note\tdictate\tTranscribing your words…', 'note\ttalk\tSent to this task · waiting for the task\'s answer',
+                    'note\ttalk\tConversation mode · listening', 'note\tdictate\tStarting microphone...', 'note\ttalk\tMicrophone permission needed. Allow it in app settings.'])
+        self.assertIn('Nothing is sent until you tap Send', rows[0])
+        self.assertIn('Nothing is sent until you tap Send', rows[1])
+        self.assertEqual(rows[2], 'Sent as a follow-up · waiting for the answer')
+        self.assertIn('That was all', rows[3])
+        self.assertEqual(rows[4], 'Starting the microphone…')
+        self.assertEqual(rows[5], 'Microphone permission needed. Allow it in app settings.')
 
 
 @unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')
