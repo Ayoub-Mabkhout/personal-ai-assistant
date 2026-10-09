@@ -141,7 +141,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     def landing(): return RedirectResponse('/groceries/')
     if groceries:
         from personal_assistant.groceries.api import router
-        groceries_api=router(**groceries,owner_auth=owner_auth,phone_sender=sender, mobile_settings_file=mobile_settings_file)
+        groceries_api=router(**groceries,owner_auth=owner_auth,phone_sender=sender, mobile_settings_file=mobile_settings_file,shopping_config=voice)
+        app.state.shopping_ai=groceries_api.shopping_ai
         app.include_router(groceries_api)
         release_pump=groceries_api.release_pump
         app.state.release_pump=release_pump
@@ -153,7 +154,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             from .voice import VoiceService,voice_router
             from personal_assistant.groceries.store import Groceries
             voice_service=VoiceService(Path(path).with_name('voice.sqlite3'),groceries_api.devices,
-                Groceries(groceries['path']),agent_queue,queue,config=voice)
+                Groceries(groceries['path']),agent_queue,queue,config=voice,shopping=groceries_api.shopping_ai)
             app.state.voice=voice_service
             app.include_router(voice_router(voice_service))
         from .tasks import task_router

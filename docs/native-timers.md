@@ -7,7 +7,7 @@ the Android app. “Half an hour” and “one and a half hours” work. The dur
 must be a whole number of seconds between one second and 24 hours; invalid
 timer requests ask for a duration and never enter the laptop agent queue.
 
-Wake detection and buffering are unchanged. **Speech transcription still needs
+Wake detection and pre-roll buffering are preserved. **Speech transcription still needs
 internet and the configured cloud OpenAI speech provider.** This is not offline
 speech recognition. There is no Whisper/Home Assistant fallback. Once recognized,
 the timer runs entirely on the phone: no Luna, laptop wake, server deadline or

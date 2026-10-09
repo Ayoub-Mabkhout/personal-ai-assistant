@@ -44,7 +44,11 @@ class PhoneVoiceTests(unittest.TestCase):
         self.calls=[];self.text='Hey Chat, add bananas and sparkling water to my shopping list.'
         def transcribe(audio,duration,identifier):
             self.calls.append(identifier);return self.text
-        self.service=VoiceService(self.root/'voice.sqlite3',self.devices,self.groceries,self.agents,self.commands,transcribe=transcribe)
+        def grocery_plan(identifier,text,items):
+            from personal_assistant.groceries.store import split_items
+            if not text.lower().startswith('add ') or 'shopping list' not in text.lower(): return {'intent':'other','question':'','changes':[]}
+            return {'intent':'grocery','question':'','changes':[{'operation':'add','target':'','name':name,'quantity':'','complete':False} for name in split_items(text)]}
+        self.service=VoiceService(self.root/'voice.sqlite3',self.devices,self.groceries,self.agents,self.commands,transcribe=transcribe,interpret_groceries=grocery_plan)
         self.app=FastAPI();self.app.add_middleware(BodyLimit);self.app.include_router(voice_router(self.service))
         @self.app.exception_handler(ValueError)
         async def invalid(request,error):return JSONResponse({'detail':str(error)},status_code=422)

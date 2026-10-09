@@ -49,11 +49,15 @@ class RecipeImport(BaseModel):
     source: str = Field(default='', max_length=1000)
 
 
-def router(path, internal_token, assets, store_info=None, user_verifier=None, phone_sender=None, mobile_settings_file=None, owner_auth=None):
+def router(path, internal_token, assets, store_info=None, user_verifier=None, phone_sender=None, mobile_settings_file=None, owner_auth=None,retailer_check=None,shopping_config=None):
     if len(internal_token) < 32:
         raise ValueError('Use a dedicated grocery credential of at least 32 characters.')
     store = Groceries(path)
     api = APIRouter(prefix='/groceries')
+    from .intelligence import ShoppingIntelligence
+    from personal_assistant.relay.voice import VoiceLedger
+    shopping_ai=ShoppingIntelligence(store,shopping_config or {},VoiceLedger(Path(path).with_name('voice.sqlite3')))
+    api.shopping_ai=shopping_ai
     from personal_assistant.relay.mobile_settings import MobileSettings
     settings = MobileSettings(mobile_settings_file or Path(path).with_name('companion-preferences.json'))
 
@@ -88,11 +92,10 @@ def router(path, internal_token, assets, store_info=None, user_verifier=None, ph
 
     @api.post('/v1/voice', dependencies=[Depends(authorize)])
     def voice(body: Voice):
-        names = split_items(body.text)
-        if not names or len(names) > 100 or any(len(name)>300 for name in names):
-            raise HTTPException(422, 'Could not identify the shopping items.')
-        result = change({'id': body.id, 'operation': 'add', 'items': [{'name': name, 'quantity': ''} for name in names]})
-        return {**result, 'names': names, 'summary': 'Added '+', '.join(names)+'.'}
+        try: result=shopping_ai.execute('grocery-'+body.id,body.text)
+        except OSError: raise HTTPException(503,'Intelligent grocery commands are unavailable. No changes were applied.') from None
+        except (ValueError,Conflict) as error: raise HTTPException(409,str(error)) from None
+        return result or {'status':'not_grocery','reply':'That request is not a grocery-list change.','grocery_changed':False}
 
     @api.post('/v1/recipes/import/preview', dependencies=[Depends(authorize)])
     def import_preview(body: RecipeImport):

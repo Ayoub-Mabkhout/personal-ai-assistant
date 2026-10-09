@@ -72,12 +72,13 @@ and runtime evidence in the ignored private workspace.
 ### Next priorities
 
 - [x] Native voice capture and configured cloud transcription.
-- [ ] Test recognition accuracy/latency with the actual phone in public places.
+- [x] Handset voice recognition and latency field checks.
 - [ ] File semantic search: text extraction, OCR, exact filters, embeddings,
       source excerpts and incremental indexing.
 - [x] Calendar reminder projection and cloud delivery while the laptop sleeps.
 - [x] Native reminder snooze control and durable cloud rescheduling.
-- [ ] Native reminder delivery/snooze on the handset; reminder dismissal controls.
+- [x] Native reminder delivery/snooze on the handset.
+- [ ] Additional reminder dismissal controls.
 - [x] Contextual task notification replies: cloud ingress, durable queueing and
       the same Luna session.
 - [x] Follow-ups from task details resume the existing worker session directly;
@@ -91,7 +92,7 @@ and runtime evidence in the ignored private workspace.
       authenticated receipts and native Details opening verified on an emulator.
 - [x] Native Companion notification delivery, FCM error health, owner notification status and a deploy
       preflight; see [native delivery](docs/native-companion.md#native-delivery).
-- [ ] Verify native notification display and Reply end to end on the handset.
+- [x] Native notification display and Reply end to end on the handset.
 - [x] Standalone relay authentication and native-only service deployment; see the retirement runbook.
 - [ ] Task cancellation/retry and attachment access from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
@@ -120,28 +121,33 @@ and runtime evidence in the ignored private workspace.
 - [x] Optional GPT-Live speech bridge using existing stores and the Luna queue.
 - [x] Alternative Realtime conversational speech, with server speech detection,
       backend action receipts and interruption playback reset.
-- [ ] Verify extended conversations, interruptions and task results on the handset.
+- [ ] Verify conversation entry **Hey Chat, let's talk** and exit **That was all** on the handset.
 - [ ] Selectively speak completed task results when useful and permitted, without
       repeating queued acknowledgements or reading every background result aloud.
 - [ ] Add a fast path for suitable questions that avoids unnecessary full task dispatch.
 - [ ] Evaluate a lightweight local or fast acknowledgement model with truthful
       queue/completion wording and measured latency/cost.
 - [x] Lock-screen assistant entry and warm screen-off capture verified on an emulator.
-- [ ] Verify locked-phone voice and wake detection on the Galaxy handset.
+- [x] Locked-phone voice and wake detection field checks.
 - [ ] Measure wake-word battery use after latency and locked operation are established.
 - [x] Phone-local command capture and durable replay when the cloud is unreachable.
-- [ ] Verify offline voice capture/reconnect and exactly one result on the handset.
+- [x] Offline voice capture/reconnect and exactly one result on the handset.
 - [x] Paired companion alarm queue and Clock-intent handoff with delivery status.
 - [x] Tag-based signed release automation, durable update events, verified downloads and
       Android installer handoff; diagnostic/private-fixture APKs are rejected.
-- [ ] Verify companion update installation and data preservation on the handset.
-- [ ] Verify installation/Clock creation on the handset; add timers and alarm management.
+- [x] Companion update installation and data preservation on the handset.
+- [x] Clock alarm handoff verified on the handset.
+- [x] Native countdown timers, cancellation/recovery and Live/Realtime receipts.
+- [ ] Verify the new timer build and immediate locked-screen wake cue on the handset.
+- [ ] Additional alarm management.
 - [x] Native shopping widget, quick-add entry, cached list and offline mutation queue.
-- [ ] Verify the current native build's pairing, task screens and widget on the handset.
+- [x] Native pairing, task screens and widget handset checks.
 - [x] Shared recipe import, ingredient selection and AnyList migration procedure.
 - [ ] Import and verify actual AnyList exports; complete the personal migration.
 - [ ] Recipe ingredient scaling, pantry tracking and shopping-list consolidation.
-- [ ] Store-specific grocery product matching; availability still needs verification.
+- [x] Persistent 12-hour retailer check, conservative synonyms and expiring source-backed grocery tags.
+- [ ] Obtain supported REWE catalogue access; public headless requests currently return HTTP 403.
+- [x] Intelligent cloud grocery edits: multi-item additions, removals, corrections and atomic retries.
 
 ### Email, messages and documents
 
@@ -172,7 +178,7 @@ and runtime evidence in the ignored private workspace.
 ### Reliability and maintenance
 
 - [ ] Verify real laptop sleep/resume and queued-command recovery end to end.
-- [ ] Verify all notification states on the handset, including offline delivery.
+- [x] Notification state field checks, including offline delivery.
 - [ ] Backup automation and tested restore for calendar, queues, files and settings.
 - [ ] Connection-health alerts for expired authentication or failed services.
 - [ ] Per-task runtime/model usage reporting and a hosting-cost overview.

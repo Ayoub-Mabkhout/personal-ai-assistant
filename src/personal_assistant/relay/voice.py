@@ -100,7 +100,7 @@ class VoiceLedger:
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT id FROM voice_spend WHERE id=?',(identifier,)).fetchone():return
             used=db.execute('SELECT COALESCE(SUM(dollars),0) FROM voice_spend WHERE month=?',(month,)).fetchone()[0]
-            if used+amount>limit:raise ValueError('Configured voice API budget reached. Speech transcription is unavailable until the budget resets.')
+            if used+amount>limit:raise ValueError('Configured API budget reached. No additional model call made.')
             db.execute('INSERT INTO voice_spend VALUES(?,?,?,?)',(identifier,month,amount,kind))
 
     def settle(self, identifier, amount):
@@ -129,10 +129,12 @@ class Transcriber:
 
 
 class VoiceService:
-    def __init__(self,path,devices,groceries,agent_queue,command_queue,config=None,transcribe=None):
+    def __init__(self,path,devices,groceries,agent_queue,command_queue,config=None,transcribe=None,shopping=None,interpret_groceries=None):
         self.ledger=VoiceLedger(path);self.devices=devices;self.groceries=groceries
         self.agents=agent_queue;self.commands=command_queue;self.config=config or {}
         self.transcribe=transcribe or Transcriber(self.config,self.ledger)
+        from personal_assistant.groceries.intelligence import ShoppingIntelligence
+        self.shopping=shopping or ShoppingIntelligence(groceries,self.config,self.ledger,interpret_groceries)
         self.lock=threading.Lock()
 
     @staticmethod
@@ -158,7 +160,7 @@ class VoiceService:
             return result
 
     def dispatch(self,phone,identifier,text,tz,created,session_id='',native_timers=False):
-        from personal_assistant.groceries.store import split_items
+        from personal_assistant.groceries.intelligence import shopping_request
         cleaned=re.sub(r'^\s*(?:hey|hej|ej)[ ,]+chat[,.!? ]*','',text,flags=re.I).strip()
         base={'text':text,'task_id':identifier}
         if not cleaned:return {**base,'reply':'I’m listening.','status':'no_command'}
@@ -178,11 +180,9 @@ class VoiceService:
         if re.fullmatch(r'(?:show|read|what(?: is|\'s)(?: on)?) (?:me )?(?:my |the )?shopping list[?.! ]*',cleaned,re.I):
             names=[r['name'] for r in self.groceries.snapshot()['items'] if not r['complete']]
             return {**base,'reply':', '.join(names) if names else 'Your shopping list is empty.','status':'completed'}
-        if re.match(r'^add\s+.+\s+to (?:my |the )?shopping list[.! ]*$',cleaned,re.I):
-            names=split_items(cleaned)
-            if len(names)>100 or any(len(n)>300 for n in names):raise ValueError('Shopping command is too long.')
-            self.groceries.mutate({'id':identifier,'operation':'add','items':[{'name':n,'quantity':''} for n in names],'created_at':created})
-            return {**base,'reply':'Added '+', '.join(names)+'.','status':'completed','grocery_changed':True}
+        if shopping_request(cleaned) and (self.config.get('key_file') or self.shopping.interpret):
+            result=self.shopping.execute(identifier,cleaned)
+            if result is not None:return {**base,**result}
         # Every other request enters the persistent Luna queue, without a prefix.
         payload={'id':identifier,'command':cleaned,'timezone':tz,'created_at':created}
         if session_id:
