@@ -84,7 +84,7 @@ final class Updates {
         PendingIntent open=PendingIntent.getActivity(c,301,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         String text="Version "+release.getString("version_name")+" is downloaded and verified. Open the app to install it.";
         manager.notify(301,new Notification.Builder(c,"app-updates").setSmallIcon(R.drawable.ic_stat_assistant).setColor(NativeNotifications.ACCENT).setLargeIcon(NotificationStyle.icon(c,"download",NotificationStyle.BRAND))
-            .setContentTitle("Update ready to install").setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text)).setSubText("App update").setShowWhen(true).setContentIntent(open).setAutoCancel(true).build());
+            .setContentTitle("Update ready").setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text)).setSubText("App update").setShowWhen(true).setContentIntent(open).setAutoCancel(true).build());
         Cloud.prefs(c).edit().putLong("update_notified",code).commit();
     }
     static void install(Activity activity){

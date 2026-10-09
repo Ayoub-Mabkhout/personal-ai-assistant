@@ -141,8 +141,8 @@ web surfaces use the same runtime location, never a place baked into source.
   carries a glass medallion large icon in a state tone: progress (periwinkle to
   violet, clock or pulse), done (orchid, check), needs you (rose, chat or bell),
   failed (rose to danger red, alert). Brand violet is used for everything else.
-  Task cards move the short task reference into the header ("Laptop task
-  1a2b3c4d"). The collapsed text is the latest status. Expanded, the request
+  Task cards drop the short task reference from the title and label the header
+  "Laptop task". The collapsed text is the latest status. Expanded, the request
   appears in bold above it. Reminder cards are titled with the event and show
   its time and place. Private cards show only the kind of update on the lock
   screen. The microphone service notification is colorized in the accent.

@@ -78,18 +78,18 @@ final class NativeNotifications {
         boolean active=body.optBoolean("active",false);
         String title=body.optString("title","Assistant"),message=body.optString("message"),label,glyph;CharSequence headline=title,text=message,expanded=message;int[] tone;
         if(type.equals("task")){
-            // Producers append the short task reference to the title and put the request before the status; the header carries the reference.
-            int mark=title.lastIndexOf(" · ");String reference=mark>0?title.substring(mark+3):"";if(mark>0)headline=title.substring(0,mark);
+            // Producers append the short task reference to the title and put the request before the status. The bold request identifies the task, so the reference is dropped.
+            int mark=title.lastIndexOf(" · ");if(mark>0)headline=title.substring(0,mark);
             int split=message.indexOf("\n\n");String request=split<0?"":message.substring(0,split).trim(),status=split<0?message.trim():message.substring(split+2).trim();
             text=status.isEmpty()?request:status;
             if(!request.isEmpty()&&!status.isEmpty()){SpannableStringBuilder rich=new SpannableStringBuilder(request);rich.setSpan(new StyleSpan(Typeface.BOLD),0,rich.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);expanded=rich.append("\n").append(status);}
-            label=(kind.equals("command")?"Command":"Laptop task")+(reference.isEmpty()?"":" "+reference);
+            label=kind.equals("command")?"Command":"Laptop task";
             Object[] look=look(body.optString("state"));glyph=(String)look[0];tone=(int[])look[1];
         }else if(type.equals("reminder")){
             // Reminder messages are the event title, then its time and optional location.
             String[] lines=message.split("\n");
             if(lines.length>1&&!lines[0].trim().isEmpty()){headline=lines[0].trim();StringBuilder rest=new StringBuilder();for(int i=1;i<lines.length;i++)if(!lines[i].trim().isEmpty())rest.append(rest.length()==0?"":" · ").append(lines[i].trim());text=expanded=rest.toString();}
-            label="Calendar reminder";glyph="bell";tone=NotificationStyle.ATTENTION;
+            label="Calendar";glyph="bell";tone=NotificationStyle.ATTENTION;
         }else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
         boolean hidden=!body.optString("visibility").equals("public");
         Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(headline)
@@ -98,7 +98,7 @@ final class NativeNotifications {
             .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).setShowWhen(true);
         if(type.equals("reminder"))notification.setCategory(Notification.CATEGORY_EVENT);else if(active)notification.setCategory(Notification.CATEGORY_PROGRESS);
         // The lock screen shows only the kind of update, never the request, result or event.
-        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):label).setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
+        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
         if(body.optString("state").equals("running"))notification.setProgress(0,0,true);
         if(!task.isEmpty()){
             notification.addAction(new Notification.Action.Builder(null,"Details",pending).build());
