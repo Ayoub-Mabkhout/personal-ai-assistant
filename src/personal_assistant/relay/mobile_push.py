@@ -34,12 +34,15 @@ class MobileEventStore:
                 CREATE INDEX IF NOT EXISTS native_phone_events ON native_events(phone,sequence);
                 CREATE TABLE IF NOT EXISTS native_snoozes (
                 id TEXT PRIMARY KEY,phone TEXT NOT NULL,event_id TEXT NOT NULL,seconds INTEGER NOT NULL,
-                due REAL NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'waiting');''')
+                due REAL NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'waiting');
+                CREATE TABLE IF NOT EXISTS native_push_health (
+                phone TEXT PRIMARY KEY,last_ok REAL,last_error TEXT,last_error_at REAL);''')
 
     def register(self, phone, provider, token):
         with self.devices.db() as db:
             db.execute('BEGIN IMMEDIATE')
             db.execute('DELETE FROM native_push WHERE token=? AND phone!=?', (token, phone))
+            db.execute('DELETE FROM native_push_health WHERE phone=?', (phone,))
             db.execute('INSERT INTO native_push VALUES(?,?,?,?) ON CONFLICT(phone) DO UPDATE SET provider=excluded.provider,token=excluded.token,updated=excluded.updated',
                        (phone, provider, token, self.clock()))
             db.execute('UPDATE native_events SET due=?,accepted=NULL WHERE phone=? AND received IS NULL AND expires>?',
@@ -54,19 +57,37 @@ class MobileEventStore:
         with self.devices.db() as db:
             return db.execute('SELECT id FROM phones WHERE id=? AND revoked=0', (phone,)).fetchone() is not None
 
-    def enqueue(self, payload, ttl=86400, phone=None):
+    def enqueue(self, payload, ttl=86400, phone=None, repeat=''):
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-        fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
         with self.devices.db() as db:
             db.execute('BEGIN IMMEDIATE')
             rows = db.execute('SELECT id FROM phones WHERE revoked=0' + (' AND id=?' if phone else ''),
                               (phone,) if phone else ()).fetchall()
             for row in rows:
+                fingerprint = self.fingerprint(db, row['id'], payload.get('tag', ''), encoded, repeat)
+                if not fingerprint:
+                    continue
                 identifier = hashlib.sha256((row['id'] + ':' + fingerprint).encode()).hexdigest()
                 db.execute('''INSERT OR IGNORE INTO native_events(id,phone,fingerprint,payload,created,expires,due)
                            VALUES(?,?,?,?,?,?,?)''', (identifier, row['id'], fingerprint, encoded,
                            self.clock(), self.clock() + min(86400, max(1, ttl)), self.clock()))
         return len(rows)
+
+    @staticmethod
+    def fingerprint(db, phone, tag, encoded, repeat):
+        """Re-sending a tag's newest content is a producer retry. Content that returns after another
+        state, or an explicit repeat key, is a new event; the key keeps repeated retries idempotent."""
+        content = hashlib.sha256(encoded.encode()).hexdigest()
+        if repeat:
+            return hashlib.sha256((content + ':' + repeat).encode()).hexdigest()
+        newest = db.execute("SELECT payload FROM native_events WHERE phone=? AND COALESCE(json_extract(payload,'$.tag'),'')=? ORDER BY sequence DESC LIMIT 1",
+                            (phone, tag)).fetchone()
+        if newest and newest['payload'] == encoded:
+            return None
+        if db.execute('SELECT 1 FROM native_events WHERE phone=? AND fingerprint=?', (phone, content)).fetchone():
+            last = db.execute('SELECT MAX(sequence) FROM native_events WHERE phone=?', (phone,)).fetchone()[0]
+            return hashlib.sha256((content + ':after:' + str(last)).encode()).hexdigest()
+        return content
 
     def events(self, phone, cursor=0, limit=100):
         self.materialize_snoozes()
@@ -128,15 +149,53 @@ class MobileEventStore:
                     AND event.expires>? AND event.due<=? ORDER BY event.sequence LIMIT 100''',
                     (self.clock(), self.clock()))]
 
-    def outcome(self, identifier, accepted):
+    def outcome(self, identifier, accepted, error=None, token=None):
         with self.devices.db() as db:
-            row = db.execute('SELECT attempts FROM native_events WHERE id=?', (identifier,)).fetchone()
+            row = db.execute('SELECT attempts,phone FROM native_events WHERE id=?', (identifier,)).fetchone()
             if not row:
                 return
             attempts = row['attempts'] + 1
             db.execute('UPDATE native_events SET accepted=?,attempts=?,due=? WHERE id=?',
                        (self.clock() if accepted else None, attempts,
                         self.clock() + min(3600, 5 * 2 ** min(attempts, 10)), identifier))
+            if accepted:
+                # An accepted hint ends the error: the status reports the current condition, not history.
+                db.execute('INSERT INTO native_push_health(phone,last_ok) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET last_ok=excluded.last_ok,last_error=NULL,last_error_at=NULL',
+                           (row['phone'], self.clock()))
+                return
+            code = reason(error)
+            db.execute('''INSERT INTO native_push_health(phone,last_error,last_error_at) VALUES(?,?,?)
+                       ON CONFLICT(phone) DO UPDATE SET last_error=excluded.last_error,last_error_at=excluded.last_error_at''',
+                       (row['phone'], code, self.clock()))
+            if code == 'UNREGISTERED' and token:
+                # Compare-and-delete: a token the phone has since rotated must survive.
+                db.execute('DELETE FROM native_push WHERE phone=? AND token=?', (row['phone'], token))
+
+    def overview(self):
+        """Owner view of native delivery: opaque ids, times and counts, never content or tokens."""
+        now = self.clock()
+        with self.devices.db() as db:
+            phones = [dict(row) for row in db.execute('''SELECT phone.id,phone.created,phone.seen,push.updated registered_at,
+                health.last_ok,health.last_error,health.last_error_at FROM phones phone
+                LEFT JOIN native_push push ON push.phone=phone.id LEFT JOIN native_push_health health ON health.phone=phone.id
+                WHERE phone.revoked=0 ORDER BY phone.created''')]
+            for phone in phones:
+                events = db.execute('''SELECT MAX(accepted) accepted,MAX(received) received,
+                    COALESCE(SUM(received IS NULL AND expires>?),0) unreceived,
+                    MIN(CASE WHEN received IS NULL AND expires>? THEN created END) oldest
+                    FROM native_events WHERE phone=?''', (now, now, phone['id'])).fetchone()
+                phone.update(registered=phone['registered_at'] is not None, last_accepted=events['accepted'],
+                             last_receipt=events['received'], unreceived=events['unreceived'],
+                             oldest_unreceived_age=None if events['oldest'] is None else max(0, now - events['oldest']),
+                             last_error=phone['last_error'] and {'code': phone['last_error'], 'at': phone['last_error_at']})
+                phone.pop('last_error_at')
+        errors = [phone['last_error'] for phone in phones if phone['last_error']]
+        ages = [phone['oldest_unreceived_age'] for phone in phones if phone['oldest_unreceived_age'] is not None]
+        return {'time': now, 'phones': phones,
+                'last_accepted': max((phone['last_accepted'] for phone in phones if phone['last_accepted']), default=None),
+                'last_receipt': max((phone['last_receipt'] for phone in phones if phone['last_receipt']), default=None),
+                'unreceived': sum(phone['unreceived'] for phone in phones), 'oldest_unreceived_age': max(ages, default=None),
+                'last_error': max(errors, key=lambda error: error['at'], default=None)}
 
     def status(self, phone):
         with self.devices.db() as db:
@@ -153,7 +212,10 @@ class CompanionSender:
         self.store = store
         self.fingerprint_namespace = 'native-companion-v1'
 
-    def __call__(self, payload):
+    def renotify(self, payload, revision):
+        self(payload, 'revision-' + str(revision))
+
+    def __call__(self, payload, repeat=''):
         data = payload.get('data', {})
         tag = data.get('tag', '')
         body = {'title': payload.get('title', 'Assistant'), 'message': payload.get('message', ''),
@@ -181,7 +243,47 @@ class CompanionSender:
             body.update(task_kind=match[1], task_id=match[2], active=bool(data.get('persistent')), state=state)
         # Stable producer retries must deduplicate even though their send time changes.
         body.pop('created', None)
-        return self.store.enqueue(body, int(data.get('ttl', 86400)), phone=data.get('phone_id'))
+        # Reporting success with no recipient would lose the update for a phone paired later.
+        if not self.store.enqueue(body, int(data.get('ttl', 86400)), phone=data.get('phone_id'), repeat=repeat):
+            raise OSError('No active paired Companion.')
+
+
+FCM_CODES = {'UNREGISTERED', 'INVALID_ARGUMENT', 'SENDER_ID_MISMATCH', 'QUOTA_EXCEEDED', 'UNAVAILABLE', 'INTERNAL',
+             'THIRD_PARTY_AUTH_ERROR', 'UNAUTHENTICATED', 'PERMISSION_DENIED', 'NOT_FOUND'}
+OAUTH_CODES = {'INVALID_GRANT', 'INVALID_CLIENT', 'INVALID_REQUEST', 'UNAUTHORIZED_CLIENT', 'INVALID_SCOPE'}
+HTTP_CODES = {400: 'INVALID_ARGUMENT', 401: 'UNAUTHENTICATED', 403: 'PERMISSION_DENIED', 404: 'NOT_FOUND', 429: 'QUOTA_EXCEEDED'}
+
+
+class FcmError(OSError):
+    """Provider failure reduced to a whitelisted code. Response bodies can echo registration tokens."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def reason(error):
+    return error.code if isinstance(error, FcmError) else type(error).__name__
+
+
+def fcm_code(error, oauth=False):
+    """Code of a failed Google call. OAuth token-endpoint failures carry an OAUTH_ prefix so the owner can
+    tell a bad service account from an FCM rejection; unreadable or oddly shaped bodies fall back to the status."""
+    try:
+        body = json.loads(error.read(4096))
+    except Exception:
+        body = None
+    found = body.get('error') if isinstance(body, dict) else None
+    named = []
+    if isinstance(found, dict):
+        details = found.get('details')
+        named = [item.get('errorCode') for item in details if isinstance(item, dict)] if isinstance(details, list) else []
+        named.append(found.get('status'))
+    elif isinstance(found, str):
+        named = [found.upper()]
+    code = next((name for name in named if isinstance(name, str) and name in (OAUTH_CODES if oauth else FCM_CODES)), None)
+    status = error.code if isinstance(error.code, int) else 0
+    code = code or HTTP_CODES.get(status) or ('UNAVAILABLE' if status >= 500 else 'HTTP_' + str(status))
+    return ('OAUTH_' if oauth else '') + code
 
 
 class FcmPush:
@@ -228,22 +330,43 @@ class FcmPush:
         self.expires = self.clock() + response.get('expires_in', 3600) - 60
         return self.token
 
-    def __call__(self, row):
-        payload = {'message': {'token': row['token'], 'data': {'event_id': row['id'], 'type': 'assistant_event'},
-                   'android': {'priority': 'HIGH', 'ttl': str(max(1, int(row['expires'] - self.clock()))) + 's',
-                               'collapse_key': 'assistant_events'}}}
+    def bearer(self):
         try:
-            result = self.requester('https://fcm.googleapis.com/v1/projects/' + self.project + '/messages:send',
-                                    json.dumps(payload).encode(), {'Authorization': 'Bearer ' + self.access(),
-                                    'Content-Type': 'application/json'})
+            return self.access()
+        except urllib.error.HTTPError as error:
+            raise FcmError(fcm_code(error, True)) from None
+        except OSError:
+            raise FcmError('OAUTH_UNREACHABLE') from None
+        except Exception:
+            raise FcmError('OAUTH_CREDENTIAL') from None
+
+    def send(self, payload):
+        bearer = self.bearer()
+        try:
+            return self.requester('https://fcm.googleapis.com/v1/projects/' + self.project + '/messages:send',
+                                  json.dumps(payload).encode(), {'Authorization': 'Bearer ' + bearer,
+                                  'Content-Type': 'application/json'})
         except urllib.error.HTTPError as error:
             if error.code == 401:
                 self.token = None
                 self.expires = 0
-            raise
-        if not isinstance(result.get('name'), str) or not result['name']:
-            raise OSError('FCM did not acknowledge the hint.')
+            raise FcmError(fcm_code(error)) from None
+        except OSError:
+            raise FcmError('UNREACHABLE') from None
+        except ValueError:
+            raise FcmError('BAD_RESPONSE') from None
+
+    def __call__(self, row):
+        result = self.send({'message': {'token': row['token'], 'data': {'event_id': row['id'], 'type': 'assistant_event'},
+                            'android': {'priority': 'HIGH', 'ttl': str(max(1, int(row['expires'] - self.clock()))) + 's',
+                                        'collapse_key': 'assistant_events'}}})
+        if not isinstance(result, dict) or not isinstance(result.get('name'), str) or not result['name']:
+            raise FcmError('NO_ACK')
         return result
+
+    def dry_run(self):
+        """FCM's validate_only flag checks the credential, project and permission without delivering anything."""
+        return self.send({'validate_only': True, 'message': {'topic': 'preflight', 'data': {'type': 'preflight'}}})
 
 
 class MobilePushPump:
@@ -260,9 +383,9 @@ class MobilePushPump:
             try:
                 self.provider(row)
             except Exception as error:
-                self.store.outcome(row['id'], False)
+                self.store.outcome(row['id'], False, error, row['token'])
                 # Never log provider error payloads: they may echo registration tokens.
-                logging.warning('Native push failed (%s); retry saved.', type(error).__name__)
+                logging.warning('Native push failed (%s); retry saved.', reason(error))
             else:
                 self.store.outcome(row['id'], True)
 

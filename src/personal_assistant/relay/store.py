@@ -85,8 +85,8 @@ class Queue:
     def notification_rows(self):
         with self.connection(True) as db:
             self.maintenance(db)
-            return [dict(row) for row in db.execute('''SELECT n.*,j.state FROM notification_outbox n
-                JOIN jobs j ON j.id=n.job_id WHERE n.revision!=n.delivered_revision
+            return [dict(row) for row in db.execute('''SELECT n.*,j.state,e.at AS changed,e.kind AS cause FROM notification_outbox n
+                JOIN jobs j ON j.id=n.job_id LEFT JOIN events e ON e.seq=n.revision WHERE n.revision!=n.delivered_revision
                 OR j.state IN ('queued','running') ORDER BY n.revision''')]
 
     def notify_again(self,request_id):
@@ -105,6 +105,11 @@ class Queue:
             if updated:
                 db.execute('INSERT INTO events(job_id,at,kind,data) VALUES(?,?,?,?)',
                     (job_id,self.clock(),'phone_notification_accepted',json.dumps({'revision':revision})))
+
+    def notification_expired(self,job_id,revision):
+        with self.connection(True) as db:
+            db.execute('''UPDATE notification_outbox SET delivered_revision=?,fingerprint=NULL,attempts=0,next_attempt=0,
+                last_error=NULL WHERE job_id=? AND revision=?''',(revision,job_id,revision))
 
     def notification_failed(self,job_id,revision,error):
         with self.connection(True) as db:

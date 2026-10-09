@@ -25,9 +25,11 @@ access to the full history, so history may require one separate sign-in.
 
 The cloud relay owns phone updates for both queues. It records a notification
 revision in the same SQLite transaction as submitting, claiming, requeuing,
-finishing, cancelling or expiring a job. The cloud delivery loop calls the selected
-Home Assistant Companion notification action, independent of laptop availability.
-The Home Assistant acknowledgement includes the short task ID and tells the user
+finishing, cancelling or expiring a job. The cloud delivery loop calls the
+configured delivery channel, independent of laptop availability: the Home Assistant
+Companion notification action by default, the native Companion journal, or both
+during migration (see [delivery modes](native-companion.md#delivery-modes)). The
+Home Assistant acknowledgement includes the short task ID and tells the user
 when phone updates are enabled.
 
 One tagged notification per task is updated from queued to in progress and then
@@ -45,7 +47,8 @@ Pushes use a positive 24-hour lifetime to permit delivery after temporary phone
 disconnection; they are not discarded immediately merely because the handset is
 offline. The Details page always fetches authoritative current task state.
 The Assist reply still confirms initial server acceptance. Historical completed
-tasks are not backfilled when enabling the feature.
+tasks are not backfilled when enabling the feature, nor when a first phone pairs
+with native-only delivery: final states older than one hour are discarded there.
 
 The Details button opens `/tasks/agent/TASK_ID?view=TASK_TOKEN` or its command-queue
 equivalent. The signed link opens that exact task without a Home Assistant
@@ -71,13 +74,20 @@ as with the existing groceries app. Do not add unrelated users without introduci
 an owner-only authorization policy for personal tasks.
 
 Runtime configuration is `/data/notifications.json`; see the disabled public
-shape in `config/task-notifications.example.json`. The HA refresh credential file
+shape in `config/task-notifications.example.json`, including `delivery_mode`
+(`homeassistant`, `dual` or `native`) and the `companion_push` Firebase block that
+the native modes need. The HA refresh credential file
 must remain in protected cloud storage, mode 0600, readable by relay UID 10001.
 Never add its contents to source, command arguments, or OneDrive. Existing laptop
-notifications remain disabled to avoid duplicate terminal pushes.
+notifications remain disabled to avoid duplicate terminal pushes, in every delivery
+mode: keep `notifications_enabled` false and `mobile_notify_service` unset in the
+laptop worker configuration.
 
-Home Assistant API acceptance is recorded as `phone_notification_accepted` in task
-history. It is not proof that Android displayed the message: push transport,
+Delivery acceptance is recorded as `phone_notification_accepted` in task history:
+Home Assistant API acceptance by default, and for the native journal only that the
+update was written for an active phone (FCM acceptance and handset receipt are
+reported by the owner status in [native delivery](native-companion.md#owner-status)).
+It is not proof that Android displayed the message: push transport,
 notification permissions and handset connectivity still apply. Device receipt
 requires user confirmation. The live cloud acceptance test covers queued, running
 and completed; unit tests cover failure, needs input, cancellation, expiry,
@@ -86,5 +96,7 @@ disconnection, retry and stale acknowledgements.
 The owner can refresh a notification via POST
 `/v1/agent/prompts/TASK_ID/notify` (or `/v1/commands/TASK_ID/notify`). This queues a
 notification update without changing the task's state, result, attempts or execution.
+The refresh reaches the phone through every active channel even when the card text
+is unchanged, so it can be used to re-alert or restore a dismissed native card.
 
 [Companion notification fields](https://companion.home-assistant.io/docs/notifications/notifications-basic/).

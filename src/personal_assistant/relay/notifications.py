@@ -72,8 +72,8 @@ class HomeAssistantPush:
 
 
 class NotificationPump:
-    def __init__(self,queues,sender,public_url,interval=2,visibility='private',task_links=None):
-        self.queues=queues;self.sender=sender;self.public_url=public_url;self.interval=interval
+    def __init__(self,queues,sender,public_url,interval=2,visibility='private',task_links=None,max_age=None):
+        self.queues=queues;self.sender=sender;self.public_url=public_url;self.interval=interval;self.max_age=max_age
         parsed=urllib.parse.urlsplit(public_url)
         if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ('','/') or parsed.query or parsed.fragment:
             raise ValueError('Task links require the public HTTPS origin.')
@@ -88,12 +88,18 @@ class NotificationPump:
             for row in queue.notification_rows():
                 if row['next_attempt']>queue.clock(): continue
                 job=queue.get(row['job_id'])
+                # A final state that waited this long for a recipient is history, not news for a newly paired phone.
+                if self.max_age and job['state'] not in ACTIVE and row['revision']!=row['delivered_revision'] and queue.clock()-(row['changed'] or queue.clock())>self.max_age:
+                    queue.notification_expired(job['id'],row['revision']);continue
                 payload=notification(kind,job,connection,self.public_url,self.visibility,self.task_links)
                 encoded=json.dumps(payload,sort_keys=True)
                 namespace=getattr(self.sender,'fingerprint_namespace','')
                 fingerprint=hashlib.sha256((namespace+encoded).encode()).hexdigest()
                 if row['delivered_revision']==row['revision'] and row['fingerprint']==fingerprint: continue
-                try: self.sender(payload)
+                try:
+                    # An explicit refresh must reach the phone even when nothing changed; once delivered, later changes are ordinary updates.
+                    if row['cause']=='notification_requested' and row['delivered_revision']!=row['revision'] and hasattr(self.sender,'renotify'): self.sender.renotify(payload,row['revision'])
+                    else: self.sender(payload)
                 except Exception as error:
                     queue.notification_failed(job['id'],row['revision'],type(error).__name__)
                     logging.warning('Task push failed (%s); retry saved.',type(error).__name__)

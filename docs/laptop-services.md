@@ -69,3 +69,10 @@ It binds only to localhost, checks Host/origin, requires a local session token f
 APIs, and serves no external assets. Personal data is loaded from private files at
 runtime. This dashboard is not published on the HA phone URL. Browser persistence
 does not implement an Android offline voice outbox.
+
+The dashboard's sunrise/sunset place comes from `companion-preferences.json` in
+`runtime_dir`, or from the optional `mobile_settings_file` worker setting (use an
+absolute path; a relative one is resolved against the dashboard's working directory,
+the repository under the supervisor). It is not the relay host's file. See
+[mobile preferences](mobile-preferences.md#private-daylight-preferences) for the
+file shape and the unreadable-file behavior.

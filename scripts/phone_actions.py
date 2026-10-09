@@ -63,7 +63,8 @@ def parser():
     alarm.add_argument('--label', default='Alarm', help='Clock label (maximum 200 characters).')
     alarm.add_argument('--phone', type=identifier, help='Phone ID; omitted only when exactly one active phone is paired.')
     alarm.add_argument('--launch', action='store_true',
-                       help='Launch via HA Companion only after its Display over other apps permission is granted; otherwise notify with Set alarm button.')
+                       help='HA Companion only: launch it once its Display over other apps permission is granted; otherwise a Set alarm button is sent. '
+                            'The native Companion cannot be launched this way: it always shows a tap-to-set-alarm card, even with --launch.')
     status = commands.add_parser('status', help='Read the saved alarm delivery state.')
     status.add_argument('id', type=identifier)
     return cli

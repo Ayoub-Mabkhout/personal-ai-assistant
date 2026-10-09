@@ -38,10 +38,26 @@ Settings fetch failures do not fail task delivery or erase drafts.
 The groceries web view receives the same whitelisted settings with its
 authenticated list snapshot; task pages use owner-authenticated
 `GET /tasks/v1/preferences`. A task's view or follow-up capability does not grant
-access to those preferences. The local dashboard's token-protected
-`GET /api/preferences` reads its `mobile_settings_file` runtime input, defaulting
-to `companion-preferences.json` in its runtime directory. Web views cache only the
-coordinate pair for offline appearance and use the shared solar controller.
+access to those preferences. Web views cache only the coordinate pair for offline
+appearance and use the shared solar controller.
+
+The local dashboard's token-protected `GET /api/preferences` is a separate reader
+with its own file, on the laptop rather than the relay host. It reads the optional
+`mobile_settings_file` runtime input; `~` is expanded, a relative value is resolved
+against the dashboard process's working directory (the repository checkout under the
+supervisor, so an absolute path is safest), and an absent, null or empty value
+selects `companion-preferences.json` in `runtime_dir`. Configuring the relay file
+or `ASSISTANT_MOBILE_SETTINGS_CONFIG` does not configure the dashboard. A missing
+file is the unconfigured state and answers `null`. A file that exists but cannot be
+read right now (locked, access denied, not a file) answers `503` instead, so the
+open page keeps its last cached place rather than clearing it; the next page load
+retries. The page does not poll.
+
+Whenever a preferences file is unreadable, oversized, not valid JSON, or holds
+missing or out-of-range coordinates, a one-line warning naming only the reason is
+written to the service log (the dashboard's `dashboard-service.log` in its runtime
+directory when run by the supervisor). It never contains the path or any file
+content. A syntactically valid file with no `daylight` entry is simply unconfigured.
 
 The foreground activity evaluates its appearance on resume, clock/date/timezone
 changes, configuration changes and private preference updates. A timer targets

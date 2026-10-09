@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -44,6 +45,68 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(value.json(),{'daylight':{'latitude':35.0,'longitude':-20.0}})
         prefs.unlink()
         self.assertEqual(self.client.get('/api/preferences',headers=self.headers).json(),{'daylight':None})
+
+    def second_client(self,**settings):
+        client=TestClient(dashboard.create_app({'runtime_dir':str(self.root/'runtime'),**settings}),base_url='http://127.0.0.1:8787')
+        self.addCleanup(client.close)
+        token=re.search(r"const token='(.+?)'",client.get('/').text)[1]
+        return client,{'X-Dashboard-Token':token}
+
+    def test_preferences_file_setting_accepts_absolute_and_home_paths(self):
+        place={'daylight':{'latitude':-20.5,'longitude':130.25}}
+        absolute=self.root/'elsewhere.json'
+        absolute.write_text(json.dumps({'daylight':{'latitude':0.0,'longitude':0.0}}))
+        client,headers=self.second_client(mobile_settings_file=str(absolute))
+        self.assertEqual(client.get('/api/preferences',headers=headers).json(),{'daylight':{'latitude':0.0,'longitude':0.0}})
+
+        home=self.root/'home'
+        home.mkdir()
+        (home/'sun.json').write_text(json.dumps(place))
+        with patch.dict(os.environ,{'HOME':str(home),'USERPROFILE':str(home)}):
+            client,headers=self.second_client(mobile_settings_file='~/sun.json')
+            self.assertEqual(client.get('/api/preferences',headers=headers).json(),place)
+
+    def test_relative_preferences_file_setting_follows_the_process_directory(self):
+        place={'daylight':{'latitude':-20.5,'longitude':130.25}}
+        (self.root/'runtime/companion-preferences.json').write_text(json.dumps({'daylight':{'latitude':1,'longitude':2}}))
+        (self.root/'protected').mkdir()
+        (self.root/'protected/sun.json').write_text(json.dumps(place))
+        previous=os.getcwd()
+        os.chdir(self.root)
+        try:
+            with TestClient(dashboard.create_app({'runtime_dir':'runtime','mobile_settings_file':'protected/sun.json'}),base_url='http://127.0.0.1:8787') as client:
+                token=re.search(r"const token='(.+?)'",client.get('/').text)[1]
+                self.assertEqual(client.get('/api/preferences',headers={'X-Dashboard-Token':token}).json(),place)
+            with TestClient(dashboard.create_app({'runtime_dir':'runtime'}),base_url='http://127.0.0.1:8787') as client:
+                token=re.search(r"const token='(.+?)'",client.get('/').text)[1]
+                self.assertEqual(client.get('/api/preferences',headers={'X-Dashboard-Token':token}).json(),
+                    {'daylight':{'latitude':1,'longitude':2}})
+        finally:
+            os.chdir(previous)
+
+    def test_empty_preferences_file_setting_uses_the_runtime_default(self):
+        place={'daylight':{'latitude':-20.5,'longitude':130.25}}
+        (self.root/'runtime/companion-preferences.json').write_text(json.dumps(place))
+        for setting in (None,''):
+            with self.subTest(setting=setting):
+                client,headers=self.second_client(mobile_settings_file=setting)
+                response=client.get('/api/preferences',headers=headers)
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(response.json(),place)
+
+    def test_unreadable_preferences_are_not_reported_as_not_configured(self):
+        prefs=self.root/'runtime/companion-preferences.json'
+        prefs.mkdir()
+        with self.assertLogs(level='WARNING') as logged:
+            response=self.client.get('/api/preferences',headers=self.headers)
+        self.assertEqual(response.status_code,503)
+        self.assertNotIn('daylight',response.json())
+        self.assertEqual(len(logged.records),1)
+        self.assertNotIn(str(self.root),logged.output[0])
+        prefs.rmdir()
+        prefs.write_text(json.dumps({'daylight':{'latitude':-20.5,'longitude':130.25}}))
+        self.assertEqual(self.client.get('/api/preferences',headers=self.headers).json(),
+            {'daylight':{'latitude':-20.5,'longitude':130.25}})
 
     def test_dns_rebinding_host_rejected(self):
         self.assertEqual(self.client.get('/',headers={'Host':'attacker.example'}).status_code,400)
