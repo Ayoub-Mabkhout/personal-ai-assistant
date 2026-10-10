@@ -123,7 +123,8 @@ final class FileDrops {
     static void copy(InputStream in,OutputStream out)throws IOException{byte[] buffer=new byte[65536];int count;while((count=in.read(buffer))!=-1)out.write(buffer,0,count);}
     static String safeName(String value){
         // Format characters such as a right-to-left override, and line or paragraph separators, could disguise the real extension.
-        String name=value==null?"":value.replaceAll("[\\\\/:*?\"<>|\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]","_").trim();
+        // Joiners (Persian, Indic and emoji spelling) and emoji tag characters cannot, so they stay.
+        String name=value==null?"":value.replaceAll("[\\\\/:*?\"<>|\\p{Cc}\\p{Zl}\\p{Zp}]|[\\p{Cf}&&[^\\u200C\\u200D\\x{E0020}-\\x{E007F}]]","_").trim();
         if(name.replace(".","").isEmpty())name="download";
         // The limit is in UTF-8 bytes, not characters: a short extension is kept and the stem is cut at a whole code point.
         int dot=name.lastIndexOf('.');String ext=dot>0&&utf8(name.substring(dot))<=32?name.substring(dot):"",stem=name.substring(0,name.length()-ext.length());

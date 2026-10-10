@@ -33,6 +33,8 @@ EVENT_TTL = 28 * 86400
 # Control, format (bidi overrides and isolates, zero-width marks), surrogate and line/paragraph separator
 # characters: with them "Invoice<U+202E>fdp.apk" would display as "Invoicekpa.pdf".
 HIDDEN = {'Cc', 'Cf', 'Cs', 'Zl', 'Zp'}
+# Joiners shape Persian and Indic spelling and emoji sequences; they cannot reorder or hide an extension.
+JOINERS = {'\u200c', '\u200d'}
 STALE = "state='ready' AND (expires<=? OR phone NOT IN (SELECT id FROM phones WHERE revoked=0))"
 
 
@@ -41,14 +43,22 @@ class Receipt(BaseModel):
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
+class BadName(ValueError):
+    pass
+
+
+def hidden(c):
+    return unicodedata.category(c) in HIDDEN and c not in JOINERS and not 0xE0020 <= ord(c) <= 0xE007F
+
+
 def clean_name(value):
     """A display file name only: no directories, invisible or reordering characters, or dot-only names."""
     if not isinstance(value, str):
-        raise ValueError('File name required.')
+        raise BadName('File name required.')
     name = ' '.join(value.split())
     if (not name or len(name) > 150 or name.strip('.') == '' or any(c in name for c in '/\\:*?"<>|')
-            or any(unicodedata.category(c) in HIDDEN for c in value)):
-        raise ValueError('Use a plain file name without folders or special characters.')
+            or any(hidden(c) for c in value)):
+        raise BadName('Use a plain file name without folders or special characters.')
     return name
 
 
@@ -75,6 +85,8 @@ def manifest(encoded, max_bytes):
             raise ValueError()
         result = {'name': clean_name(value.get('name')), 'size': size, 'sha256': digest,
                   'mime': mime.lower(), 'note': note.strip(), 'phone': phone}
+    except BadName as error:
+        raise HTTPException(400, str(error)) from None
     except (TypeError, ValueError, UnicodeDecodeError):
         raise HTTPException(400, 'Invalid file manifest.') from None
     if size > max_bytes:

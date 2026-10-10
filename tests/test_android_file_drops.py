@@ -256,9 +256,11 @@ class FileNameTests(unittest.TestCase):
         self.assertEqual(got['Quarterly report 2026.pdf'], 'Quarterly report 2026.pdf')
 
     def test_format_characters_cannot_disguise_the_extension(self):
-        cases = ['invoice\u202egnp.apk', 'photo\u200f.png', 'a\u2028b.txt', 'a\u2029b.txt', 'a\u0085b.txt', 'a\u0007b.txt', '../x\\y.txt', '...', '', ' trip.pdf ']
+        cases = ['invoice\u202egnp.apk', 'photo\u200f.png', 'a\u2028b.txt', 'a\u2029b.txt', 'a\u0085b.txt', 'a\u0007b.txt', '../x\\y.txt', '...', '', ' trip.pdf ',
+                 'zero\u200bwidth.pdf', '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645.pdf', '\U0001F469\u200d\U0001F4BB.txt']
         self.assertEqual([name for name, _ in self.names(cases)],
-                         ['invoice_gnp.apk', 'photo_.png', 'a_b.txt', 'a_b.txt', 'a_b.txt', 'a_b.txt', '.._x_y.txt', 'download', 'download', 'trip.pdf'])
+                         ['invoice_gnp.apk', 'photo_.png', 'a_b.txt', 'a_b.txt', 'a_b.txt', 'a_b.txt', '.._x_y.txt', 'download', 'download', 'trip.pdf',
+                          'zero_width.pdf', '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645.pdf', '\U0001F469\u200d\U0001F4BB.txt'])
 
 
 @unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')

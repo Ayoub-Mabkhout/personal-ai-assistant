@@ -254,6 +254,13 @@ class FileDropTests(unittest.TestCase):
             accepted = relay.put('unicode-name-01', b'x', name='Résumé – 2026 年\xa0final.pdf')
             self.assertEqual(accepted.status_code, 200, accepted.text)
             self.assertEqual(accepted.json()['name'], 'Résumé – 2026 年 final.pdf')
+            # Joiners are part of normal Persian and emoji spelling.
+            for index, name in enumerate(('\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645.pdf', '\U0001F469\u200d\U0001F4BB notes.txt',
+                                          '\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F.png')):
+                kept = relay.put('joined-name-0%d' % index, b'x', name=name)
+                self.assertEqual((kept.status_code, kept.json().get('name')), (200, name), ascii(name))
+            # The refusal says what is wrong with the name instead of a generic manifest error.
+            self.assertIn('plain file name', relay.put('spoofed-name-02', b'x', name='Invoice\u202efdp.apk').text)
 
     def test_verified_receipt_after_cancel_or_expiry_records_delivery(self):
         with tempfile.TemporaryDirectory() as d:
