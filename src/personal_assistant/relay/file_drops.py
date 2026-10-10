@@ -3,7 +3,8 @@
 The laptop worker (or the owner submit credential) uploads one file under a stable ID.
 The relay keeps it under its data directory with its SHA-256, journals a native ``file``
 event for the phone and deletes the bytes once the phone confirms a verified download,
-or when the drop expires. Retries of the same ID never create a second file or event.
+or when the drop expires or its phone is revoked. Retries of the same ID never create a
+second file or event.
 """
 import base64
 import hashlib
@@ -14,6 +15,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import unicodedata
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -25,6 +27,13 @@ MIME = re.compile(r'[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,
 FIELDS = {'name', 'size', 'sha256', 'mime', 'note', 'phone'}
 FINAL_RETENTION = 30 * 86400
 ORPHAN_AGE = 3600
+SWEEP_INTERVAL = 300
+# FCM keeps a message for at most 28 days; within that, a file event lives as long as its drop.
+EVENT_TTL = 28 * 86400
+# Control, format (bidi overrides and isolates, zero-width marks), surrogate and line/paragraph separator
+# characters: with them "Invoice<U+202E>fdp.apk" would display as "Invoicekpa.pdf".
+HIDDEN = {'Cc', 'Cf', 'Cs', 'Zl', 'Zp'}
+STALE = "state='ready' AND (expires<=? OR phone NOT IN (SELECT id FROM phones WHERE revoked=0))"
 
 
 class Receipt(BaseModel):
@@ -33,12 +42,12 @@ class Receipt(BaseModel):
 
 
 def clean_name(value):
-    """A display file name only: no directories, control characters or dot-only names."""
+    """A display file name only: no directories, invisible or reordering characters, or dot-only names."""
     if not isinstance(value, str):
         raise ValueError('File name required.')
     name = ' '.join(value.split())
     if (not name or len(name) > 150 or name.strip('.') == '' or any(c in name for c in '/\\:*?"<>|')
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            or any(unicodedata.category(c) in HIDDEN for c in value)):
         raise ValueError('Use a plain file name without folders or special characters.')
     return name
 
@@ -87,12 +96,15 @@ class FileDrops:
         except OSError:
             pass
         self.lock = threading.Lock()
+        self.swept = None
         with self.devices.db() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS file_drops(
                 id TEXT PRIMARY KEY,phone TEXT NOT NULL,name TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,
                 sha256 TEXT NOT NULL,note TEXT NOT NULL,requested_phone TEXT,created REAL NOT NULL,expires REAL NOT NULL,
                 state TEXT NOT NULL,finished REAL);
                 CREATE INDEX IF NOT EXISTS file_drops_phone ON file_drops(phone,state);''')
+        # A revoked phone can no longer call a file route, so cleanup cannot wait for one.
+        events.maintenance.append(self.maintain)
 
     def blob(self, identifier):
         if not re.fullmatch(ID, identifier):
@@ -106,13 +118,11 @@ class FileDrops:
 
     def sweep(self):
         """Expire drops past their TTL or for revoked phones; delete their bytes and stale records."""
-        now = self.clock()
+        now = self.swept = self.clock()
         with self.devices.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            gone = db.execute('''SELECT id FROM file_drops WHERE state='ready' AND (expires<=? OR phone NOT IN
-                (SELECT id FROM phones WHERE revoked=0))''', (now,)).fetchall()
-            db.execute('''UPDATE file_drops SET state='expired',finished=? WHERE state='ready' AND (expires<=? OR phone NOT IN
-                (SELECT id FROM phones WHERE revoked=0))''', (now, now))
+            gone = db.execute('SELECT id FROM file_drops WHERE ' + STALE, (now,)).fetchall()
+            db.execute("UPDATE file_drops SET state='expired',finished=? WHERE " + STALE, (now, now))
             db.execute("DELETE FROM file_drops WHERE state!='ready' AND finished<=?", (now - FINAL_RETENTION,))
             ready = {row['id'] for row in db.execute("SELECT id FROM file_drops WHERE state='ready'")}
         for row in gone:
@@ -124,6 +134,16 @@ class FileDrops:
                     path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def maintain(self):
+        """Run by the relay's phone-delivery loop every few seconds: an expired drop or one for a revoked phone is
+        swept on the next tick; the orphan and retention scan otherwise runs every SWEEP_INTERVAL."""
+        now = self.clock()
+        if self.swept is not None and now - self.swept < SWEEP_INTERVAL:
+            with self.devices.db() as db:
+                if not db.execute('SELECT 1 FROM file_drops WHERE ' + STALE + ' LIMIT 1', (now,)).fetchone():
+                    return
+        self.sweep()
 
     def phones(self):
         with self.devices.db() as db:
@@ -160,13 +180,16 @@ class FileDrops:
             (row['requested_phone'] or None) == value['phone']
 
     def announce(self, row):
-        """Journal the phone hint. The payload is stable, so a retried announcement is collapsed."""
+        """Journal the phone hint for as long as the drop waits, so a phone offline for days still gets it.
+        Payload and repeat key are stable per drop, so a retried announcement is collapsed, while a new drop
+        reusing an ID whose old record was forgotten is a new event."""
         if row['state'] != 'ready':
             return
         body = {'type': 'file', 'tag': 'file-' + row['id'], 'file_id': row['id'], 'title': 'File ready: ' + row['name'],
                 'message': row['note'] or row['name'], 'name': row['name'], 'mime': row['mime'], 'size': row['size'],
                 'sha256': row['sha256'], 'visibility': 'private'}
-        self.events.enqueue(body, ttl=max(60, min(86400, int(row['expires'] - self.clock()))), phone=row['phone'])
+        self.events.enqueue(body, ttl=max(60, min(EVENT_TTL, int(row['expires'] - self.clock()))), phone=row['phone'],
+                            repeat='drop-%r' % row['created'], max_ttl=EVENT_TTL)
 
     def existing(self, row, value):
         if not self.same(row, value):
@@ -267,7 +290,9 @@ class FileDrops:
                 raise HTTPException(404, 'File not found.')
             if not hmac.compare_digest(row['sha256'], digest):
                 raise HTTPException(409, 'Downloaded file checksum differs; download it again.')
-            if row['state'] == 'ready':
+            if row['state'] != 'delivered':
+                # A verified checksum is the phone's saved copy, also when cancel or expiry raced a download
+                # that was already streaming from the open file.
                 db.execute("UPDATE file_drops SET state='delivered',finished=? WHERE id=?", (self.clock(), identifier))
         self.blob(identifier).unlink(missing_ok=True)
         return {'id': identifier, 'state': self.get(identifier)['state']}

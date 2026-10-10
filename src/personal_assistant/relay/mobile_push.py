@@ -23,6 +23,8 @@ class MobileEventStore:
     def __init__(self, devices):
         self.devices = devices
         self.clock = devices.clock
+        # Housekeeping the delivery loop runs every tick, such as file-drop expiry.
+        self.maintenance = []
         with devices.db() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS native_push (
                 phone TEXT PRIMARY KEY,provider TEXT NOT NULL,token TEXT NOT NULL,updated REAL NOT NULL);
@@ -57,7 +59,7 @@ class MobileEventStore:
         with self.devices.db() as db:
             return db.execute('SELECT id FROM phones WHERE id=? AND revoked=0', (phone,)).fetchone() is not None
 
-    def enqueue(self, payload, ttl=86400, phone=None, repeat=''):
+    def enqueue(self, payload, ttl=86400, phone=None, repeat='', max_ttl=86400):
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         with self.devices.db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -70,7 +72,7 @@ class MobileEventStore:
                 identifier = hashlib.sha256((row['id'] + ':' + fingerprint).encode()).hexdigest()
                 db.execute('''INSERT OR IGNORE INTO native_events(id,phone,fingerprint,payload,created,expires,due)
                            VALUES(?,?,?,?,?,?,?)''', (identifier, row['id'], fingerprint, encoded,
-                           self.clock(), self.clock() + min(86400, max(1, ttl)), self.clock()))
+                           self.clock(), self.clock() + min(max_ttl, max(1, ttl)), self.clock()))
         return len(rows)
 
     @staticmethod
@@ -377,6 +379,11 @@ class MobilePushPump:
 
     def tick(self):
         self.store.materialize_snoozes()
+        for task in self.store.maintenance:
+            try:
+                task()
+            except Exception as error:
+                logging.warning('Native phone maintenance failed (%s).', type(error).__name__)
         if not self.provider:
             return
         for row in self.store.pending():

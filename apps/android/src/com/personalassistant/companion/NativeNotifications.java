@@ -17,18 +17,19 @@ final class NativeNotifications {
     static synchronized void sync(Context c)throws Exception{
         long cursor=Cloud.prefs(c).getLong("push_cursor",0);
         JSONObject response=(JSONObject)Cloud.call(c,"events?cursor="+cursor,null,true);JSONArray events=response.optJSONArray("items");if(events==null)return;
-        long next=cursor;boolean more=response.optBoolean("more",false),held=false;
+        long next=cursor;boolean more=response.optBoolean("more",false),held=false,files=false;
         Set<String> shown=Cloud.prefs(c).getStringSet("push_shown",new HashSet<String>()),kept=new HashSet<String>();
         for(int i=0;i<events.length();i++){
             JSONObject event=events.getJSONObject(i);long sequence=event.getLong("sequence");String id=event.getString("id");JSONObject body=event.getJSONObject("payload");body.put("created",event.optDouble("created",System.currentTimeMillis()/1000.0));
-            if(event.optDouble("expires",Double.MAX_VALUE)>System.currentTimeMillis()/1000.0){
-                boolean release="release".equals(body.optString("type")),file="file".equals(body.optString("type"));
+            boolean release="release".equals(body.optString("type")),file="file".equals(body.optString("type"));
+            // A drop can outlive its file event: an expired one still has the waiting list checked, and the relay lists only drops still kept.
+            if(file||event.optDouble("expires",Double.MAX_VALUE)>System.currentTimeMillis()/1000.0){
                 // A blocked card stays unreceived so the server reports it and it shows once unblocked. A full page is never held:
                 // the server would keep serving the same 100 events and nothing behind them, reminders included, would arrive.
                 // A file is saved even while its card is blocked, so file events are never held.
                 if(!release&&!file&&!more&&blocked(c,body))held=true;
                 else{
-                    if(!shown.contains(id)){if(release){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}else if(file)FileDrops.due(c);else show(c,id,body);}
+                    if(!shown.contains(id)){if(release){Cloud.prefs(c).edit().putBoolean("update_pending",true).commit();SyncJob.scheduleUpdate(c);}else if(file){FileDrops.due(c);files=true;}else show(c,id,body);}
                     if(held)kept.add(id);
                 }
             }
@@ -40,8 +41,9 @@ final class NativeNotifications {
             Cloud.call(c,"events/receipt",new JSONObject().put("cursor",next),true);
             if(!Cloud.prefs(c).edit().putLong("push_cursor",next).commit())throw new Exception("Phone storage failed");
         }
-        // Also the recovery path: a download that failed or was stopped is rescheduled by the next event sync.
-        if(Cloud.prefs(c).getBoolean("file_drops_due",false))FileDropJob.schedule(c);
+        // Also the recovery path: a download that failed or was stopped, or a waiting list not checked for hours, is scheduled by the
+        // next event sync without cutting short a failure's backoff. A new file event replaces that backoff.
+        if(FileDrops.waiting(c))FileDropJob.schedule(c,files);
         if(events.length()>0)NativeTasks.changed(c);
         Cloud.prefs(c).edit().putBoolean("push_more",more).commit();
     }

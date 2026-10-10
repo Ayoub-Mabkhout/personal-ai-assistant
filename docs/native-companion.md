@@ -89,24 +89,45 @@ Relay endpoints (`relay/file_drops.py`):
 The relay checks the declared size and SHA-256 while streaming to its data directory
 (`file-drops/` beside the queue database), then journals one native event:
 `{type: "file", tag: "file-ID", file_id, title: "File ready: NAME", message, name,
-mime, size, sha256}`. The FCM hint still carries only the opaque event ID. An ID that
+mime, size, sha256}`. The FCM hint still carries only the opaque event ID. The event
+expires with the drop (at most 28 days, FCM's message lifetime), so a phone that was
+offline for days still receives it; `GET /groceries/v1/mobile/files` stays the
+authoritative list of waiting drops and may be called at any time. An ID that
 already exists with the same manifest returns the existing record without storing or
-announcing anything again; different content under the ID is a 409. The phone must be
-named when more than one is paired. Bytes are deleted on the receipt, on cancel, at
-expiry, or when the phone is revoked; terminal records are kept for 30 days so a late
-retry cannot resend. Limits come from `ASSISTANT_FILE_DROP_MAX_MIB` (default 50),
+announcing anything again; different content under the ID is a 409. Once the old
+record has been forgotten, a new drop under the same ID is announced as a new event.
+Names are display names only: folders, reserved characters and Unicode control,
+format (bidi overrides and isolates, zero-width marks), surrogate and line or
+paragraph separator characters are rejected, so a name cannot disguise its extension.
+The phone must be named when more than one is paired. Bytes are deleted on the
+receipt, on cancel, at expiry, or when the phone is revoked; the relay's phone
+delivery loop checks every few seconds, so this needs no file request (a revoked phone
+cannot make one). A verified receipt that arrives after cancel or expiry, from a
+download already in progress, still records `delivered`. Terminal records are kept
+for 30 days so a late retry cannot resend. Limits come from `ASSISTANT_FILE_DROP_MAX_MIB` (default 50),
 `ASSISTANT_FILE_DROP_TTL_DAYS` (7) and `ASSISTANT_FILE_DROP_QUOTA_MIB` (1024 waiting
 bytes in total).
 
-The Companion never holds a file event back: it marks drops due and a persisted
-`FileDropJob` lists waiting drops, streams each to a cache file, verifies size and
-checksum, and saves it. Android 10+ writes MediaStore Downloads; Android 8-9 writes
-app-specific Downloads, shared read-only through `FileDropProvider`. The saved URI is
-recorded per drop ID before the receipt, so a lost receipt never produces a second copy.
-The "File ready" card on the Files channel opens an Open with chooser; Android 10+
-also offers Downloads. A failed or stopped download is retried by the job and by the
-next event sync. Relay acceptance, phone receipt and the owner opening the file are
-separate facts; handset delivery needs its own acceptance check.
+The Companion never holds a file event back, expired ones included: it marks drops due
+and a persisted `FileDropJob` lists waiting drops, streams each to a cache file,
+verifies size and checksum, and saves it. The list is one page of drops; the job lists
+again while a pass finds drops it has not tried yet, so drops past the first page are
+saved in the same run, and a failing drop does not hold back the rest. Android 10+
+writes MediaStore Downloads; Android 8-9 writes app-specific Downloads, shared read-only
+through `FileDropProvider`. Names are cut to 200 UTF-8 bytes at a whole character,
+keeping the extension (file systems allow 255 bytes), and control, format and line or
+paragraph separator characters become `_`. The saved URI is recorded per drop ID before
+the receipt, so a lost receipt never produces a second copy. The "File ready" card on
+the Files channel names the file as saved (MediaStore may add the declared type's
+extension) and opens an Open with chooser typed by that name's extension; Android 10+
+also offers Downloads. An app package (`.apk` or the package type) is saved but never
+opened from the card: on Android 10+ the card opens Downloads instead. A failed or
+stopped download is retried by the job with backoff and by the next event sync; a new
+file event replaces a waiting backoff, while a running job is never restarted and runs
+again if an event arrived after its last listing. Without file events, an event sync
+still checks the list when the last complete check is over six hours old. Relay
+acceptance, phone receipt and the owner opening the file are separate facts; handset
+delivery needs its own acceptance check.
 
 ## FCM errors
 

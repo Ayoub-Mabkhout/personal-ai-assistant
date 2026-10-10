@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,6 +180,100 @@ class FileDropTests(unittest.TestCase):
             # Terminal records are forgotten after their retention period.
             now[0] += 31 * 86400
             self.assertEqual(relay.client.get('/v1/files/expiring-file', headers=owner).status_code, 404)
+
+    def test_delivery_loop_deletes_revoked_and_expired_drops_without_file_requests(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            relay = Relay(d, now, ttl=3600)
+            lost, _ = relay.pair()
+            kept, _ = relay.pair()
+            relay.put('lost-phone-drop', b'for the lost phone', phone=lost)
+            relay.put('stale-drop-0001', b'nobody fetched it', phone=kept)
+            stray = relay.store / '.upload-interrupted'
+            stray.write_bytes(b'partial')
+            os.utime(stray, (0, 0))
+            pump = relay.app.state.native_push_pump
+            # The owner revokes the phone; it can no longer call a file route, so the delivery loop has to clean up.
+            revoked = relay.client.post('/groceries/v1/mobile/phones/%s/revoke' % lost, headers={'Authorization': 'Bearer ' + 'g' * 40})
+            self.assertEqual(revoked.status_code, 200)
+            pump.tick()
+            self.assertEqual(relay.drops.get('lost-phone-drop')['state'], 'expired')
+            self.assertEqual(sorted(p.name for p in relay.store.iterdir()), ['.upload-interrupted', 'stale-drop-0001'])
+            now[0] += 3601
+            pump.tick()
+            self.assertEqual(relay.drops.get('stale-drop-0001')['state'], 'expired')
+            self.assertEqual(list(relay.store.iterdir()), [])
+
+    def test_file_event_lives_as_long_as_the_drop(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            relay = Relay(d, now)
+            _, paired = relay.pair()
+            drop = relay.put('weekly-report-01', b'weekly report').json()
+            # A phone offline for two days still receives an unexpired event for the waiting drop.
+            now[0] += 2 * 86400
+            events = relay.client.get('/groceries/v1/mobile/events', headers=paired).json()['items']
+            self.assertEqual([event['expires'] for event in events], [drop['expires']])
+            self.assertEqual(relay.app.state.mobile_events.status(relay.drops.get('weekly-report-01')['phone'])['pending'], 1)
+        with tempfile.TemporaryDirectory() as d:
+            relay = Relay(d, [1000.0], ttl=40 * 86400)
+            _, paired = relay.pair()
+            relay.put('monthly-report-1', b'monthly report')
+            # FCM keeps a message for at most 28 days; the drop itself stays listed for its own TTL.
+            events = relay.client.get('/groceries/v1/mobile/events', headers=paired).json()['items']
+            self.assertEqual([event['expires'] for event in events], [1000.0 + 28 * 86400])
+
+    def test_reused_id_after_retention_is_announced_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            relay = Relay(d, now)
+            _, paired = relay.pair()
+            content = b'monthly statement'
+            relay.put('statement-0001', content)
+            receipt = {'sha256': hashlib.sha256(content).hexdigest()}
+            relay.client.post('/groceries/v1/mobile/files/statement-0001/receipt', headers=paired, json=receipt)
+            now[0] += 31 * 86400
+            again = relay.put('statement-0001', content).json()
+            self.assertEqual((again['state'], again['created_now']), ('ready', True))
+            events = relay.client.get('/groceries/v1/mobile/events', headers=paired).json()['items']
+            self.assertEqual(len(events), 2)
+            self.assertGreater(events[-1]['expires'], now[0])
+            # Retrying the new drop still announces it only once.
+            self.assertFalse(relay.put('statement-0001', content).json()['created_now'])
+            self.assertEqual(len(relay.client.get('/groceries/v1/mobile/events', headers=paired).json()['items']), 2)
+
+    def test_names_cannot_hide_or_reorder_characters(self):
+        with tempfile.TemporaryDirectory() as d:
+            relay = Relay(d, [1000.0])
+            relay.pair()
+            spoofed = ('Invoice‮fdp.apk', 'Invoice⁧fdp.apk', 'a‏b.pdf', 'zero​width.pdf', 'soft\xadhyphen.pdf',
+                       'bom﻿.pdf', 'line break.pdf', 'para graph.pdf', 'next\x85line.pdf', 'half\ud800.pdf')
+            for bad in spoofed:
+                self.assertEqual(relay.put('spoofed-name-01', b'x', name=bad).status_code, 400, ascii(bad))
+            self.assertEqual(list(relay.store.iterdir()), [])
+            accepted = relay.put('unicode-name-01', b'x', name='Résumé – 2026 年\xa0final.pdf')
+            self.assertEqual(accepted.status_code, 200, accepted.text)
+            self.assertEqual(accepted.json()['name'], 'Résumé – 2026 年 final.pdf')
+
+    def test_verified_receipt_after_cancel_or_expiry_records_delivery(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            relay = Relay(d, now, ttl=3600)
+            _, paired = relay.pair()
+            owner = {'Authorization': 'Bearer ' + OWNER}
+            for identifier in ('cancel-race-01', 'expiry-race-01'):
+                relay.put(identifier, identifier.encode())
+            # Both downloads were already streaming when the owner cancelled one and the other expired.
+            self.assertEqual(relay.client.post('/v1/files/cancel-race-01/cancel', headers=owner).json()['state'], 'cancelled')
+            now[0] += 3601
+            self.assertEqual(relay.client.get('/v1/files/expiry-race-01', headers=owner).json()['state'], 'expired')
+            for identifier in ('cancel-race-01', 'expiry-race-01'):
+                path = '/groceries/v1/mobile/files/%s/receipt' % identifier
+                self.assertEqual(relay.client.post(path, headers=paired, json={'sha256': '0' * 64}).status_code, 409)
+                done = relay.client.post(path, headers=paired, json={'sha256': hashlib.sha256(identifier.encode()).hexdigest()})
+                self.assertEqual(done.json(), {'id': identifier, 'state': 'delivered'})
+                status = relay.client.get('/v1/files/' + identifier, headers=owner).json()
+                self.assertEqual((status['state'], status['finished']), ('delivered', now[0]))
 
     def test_sender_selects_phone_reuses_its_id_and_reports_limits(self):
         with tempfile.TemporaryDirectory() as d:
