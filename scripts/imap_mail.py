@@ -1,17 +1,27 @@
 """Set up encrypted credentials or search/read a live IMAP mailbox."""
 import argparse
 import json
+import os
+import sys
 import threading
 from pathlib import Path
 from personal_assistant.connectors.imap_mail import LiveIMAP, save_credentials
 
 
 def setup(args):
+    # Some Windows Python installations omit Tcl's path from the GUI launcher.
+    for variable, folder in [('TCL_LIBRARY', 'tcl8.6'), ('TK_LIBRARY', 'tk8.6')]:
+        library = Path(sys.base_prefix) / 'tcl' / folder
+        if library.is_dir():
+            os.environ.setdefault(variable, str(library))
     import tkinter as tk
     from tkinter import ttk
     window = tk.Tk()
     window.title('Connect student email')
     window.geometry('470x270')
+    window.lift()
+    window.attributes('-topmost', True)
+    window.after(1500, lambda: window.attributes('-topmost', False))
     frame = ttk.Frame(window, padding=20)
     frame.pack(fill='both', expand=True)
     ttk.Label(frame, text='Enter your university login and password locally.').pack(anchor='w')
