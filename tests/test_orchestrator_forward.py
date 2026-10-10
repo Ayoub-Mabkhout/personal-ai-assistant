@@ -19,6 +19,7 @@ class FakeBridge:
     """Local stand-in for the coordination bridge: same validation, idempotent message IDs."""
     def __init__(self):
         self.posts=[];self.stored={};self.status='transmitted';self.reject=None
+        self.drop=None # 'close': store, then close without answering; 'garbage': store, then answer non-HTTP
         bridge=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -38,7 +39,10 @@ class FakeBridge:
                 if body['id'] in bridge.stored:return self.answer(200,bridge.stored[body['id']])
                 message={**body,'created':'2026-10-09T12:00:00Z','status':bridge.status,
                          **({'error':'Claude desktop session is offline'} if bridge.status=='queued' else {})}
-                bridge.stored[body['id']]=message;self.answer(201,message)
+                bridge.stored[body['id']]=message
+                if bridge.drop=='close':self.close_connection=True;return
+                if bridge.drop=='garbage':self.wfile.write(b'not an HTTP answer\r\n\r\n');self.close_connection=True;return
+                self.answer(201,message)
         self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
         self.port=self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever,daemon=True).start()
@@ -46,13 +50,19 @@ class FakeBridge:
     def close(self):self.server.shutdown();self.server.server_close()
 
 
+def closed_port():
+    with socket.socket() as probe:probe.bind(('127.0.0.1',0));return probe.getsockname()[1]
+
+
 class ScriptedLuna(FakeCLI):
-    """FakeCLI whose first dispatcher decision is replaced by a scripted one."""
-    def __init__(self):super().__init__();self.decision=None
+    """FakeCLI whose first dispatcher decision, and optionally its results review, are scripted."""
+    def __init__(self):super().__init__();self.decision=None;self.review=None
     def run(self,prompt,directory,workspace,model,effort,cancelled,session=None,schema=None,instructions=None):
         record=super().run(prompt,directory,workspace,model,effort,cancelled,session,schema,instructions)
         if schema and 'user_request' in json.loads(prompt) and self.decision is not None:
             Path(record['result']).write_text(json.dumps(self.decision),encoding='utf-8')
+        if schema and 'worker_results' in json.loads(prompt) and self.review is not None:
+            Path(record['result']).write_text(json.dumps(self.review),encoding='utf-8')
         return record
 
 
@@ -137,8 +147,6 @@ class ForwardTests(unittest.TestCase):
         self.assertIn('queued',result['result']['summary']);self.assertIn('Claude desktop session is offline',result['result']['summary'])
 
     def test_bridge_failures_need_input_and_are_never_dropped(self):
-        def closed_port():
-            with socket.socket() as probe:probe.bind(('127.0.0.1',0));return probe.getsockname()[1]
         cases=[('dev-reject-1',lambda:setattr(self.bridge,'reject',403),'HTTP 403','failed'),
                ('dev-uncertain',lambda:(setattr(self.bridge,'reject',None),setattr(self.bridge,'status','uncertain')),'as uncertain','answered'),
                ('dev-offline-1',lambda:self.write_bridge_config(closed_port()),'unreachable','failed'),
@@ -154,6 +162,84 @@ class ForwardTests(unittest.TestCase):
             stored=self.stored_job(identifier);self.assertNotIn(TOKEN,stored)
             self.assertEqual(json.loads(stored)['forward']['state'],state)
         self.assertEqual(self.workers(),[])
+
+    def test_a_connection_dropped_after_the_request_is_uncertain(self):
+        for identifier,mode in (('dev-dropped-1','close'),('dev-garbled-1','garbage')):
+            self.bridge.drop=mode
+            result=self.forward(identifier)
+            self.assertEqual(result['state'],'needs_input',identifier)
+            summary=result['result']['summary']
+            self.assertIn('may have stored the message',summary);self.assertNotIn('was not accepted',summary)
+            self.assertIn(forwarding.message_id(identifier),summary);self.assertTrue(result['result']['reconciliation_required'])
+            self.assertIn(forwarding.message_id(identifier),self.bridge.stored)
+            self.assertEqual(json.loads(self.stored_job(identifier))['forward']['state'],'uncertain')
+
+    def test_a_recovered_forward_keeps_its_earlier_attempt(self):
+        path=lambda identifier:self.root/'orchestrator'/'jobs'/identifier/'job.json'
+        def crash(identifier,forward_state):
+            state=json.loads(path(identifier).read_text(encoding='utf-8'));state.pop('outcome')
+            state['forward']={key:value for key,value in state['forward'].items() if key not in ('bridge','error')}
+            state['forward']['state']=forward_state;write_json(path(identifier),state)
+            return dict(state['forward'])
+        # The bridge stored the message, then the worker died before saving the answer; the bridge is now down.
+        self.assertEqual(self.forward('dev-crash-01')['state'],'completed')
+        first=crash('dev-crash-01','sending')
+        self.write_bridge_config(closed_port())
+        result=Orchestrator(self.config,cli=self.luna).execute(self.job('dev-crash-01'),threading.Event())
+        self.assertEqual(result['state'],'needs_input');self.assertTrue(result['result']['reconciliation_required'])
+        summary=result['result']['summary']
+        self.assertIn('may already be stored',summary);self.assertIn('before resubmitting',summary)
+        self.assertNotIn('was not accepted',summary);self.assertIn(forwarding.message_id('dev-crash-01'),summary)
+        record=json.loads(self.stored_job('dev-crash-01'))['forward']
+        self.assertEqual((record['state'],record['attempted_at'],record['attempts'],record['previous_state']),
+                         ('uncertain',first['attempted_at'],2,'sending'))
+        self.assertEqual(record['request_sha256'],first['request_sha256'])
+        # An earlier attempt that the bridge definitely refused left nothing there to duplicate.
+        self.write_bridge_config(self.bridge.port);self.bridge.reject=403
+        self.assertEqual(self.forward('dev-crash-02')['state'],'needs_input')
+        crash('dev-crash-02','failed');self.write_bridge_config(closed_port())
+        result=Orchestrator(self.config,cli=self.luna).execute(self.job('dev-crash-02'),threading.Event())
+        self.assertIn('was not accepted',result['result']['summary'])
+        record=json.loads(self.stored_job('dev-crash-02'))['forward']
+        self.assertEqual((record['state'],record['attempts'],record['previous_state']),('failed',2,'failed'))
+
+    def test_a_results_review_cannot_forward(self):
+        self.luna.review={'action':'forward','summary':'This turned out to be development.','forward_to':'claude','tasks':[]}
+        result=self.agent.execute(self.job('dev-late-001',command='Write a report'),threading.Event())
+        self.assertEqual(result['state'],'needs_input');self.assertTrue(result['result']['reconciliation_required'])
+        self.assertIn('after 1 worker run(s)',result['result']['summary'])
+        self.assertEqual(self.bridge.posts,[]);self.assertEqual(len(self.workers()),1)
+        state=json.loads(self.stored_job('dev-late-001'))
+        self.assertEqual(len(state['workers']),1);self.assertNotIn('forward',state)
+        review=[json.loads(c['prompt']) for c in self.luna.calls if c['model']=='gpt-6-luna' and 'worker_results' in json.loads(c['prompt'])]
+        self.assertEqual(review[0]['dev_forwarding'],{'available':False,'sessions':[]})
+        self.assertIn('a results review never forwards',review[0]['dispatch_protocol'])
+
+    def test_a_follow_up_on_a_forwarded_task_is_not_run_headlessly(self):
+        result=self.forward('dev-parent-01')
+        self.assertEqual(result['state'],'completed');self.assertNotIn('orchestrator_session_id',result['result'])
+        def follow(identifier):
+            return self.agent.execute({'id':identifier,'payload':{'id':identifier,'command':'Also add a regression test.',
+                                       'resume_task':{'root_id':'dev-parent-01'}}},threading.Event())
+        before=len(self.luna.calls)
+        answer=follow('dev-follow-01')
+        self.assertEqual(answer['state'],'needs_input');self.assertNotIn('reconciliation_required',answer['result'])
+        self.assertIn('forwarded to the '+forwarding.SESSIONS['claude']+' as message '+forwarding.message_id('dev-parent-01'),answer['result']['summary'])
+        self.assertIn('This follow-up was not run',answer['result']['summary'])
+        # A forwarded task saved before this check, with a Luna session ID and no forward record, is refused too.
+        path=self.root/'orchestrator'/'jobs'/'dev-parent-01'/'job.json'
+        state=json.loads(path.read_text(encoding='utf-8'));state.pop('forward')
+        state['outcome']['result']['orchestrator_session_id']='persistent-luna';write_json(path,state)
+        self.assertIn('forwarded to the '+forwarding.SESSIONS['claude'],follow('dev-follow-02')['result']['summary'])
+        self.assertEqual(len(self.luna.calls),before);self.assertEqual(len(self.bridge.posts),1)
+        self.assertFalse((self.root/'orchestrator'/'jobs'/'dev-follow-01'/'continuation').exists())
+        # A forward the bridge refused is named as failed, and its follow-up is not run either.
+        self.bridge.reject=403;self.assertEqual(self.forward('dev-refused-1')['state'],'needs_input')
+        before=len(self.luna.calls)
+        answer=self.agent.execute({'id':'dev-follow-03','payload':{'id':'dev-follow-03','command':'Try again.',
+                                   'resume_task':{'root_id':'dev-refused-1'}}},threading.Event())
+        self.assertIn('forwarding it to the '+forwarding.SESSIONS['claude']+' as message '+forwarding.message_id('dev-refused-1')+' failed',answer['result']['summary'])
+        self.assertEqual(len(self.luna.calls),before)
 
     def test_forward_fields_must_be_consistent(self):
         assignment={'agent':'codex','model':'gpt-6.1-sol','effort':'medium','prompt':'Fix it','workspace':str(self.root),

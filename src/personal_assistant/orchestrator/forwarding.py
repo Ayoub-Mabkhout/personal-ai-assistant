@@ -7,6 +7,7 @@ only to send; it never logs or stores the token. The message ID derives from the
 queue task ID, so a retried or recovered task never posts a second message.
 """
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import re
@@ -98,6 +99,7 @@ def send(config,body):
         settings=json.loads(config_path(config).read_text(encoding='utf-8-sig'))
         port=int(settings['port']);token=str(settings['token'])
         if not token:raise ValueError('empty token')
+        if not 0<port<65536:raise ValueError('port out of range')
     except (OSError,ValueError,KeyError,TypeError) as error:
         raise ForwardError('The coordination bridge is not configured on this laptop ('+type(error).__name__+').') from None
     def redact(text):return clip(str(text).replace(token,'[redacted]'),300)
@@ -115,11 +117,18 @@ def send(config,body):
         raise ForwardError('The coordination bridge rejected the message (HTTP '+str(error.code)+': '+redact(detail)+').') from None
     except (TimeoutError,socket.timeout):
         raise ForwardError('The coordination bridge did not answer in time; it may have stored the message.',uncertain=True) from None
-    except (urllib.error.URLError,OSError) as error:
-        reason=getattr(error,'reason',error)
+    except urllib.error.URLError as error:
+        # urllib wraps only failures while connecting or writing the request, and the bridge
+        # stores nothing before it has read the whole request.
+        reason=error.reason
         if isinstance(reason,(TimeoutError,socket.timeout)):
             raise ForwardError('The coordination bridge did not answer in time; it may have stored the message.',uncertain=True) from None
         raise ForwardError('The coordination bridge is unreachable ('+type(reason).__name__+').') from None
+    except (http.client.HTTPException,OSError) as error:
+        # Raised after the request was written (RemoteDisconnected, ConnectionResetError,
+        # BadStatusLine, IncompleteRead): the bridge may have stored it before the connection dropped.
+        raise ForwardError('The coordination bridge closed the connection without a complete answer ('+type(error).__name__+
+                           '); it may have stored the message.',uncertain=True) from None
     try:reply=json.loads(raw)
     except ValueError:reply=None
     if not isinstance(reply,dict) or reply.get('id')!=body['id']:

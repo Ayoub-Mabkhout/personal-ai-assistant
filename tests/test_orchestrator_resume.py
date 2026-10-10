@@ -173,5 +173,41 @@ class RecentTaskTests(unittest.TestCase):
         self.assertEqual(self.run_job('task-pair-001')['state'],'needs_input')
         self.assertEqual(len([c for c in self.luna.calls if c['model']!='gpt-6-luna']),before)
 
+    def plan(self,*workspaces,create=None):
+        """Script Luna's first decision as one assignment per workspace; the first worker may create a folder."""
+        original=self.luna.run
+        def run(prompt,directory,workspace,model,effort,cancelled,session=None,schema=None,instructions=None):
+            if not schema and create and prompt=='Assignment 0':create.mkdir(parents=True)
+            record=original(prompt,directory,workspace,model,effort,cancelled,session,schema,instructions)
+            if schema and 'user_request' in json.loads(prompt):
+                path=Path(record['result']);body=json.loads(path.read_text(encoding='utf-8'));first=body['tasks'][0]
+                body['tasks']=[{**first,'prompt':'Assignment '+str(index),'workspace':str(value)} for index,value in enumerate(workspaces)]
+                path.write_text(json.dumps(body),encoding='utf-8')
+            return record
+        self.luna.run=run
+
+    def worker_calls(self):return [c for c in self.luna.calls if c['model']!='gpt-6-luna']
+
+    def test_a_later_assignment_may_use_a_folder_an_earlier_one_creates(self):
+        project=self.root/'work'/'project'
+        self.plan(self.root,project,create=project)
+        result=self.run_job('task-mkdir-01','Create a project folder and build the site in it')
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual([w['workspace'] for w in self.state('task-mkdir-01')['workers']],[str(self.root),str(project)])
+
+    def test_a_missing_folder_stops_at_its_launch_and_keeps_earlier_results(self):
+        self.plan(self.root,self.root/'never-created')
+        result=self.run_job('task-gone-001')
+        self.assertEqual(result['state'],'needs_input');self.assertTrue(result['result']['reconciliation_required'])
+        self.assertIn('existing absolute directory',result['result']['summary'])
+        self.assertEqual([c['prompt'] for c in self.worker_calls()],['Assignment 0'])
+        self.assertEqual([w['workspace'] for w in self.state('task-gone-001')['workers']],[str(self.root)])
+        # A relative workspace is still rejected before any worker of the decision starts.
+        self.luna=SessionCLI();self.agent=Orchestrator(self.config,cli=self.luna,claude=self.claude)
+        self.plan(self.root,'relative'+os.sep+'folder')
+        result=self.run_job('task-relative-1')
+        self.assertEqual(result['state'],'needs_input');self.assertIn('absolute directory',result['result']['summary'])
+        self.assertEqual(self.worker_calls(),[])
+
 
 if __name__=='__main__':unittest.main()

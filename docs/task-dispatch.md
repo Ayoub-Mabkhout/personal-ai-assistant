@@ -103,9 +103,12 @@ and names the reused task in its summary. Code accepts `resume_session` only fro
 this job's own results or the listed sessions. An earlier session must keep its
 agent, its model (its context was built by that model) and its workspace (Claude
 resolves sessions per project directory); effort may change. Guessed IDs and any
-mismatch are rejected before any worker of that decision starts. `job.json` keeps
-the list Luna saw, `resumed_from_task` (the earlier task IDs) and the same field on
-each resumed worker.
+mismatch are rejected before any worker of that decision starts, and so is a relative
+workspace. Whether a workspace exists is checked just before its worker launches, so
+an earlier assignment of the same decision may create it; each finished worker is
+saved to `job.json` at once, so a later refused or interrupted sibling cannot drop
+its result. `job.json` keeps the list Luna saw, `resumed_from_task` (the earlier task
+IDs) and the same field on each resumed worker.
 
 ## Forwarding assistant development
 
@@ -117,6 +120,12 @@ and one Codex, instead of headless workers. Requests that merely use the assista
 Luna returns `action: forward` with `forward_to: claude|codex` and no tasks; every
 other action carries `forward_to: none`, and code rejects any other combination. An
 explicitly named agent wins; otherwise Luna picks the one with more `agent_capacity`.
+A forward is accepted only as the first decision, before any worker runs: the message
+carries just the owner's request, so a forward from a results review returns
+needs_input with `reconciliation_required` and the saved worker results. A follow-up
+on a forwarded task (Reply or task-page instruction) is not run headlessly: it returns
+needs_input naming the development session and message ID. A forwarded outcome carries
+no Luna session ID.
 
 Delivery uses a local coordination bridge outside this repository. Its private
 config (`coordination_config`, default `~/.personal-assistant/coordination/config.json`)
@@ -136,6 +145,12 @@ never the token). A transmitted, accepted or queued message (the session is offl
 and the bridge retries) completes the task with that status in the summary. A
 missing config, an unreachable bridge, a non-2xx answer, or an `uncertain` or
 `failed` status returns needs_input with the message ID and `reconciliation_required`.
+A missing config, a connection that cannot be made or a non-2xx answer is a definite
+failure (record `failed`; resubmit). A timeout, or a connection the bridge drops after
+receiving the request (no or malformed answer), is `uncertain`: check the message ID
+before resubmitting.
+A crash recovery keeps the earlier record and its first attempt time; when an earlier
+attempt may have reached the bridge, a failed retry is also reported as `uncertain`.
 
 ## Submit a task
 

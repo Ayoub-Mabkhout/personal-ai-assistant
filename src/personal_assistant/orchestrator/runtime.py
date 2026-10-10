@@ -286,8 +286,9 @@ shopping, files, research, phone actions). An explicitly named session or agent 
 ("ask Claude", "Codex should"); otherwise forward to the agent with more remaining
 agent_capacity, five-hour window first, then weekly. When both are low, still
 forward and say so. If unsure whether it is development work, dispatch normally or
-return needs_input. A forward summary is a short routing note for the receiving
-session. Every other action uses forward_to=none.
+return needs_input. Forward only as the first decision for a request, before any
+worker runs; a results review never forwards. A forward summary is a short routing
+note for the receiving session. Every other action uses forward_to=none.
 '''
 
 SKILL_DISPATCH='''The skill_catalog is the portable agent skill repository. Select relevant
@@ -418,13 +419,15 @@ class Orchestrator:
     def validate_assignment(self,task,state,recent):
         """Check one assignment before any worker of its decision starts.
 
-        Returns the earlier task ID whose worker session this assignment resumes, if any.
+        The workspace must exist only when its worker launches, since an earlier assignment
+        of the same decision may create it. Returns the earlier task ID whose worker session
+        this assignment resumes, if any.
         """
         if task.model=='gpt-6-luna' and task.effort=='ultra': raise ValueError('Luna does not support ultra')
         if (task.model in CLAUDE_MODELS)!=(task.agent=='claude'): raise ValueError('Assignment model does not belong to its agent')
         if task.agent=='claude' and task.effort=='ultra': raise ValueError('Claude does not support ultra')
         workspace=Path(task.workspace)
-        if not workspace.is_absolute() or not workspace.is_dir(): raise ValueError('Worker workspace must be an existing absolute directory')
+        if not workspace.is_absolute(): raise ValueError('Worker workspace must be an absolute directory')
         unknown=set(task.skills)-{entry['name'] for entry in self.skills.catalog()}
         if unknown:raise ValueError('Unknown repository skill: '+', '.join(sorted(unknown)))
         if not task.resume_session:return None
@@ -442,19 +445,32 @@ class Orchestrator:
         """Send a development request to the owner's interactive session through the local bridge."""
         target=decision.forward_to;label=forwarding.SESSIONS[target]
         identity=forwarding.message_id(job['id'])
-        record={'to':target,'message_id':identity,'request_sha256':forwarding.request_digest(job['payload']['command']),
-                'state':'sending','attempted_at':datetime.now(timezone.utc).isoformat()}
+        now=datetime.now(timezone.utc).isoformat()
+        earlier=state.get('forward') if (state.get('forward') or {}).get('message_id')==identity else None
+        # Only an attempt that definitely failed left nothing at the bridge.
+        stored=bool(earlier) and earlier.get('state')!='failed'
+        if earlier:
+            # Recovery after a crash: keep the earlier record and its first attempt time.
+            record={key:value for key,value in earlier.items() if key!='error'}
+            record.update(state='sending',previous_state=earlier.get('state'),attempts=int(earlier.get('attempts') or 1)+1,retried_at=now)
+        else:
+            record={'to':target,'message_id':identity,'request_sha256':forwarding.request_digest(job['payload']['command']),
+                    'state':'sending','attempted_at':now}
         # Saved before sending: a crash leaves the message ID to check, and a rerun reuses it.
         state['forward']=record;write_json(state_path,state)
-        result={'executor':'agent.forward','forwarded_to':target,'forward_message_id':identity,
-                'orchestrator_session_id':self.session()['session_id'],'trace_ref':str(directory)}
+        # No Luna session ID: a follow-up on a forwarded task must never run headlessly in it.
+        result={'executor':'agent.forward','forwarded_to':target,'forward_message_id':identity,'trace_ref':str(directory)}
         try:
             body=forwarding.message(self.config,job,target,decision.summary)
             record['topic']=body['topic']
             reply=forwarding.send(self.config,body)
         except forwarding.ForwardError as error:
-            record.update(state='uncertain' if error.uncertain else 'failed',error=str(error));write_json(state_path,state)
-            if error.uncertain:
+            record.update(state='uncertain' if error.uncertain or stored else 'failed',error=str(error));write_json(state_path,state)
+            if stored and not error.uncertain:
+                summary=('Delivery of this development task to the '+label+' is uncertain: message '+identity+' may already be stored from an earlier attempt ('+
+                         str(earlier.get('state'))+'), and the retry failed: '+str(error)+' Check message '+identity+
+                         ' at the coordination bridge before resubmitting, so the session does not receive it twice.')
+            elif error.uncertain:
                 summary=('Delivery of this development task to the '+label+' is uncertain: '+str(error)+' Message '+identity+
                          '. Check the coordination bridge before resubmitting, so the session does not receive it twice.')
             else:
@@ -477,6 +493,17 @@ class Orchestrator:
         if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}',root_id):raise ValueError('Invalid original task ID.')
         root=self.root/'jobs'/root_id
         parent=json.loads((root/'job.json').read_text(encoding='utf-8'))
+        sent=parent.get('forward') or {};earlier=(parent.get('outcome') or {}).get('result') or {}
+        if sent or earlier.get('executor')=='agent.forward':
+            # The interactive development session owns a forwarded task; never redo it headlessly here.
+            target=sent.get('to') or earlier.get('forwarded_to');identity=sent.get('message_id') or earlier.get('forward_message_id')
+            label=forwarding.SESSIONS.get(target,'development session');message=' as message '+str(identity) if identity else ''
+            if sent.get('state')=='failed':
+                summary='Task '+root_id+' is a development task, but forwarding it to the '+label+message+' failed. This follow-up was not run; send the request again as a new task.'
+            else:
+                summary=('Task '+root_id+' was forwarded to the '+label+message+', which does the development work and reports to you directly. '
+                         'This follow-up was not run. Continue in that session, or send it as a new request so Luna can forward it.')
+            return {'state':'needs_input','result':{'summary':summary,'executor':'agent.continuation','root_task_id':root_id,'trace_ref':str(directory)}}
         conversation_path=root/'conversation.json'
         conversation=json.loads(conversation_path.read_text(encoding='utf-8')) if conversation_path.is_file() else {}
         worker=conversation.get('worker')
@@ -558,6 +585,10 @@ class Orchestrator:
                     if decision.action!='dispatch':
                         if decision.tasks: raise ValueError('A terminal decision must have no worker assignments')
                         if decision.action=='forward':
+                            # The forwarded message carries only the owner's request, not work workers already did.
+                            if round_number or state['workers']:
+                                raise ValueError('Luna asked to forward this task to a development session after '+str(len(state['workers']))+
+                                                 ' worker run(s). Their results are saved with this task; review them before forwarding or resubmitting the request.')
                             outcome=self.forward(job,decision,state,state_path,directory)
                             break
                         outcome={'state':'completed' if decision.action=='complete' else 'needs_input',
@@ -574,6 +605,8 @@ class Orchestrator:
                     completed=[]
                     for index,task in enumerate(decision.tasks):
                         workspace=Path(task.workspace)
+                        # Checked at launch, not upfront: an earlier assignment of this decision may create it.
+                        if not workspace.is_dir(): raise ValueError('Worker workspace must be an existing absolute directory')
                         run_directory=directory/f'worker-{round_number}-{index}'
                         selected=list(task.skills)
                         if task.task_type=='email' and 'email' not in selected:
@@ -611,14 +644,16 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                             'trace':record['trace'],'artifacts':checks,'usage':record.get('usage',{}),
                             'task_type':task.task_type,'skills':selected,'workspace':str(workspace),
                             **({'resumed_from_task':origins[index]} if origins[index] else {})})
+                        # Persisted as each worker finishes, so a later refused or interrupted sibling cannot drop it.
+                        if completed[-1]['trace'] not in {worker['trace'] for worker in state['workers']}:
+                            state['workers'].append(completed[-1]);write_json(state_path,state)
                     # Persist before delivering results into the next Luna turn.
-                    previous={worker['trace'] for worker in state['workers']}
-                    state['workers'] += [worker for worker in completed if worker['trace'] not in previous]
                     state['phase']='workers_completed';write_json(state_path,state)
                     prompt=json.dumps({'task_id':job['id'],'instruction':'Review these worker results; verify evidence and complete or delegate follow-up.',
                                        'dispatch_protocol':DISPATCH_INSTRUCTIONS+SKILL_DISPATCH,
                                        'worker_results':completed,'skill_catalog':self.skills.catalog(),
-                                       'agent_capacity':capacity.snapshot(self.config)},ensure_ascii=False)
+                                       'agent_capacity':capacity.snapshot(self.config),
+                                       'dev_forwarding':{'available':False,'sessions':[]}},ensure_ascii=False)
                 else:
                     outcome={'state':'needs_input','result':{'summary':'This task reached eight delegation rounds. Its results are saved; choose the next step.',
                                                             'trace_ref':str(directory)}}
