@@ -47,6 +47,17 @@ for archive provenance. Read the actual conversation and relevant sent items.
 [Graph search](https://learn.microsoft.com/en-us/graph/search-query-parameter),
 [Graph messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages).
 
+For a configured university/private IMAP mailbox, use live headless access:
+`scripts/imap_mail.py check`, `search --subject "topic" --sender "sender"`, or
+`read --folder "INBOX" --uid UID`, using the repository Python environment.
+Credentials are Windows DPAPI-encrypted outside OneDrive; do not print or copy
+them into prompts. Searches return headers first; read only relevant messages.
+Select the appropriate folder for sent mail or related threads. A source identity
+is account + folder + UIDVALIDITY + UID; Message-ID/References connect threads.
+Reads use EXAMINE and BODY.PEEK so messages are not marked read. IMAP text search
+currently supports ASCII; provider errors are not evidence of no matching mail.
+Attachment names returned by read are metadata, not downloaded documents.
+
 CLI workers explicitly enable apps and plugins while retaining their existing
 ChatGPT login. The installed Gmail plugin can reuse its authorized account
 connection without copying credentials. Discover its live tools and verify account
