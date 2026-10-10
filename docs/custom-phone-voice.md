@@ -129,12 +129,17 @@ Voice on a native task conversation reuses the same recorder, endpointing and
 conversation state. Dictation binds a task target to exactly one capture,
 uploads it with `dry_run` (not through the command outbox) and returns the words
 to that task's draft; the server transcribes without dispatching. A task
-conversation binds every capture to the task, uploads it with `dry_run`, saves
-the transcript with `NativeTasks.enqueueFollowupWithId` using the capture's ID
-and polls that turn (`continue-` plus the SHA-256 prefix of the ID) until it
-settles, then speaks a bounded plain-text answer. Whole-request end phrases end
-it locally. These turns never start the live WebSocket. No relay change is
-required.
+conversation binds its own captures to the task (the turn it starts and each
+turn in the follow-up window it opens after speaking an answer), uploads them
+with `dry_run`, saves the transcript with `NativeTasks.enqueueFollowupWithId`
+using the capture's ID and polls that turn (`continue-` plus the SHA-256 prefix
+of the ID) until it settles, then speaks a bounded plain-text answer. Once the
+server holds a turn the recorder is free; a Hey Chat or Talk capture that starts
+while only the answer is awaited ends the task conversation (audio routing
+restored) and runs as an ordinary command on the recorder it began on, and the
+answer then appears only in the task and its notification. Whole-request end
+phrases end it locally. These turns never start the live WebSocket. No relay
+change is required.
 
 User recordings and generated/augmented evaluation fixtures remain under ignored
 `state/voice/`. Preserve source-family splits: augmentations of training templates

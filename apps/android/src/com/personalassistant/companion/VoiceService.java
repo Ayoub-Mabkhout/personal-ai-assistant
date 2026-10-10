@@ -26,6 +26,7 @@ public class VoiceService extends Service {
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent!=null&&STOP.equals(intent.getAction())){Cloud.prefs(this).edit().putBoolean("wake_enabled",false).putBoolean("voice_listening_test",false).commit();stopSelf();return START_NOT_STICKY;}
         if(intent!=null&&END_CONVERSATION.equals(intent.getAction())){endConversation();return START_NOT_STICKY;}
+        if(intent!=null&&TASK_FINISH.equals(intent.getAction())){taskFinish(intent.getStringExtra("task_id"));return START_NOT_STICKY;}
         if(checkSelfPermission("android.permission.RECORD_AUDIO")!=android.content.pm.PackageManager.PERMISSION_GRANTED){state("Microphone permission required");stopSelf();return START_NOT_STICKY;}
         try{Notification notice=notification("Starting microphone…");if(Build.VERSION.SDK_INT>=29)startForeground(217,notice,ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);else startForeground(217,notice);
             if(intent!=null&&START_CONVERSATION.equals(intent.getAction())){setConversation(true);session=UUID.randomUUID().toString();}
@@ -55,10 +56,13 @@ public class VoiceService extends Service {
             if(AcousticEchoCanceler.isAvailable()){echo=AcousticEchoCanceler.create(recorder.getAudioSessionId());if(echo!=null)echo.setEnabled(false);}if(!running.get())return;Cloud.prefs(this).edit().putLong("voice_recorder_start_request_ns",SystemClock.elapsedRealtimeNanos()).apply();recorder.startRecording();Cloud.prefs(this).edit().putBoolean("voice_mic_active",true).putLong("voice_mic_ready_ns",SystemClock.elapsedRealtimeNanos()).apply();if(wake)state("Preparing Hey Chat listening…");
             detector=wake?loadDetector():new DisabledWakeDetector();if(wake&&!detector.available()){state("Wake model not installed · use Talk");wake=false;if(!requestCapture){main.post(this::stopSelf);return;}}Cloud.prefs(this).edit().putString("wake_detector",detector.name()).commit();
             WakeStreamGate wakeStream=new WakeStreamGate(detector);boolean firstPcm=true;short[] frame=new short[320];int quiet=0,voiced=0,elapsed=0,zeros=0;double noiseFloor=40;long lastMetrics=0,testCooldown=0;boolean wasTest=false,echoEnabled=false,wakeCapture=false;ArrayDeque<Double> ambient=new ArrayDeque<>();state(wake?"Listening locally for Hey Chat · experimental":"Ready for voice");
+            // A command that ends an awaiting task conversation (taskYield) keeps the recorder it began on until it ends, so no audio is lost to a mid-command recorder swap.
+            boolean keepInput=false;
             while(running.get()){
-                if(communicationInput!=conversationMode){
+                if(keepInput&&!capture.active())keepInput=false;
+                if(communicationInput!=conversationMode&&!keepInput){
                     if(noise!=null){noise.release();noise=null;}if(echo!=null){echo.release();echo=null;}
-                    recorder.stop();recorder.release();communicationInput=conversationMode;recorder=createRecorder(communicationInput,minimum);
+                    keepNextInput=false;recorder.stop();recorder.release();communicationInput=conversationMode;recorder=createRecorder(communicationInput,minimum);
                     if(NoiseSuppressor.isAvailable()){noise=NoiseSuppressor.create(recorder.getAudioSessionId());if(noise!=null)noise.setEnabled(false);}
                     if(AcousticEchoCanceler.isAvailable()){echo=AcousticEchoCanceler.create(recorder.getAudioSessionId());if(echo!=null)echo.setEnabled(false);}echoEnabled=false;recorder.startRecording();
                 }
@@ -70,6 +74,7 @@ public class VoiceService extends Service {
                 boolean useEcho=live!=null||speaking;if(echo!=null&&useEcho!=echoEnabled){echo.setEnabled(useEcho);echoEnabled=useEcho;}
                 int n=readMicrophone(frame);if(n<0)throw new IOException("Microphone interrupted ("+n+")");if(n==0){if(++zeros>100)throw new IOException("Microphone unavailable");continue;}zeros=0;if(firstPcm){firstPcm=false;Cloud.prefs(this).edit().putLong("voice_first_pcm_ns",SystemClock.elapsedRealtimeNanos()).apply();}
                 if(cancelCapture){cancelCapture=false;capture.cancel();wakeStream.pause();}
+                String stopTask=taskStop(capture.active(),voiced);if(stopTask.equals("cancel")&&!wake&&!capture.active()&&!waiting&&!speaking&&live==null&&!conversationMode){main.post(this::stopSelf);break;}
                 double sum=0;for(int i=0;i<n;i++)sum+=(double)frame[i]*frame[i];double rms=Math.sqrt(sum/n);
                 long now=SystemClock.elapsedRealtime();if(now-lastMetrics>=200){lastMetrics=now;float level=(float)Math.max(0,Math.min(1,(20*Math.log10(Math.max(1,rms)/32768.0)+60)/50));String partial=detector instanceof VoskWakeDetector?((VoskWakeDetector)detector).partial():"";Cloud.prefs(this).edit().putFloat("voice_level",level).putLong("voice_metrics_elapsed",now).putString("voice_last_partial",partial).putBoolean("voice_conversation_active",!testing&&(capture.active()||live!=null||waiting||speaking||followup)).apply();}
                 if(liveEnded){liveEnded=false;live=null;followup=false;if(!liveAcknowledged&&capture.active()){quiet=0;voiced=6400;elapsed=capture.size();state("Connection lost · still recording; command will be saved after a pause");}else{capture.cancel();setConversation(false);state(liveEndReason==null?"Connection lost · check requests; use Talk to retry":liveEndReason);if(!wake){main.post(this::stopSelf);break;}}}
@@ -84,11 +89,11 @@ public class VoiceService extends Service {
                     if(followup&&System.currentTimeMillis()>=conversationDeadline){followup=false;setConversation(false);session=UUID.randomUUID().toString();if(!wake){main.post(this::stopSelf);break;}state("Listening locally for Hey Chat · experimental");}
                     boolean detected=!trigger&&wake&&now>=testCooldown&&wakeStream.accept(frame,n);
                     if(testing){if(detected){testCooldown=now+2000;wakeStream.pause();capture.cancel();main.post(()->{if(destroyed)return;rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(40,VibrationEffect.DEFAULT_AMPLITUDE));state("Heard Hey Chat · local test");});}continue;}
-                    if(trigger||detected){long wakeClock=SystemClock.elapsedRealtimeNanos();wakeStream.pause();capture.begin(detected||followup);turnGeneration++;if(!conversationMode)session=UUID.randomUUID().toString();long captureClock=SystemClock.elapsedRealtimeNanos();android.content.SharedPreferences.Editor clocks=Cloud.prefs(this).edit().putLong("voice_capture_started_ns",captureClock);if(detected)clocks.putLong("voice_wake_detected_ns",wakeClock);clocks.apply();quiet=elapsed=voiced=0;wakeCapture=detected;followup=false;captureTask=taskTarget;captureDictation=taskDictation;if(taskDictation){taskTarget=null;taskDictation=false;}final boolean acknowledgeWake=detected;main.post(()->{if(destroyed)return;if(acknowledgeWake){wakeCue(this);rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(25,VibrationEffect.DEFAULT_AMPLITUDE));}if(!waiting&&!speaking&&live==null)state("Listening to your command…");});if(conversationMode&&captureTask==null&&!Cloud.prefs(this).getBoolean("voice_preview",false)&&VoiceOutbox.networkReady(this))startLive(capture.snapshot());}
+                    if(trigger||detected){long wakeClock=SystemClock.elapsedRealtimeNanos();wakeStream.pause();taskYield();if(keepNextInput){keepNextInput=false;keepInput=true;}capture.begin(detected||followup);turnGeneration++;if(!conversationMode)session=UUID.randomUUID().toString();long captureClock=SystemClock.elapsedRealtimeNanos();android.content.SharedPreferences.Editor clocks=Cloud.prefs(this).edit().putLong("voice_capture_started_ns",captureClock);if(detected)clocks.putLong("voice_wake_detected_ns",wakeClock);clocks.apply();quiet=elapsed=voiced=0;wakeCapture=detected;followup=false;captureTask=taskTarget;captureDictation=taskDictation;if(taskDictation){taskTarget=null;taskDictation=false;}final boolean acknowledgeWake=detected;main.post(()->{if(destroyed)return;if(acknowledgeWake){wakeCue(this);rememberWake();((Vibrator)getSystemService(VIBRATOR_SERVICE)).vibrate(VibrationEffect.createOneShot(25,VibrationEffect.DEFAULT_AMPLITUDE));}if(!waiting&&!speaking&&live==null)state("Listening to your command…");});if(conversationMode&&captureTask==null&&!Cloud.prefs(this).getBoolean("voice_preview",false)&&VoiceOutbox.networkReady(this))startLive(capture.snapshot());}
                 }else{
                     wakeStream.pause();elapsed+=n;if(speech){voiced+=n;quiet=0;}else quiet+=n;
-                    if(CaptureTurnPolicy.finished(elapsed,voiced,quiet,wakeCapture)){short[] pcm=capture.finish();waiting=true;state("Sending voice command…");submit(pcm);}
-                    else if(CaptureTurnPolicy.expired(elapsed,voiced)){capture.cancel();taskDropped(wake);state(wake?"Listening locally for Hey Chat · experimental":"No speech heard");if(!wake){main.post(this::stopSelf);break;}}
+                    if(CaptureTurnPolicy.finished(elapsed,voiced,quiet,wakeCapture)||stopTask.equals("finish")){short[] pcm=capture.finish();waiting=true;state("Sending voice command…");submit(pcm);}
+                    else if(CaptureTurnPolicy.expired(elapsed,voiced)||stopTask.equals("drop")){capture.cancel();taskDropped(stopTask.equals("drop"));state(wake?"Listening locally for Hey Chat · experimental":"No speech heard");if(!wake){main.post(this::stopSelf);break;}}
                 }
             }
         }catch(Exception error){if(running.get())state("Voice stopped: "+error.getMessage());main.post(this::stopSelf);}finally{running.set(false);Cloud.prefs(this).edit().putBoolean("voice_mic_active",false).putBoolean("voice_conversation_active",false).putFloat("voice_level",0f).apply();if(detector!=null)detector.close();if(noise!=null)noise.release();if(echo!=null)echo.release();if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();recorder=null;}if(lock!=null&&lock.isHeld())lock.release();}
@@ -187,7 +192,7 @@ public class VoiceService extends Service {
         else{followup=false;session=UUID.randomUUID().toString();if(Cloud.prefs(this).getBoolean("wake_enabled",false))state("Listening locally for Hey Chat");else stopSelf();}
     }
     private void setConversation(boolean enabled){
-        conversationMode=enabled;if(!enabled){taskTarget=null;taskDictation=false;}android.content.SharedPreferences.Editor edit=Cloud.prefs(this).edit().putBoolean("voice_conversation_mode",enabled);if(!enabled)edit.remove("task_voice");edit.apply();
+        conversationMode=enabled;if(!enabled){taskTarget=null;taskDictation=false;taskAwaiting=false;}android.content.SharedPreferences.Editor edit=Cloud.prefs(this).edit().putBoolean("voice_conversation_mode",enabled);if(!enabled)edit.remove("task_voice");edit.apply();
         AudioManager audio=getSystemService(AudioManager.class);
         try{if(enabled&&savedAudioMode<0&&audio.getMode()==AudioManager.MODE_NORMAL){
             savedAudioMode=audio.getMode();savedSpeakerphone=audio.isSpeakerphoneOn();audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
@@ -216,31 +221,71 @@ public class VoiceService extends Service {
     // ---- Task details voice (TaskVoice), kept apart from the command, wake and live paths above. A dictation capture is
     // transcribed into that task's draft and never executed; a task conversation sends each turn as a follow-up of the
     // same task instead of a new command, and never opens the live provider. ----
-    static final String TASK_DICTATE="com.personalassistant.companion.TASK_DICTATE",TASK_TALK="com.personalassistant.companion.TASK_TALK";
-    /** The requested task, and the task bound to the capture in progress when it began; a dictation covers one capture. */
-    private volatile String taskTarget,captureTask;private volatile boolean taskDictation,captureDictation;
+    static final String TASK_DICTATE="com.personalassistant.companion.TASK_DICTATE",TASK_TALK="com.personalassistant.companion.TASK_TALK",TASK_FINISH="com.personalassistant.companion.TASK_FINISH_DICTATION";
+    /**
+     * The requested task, and the task bound to the capture in progress when it began; a dictation covers one capture.
+     * taskAwaiting: the task conversation's turn is held by the server and only its answer is awaited (see taskYield).
+     */
+    private volatile String taskTarget,captureTask;private volatile boolean taskDictation,captureDictation,taskAwaiting,keepNextInput;
+    /** A Stop dictation tap, handed to the recorder thread, which owns the capture. */
+    private final java.util.concurrent.atomic.AtomicReference<String> finishTask=new java.util.concurrent.atomic.AtomicReference<>();
     private boolean taskStart(Intent intent){
         String action=intent==null?"":String.valueOf(intent.getAction()),task=intent==null?null:intent.getStringExtra("task_id");boolean dictate=TASK_DICTATE.equals(action),general=START_CONVERSATION.equals(action);
-        if(!dictate&&!TASK_TALK.equals(action)){if(general){taskTarget=null;taskDictation=false;}if(taskTarget==null&&(captureTask==null||general))Cloud.prefs(this).edit().remove("task_voice").apply();return false;}
+        if(!dictate&&!TASK_TALK.equals(action)){if(TALK.equals(action))taskYield();if(general){taskTarget=null;taskDictation=false;taskAwaiting=false;}if(taskTarget==null&&(captureTask==null||general))Cloud.prefs(this).edit().remove("task_voice").apply();return false;}
         if(task==null||!task.matches("[A-Za-z0-9_-]{1,160}"))return false;
         if(live!=null||(dictate&&conversationMode)){state("Voice is busy · end the conversation first");return false;}
-        turnGeneration++;waiting=false;taskTarget=task;taskDictation=dictate;if(!dictate){setConversation(true);session=UUID.randomUUID().toString();}
+        turnGeneration++;waiting=false;taskAwaiting=false;taskTarget=task;taskDictation=dictate;if(!dictate){setConversation(true);session=UUID.randomUUID().toString();}
         Cloud.prefs(this).edit().putString("task_voice",(dictate?"dictate:":"talk:")+task).apply();return true;
     }
+    /**
+     * Once the server holds a spoken follow-up, the recorder is released (waiting and followup off) so Hey Chat, Talk and
+     * barge-in work while the answer is awaited in the background; taskAwaiting is set first, so a capture that sees the
+     * recorder free also sees the wait (taskYield). A reply is spoken only while the turn is current and this task's
+     * conversation is still on; otherwise the task screen and its notification carry the answer. The answer opens the
+     * conversation's follow-up window again, under the same lock as taskYield, so a capture never races a spoken answer.
+     */
     private void taskSubmit(short[] pcm){
-        final long generation=turnGeneration;
-        TaskVoice.turn(this,pcm,captureTask,captureDictation,Cloud.prefs(this).getBoolean("voice_preview",false),new TaskVoice.Host(){
+        final long generation=turnGeneration;final String task=captureTask;
+        TaskVoice.turn(this,pcm,task,captureDictation,Cloud.prefs(this).getBoolean("voice_preview",false),new TaskVoice.Host(){
             public boolean current(){return !destroyed&&generation==turnGeneration;}
+            public boolean talking(){return current()&&conversationMode&&task.equals(taskTarget);}
             public void state(String message){if(current())VoiceService.this.state(message);}
             public void sent(){main.post(()->{if(current()&&ttsReady)tts.speak("Sent.",TextToSpeech.QUEUE_FLUSH,null,"task-sent");});}
-            public void reply(String text,boolean end){main.post(()->{if(!current())return;waiting=false;if(end)endConversation(false);VoiceService.this.state(text);speakReply(text);});}
+            public void released(){main.post(()->{if(!current())return;taskAwaiting=true;followup=false;waiting=false;});}
+            public void reply(String text,boolean end){main.post(()->{synchronized(VoiceService.this){if(!current())return;waiting=false;if(!talking())return;taskAwaiting=false;if(end)endConversation(false);VoiceService.this.state(text);speakReply(text);}});}
             public void done(String message){main.post(()->{if(!current())return;waiting=false;Cloud.prefs(VoiceService.this).edit().remove("task_voice").apply();VoiceService.this.state(message);afterReply();});}
         });
     }
-    /** A task capture ended without speech: the screen hears why, and a dictation never carries over to a later wake. */
-    private void taskDropped(boolean wake){
-        String task=captureTask;if(task==null||(!captureDictation&&wake))return;
-        TaskVoice.note(this,task,captureDictation?"No speech heard · your draft is unchanged.":"No speech heard · the conversation ended.");captureTask=null;captureDictation=false;Cloud.prefs(this).edit().remove("task_voice").apply();
+    /**
+     * A capture (Hey Chat, Talk) that starts while the task conversation only awaits its answer is not a turn of that task: the
+     * conversation ends (setConversation(false) clears the task and task_voice and restores audio routing) and the capture runs as
+     * an ordinary command. The answer is not read aloud; it still reaches the task screen and the task notification. The
+     * conversation's own turns (the one it starts, and those in the follow-up window it opens after speaking an answer) keep it.
+     * Captures with no task wait never take the lock.
+     */
+    private boolean taskYield(){
+        if(!taskAwaiting)return false;
+        // The next capture keeps the recorder it starts on, whichever thread yielded (Talk yields on the main thread).
+        synchronized(this){if(!taskAwaiting)return false;String task=taskTarget;keepNextInput=true;setConversation(false);TaskVoice.note(this,task,"Conversation ended · the answer will appear in this task.");return true;}
+    }
+    /**
+     * A task capture ended with nothing to keep: silence, short noise, or Stop dictation before any speech. The screen hears why.
+     * A dictation never carries over to a later wake, and a task conversation ends whether or not background listening is on,
+     * so a later Hey Chat is an ordinary command again. Ordinary command captures (no task) keep their own behaviour.
+     */
+    private void taskDropped(boolean stopped){
+        String task=captureTask;if(task==null)return;boolean dictation=captureDictation;captureTask=null;captureDictation=false;
+        TaskVoice.note(this,task,dictation?(stopped?"Dictation stopped · your draft is unchanged.":"No speech heard · your draft is unchanged."):"No speech heard · the conversation ended.");
+        if(dictation)Cloud.prefs(this).edit().remove("task_voice").apply();else{followup=false;setConversation(false);session=UUID.randomUUID().toString();}
+    }
+    /** Stop dictation tapped: the recorder thread, which owns the capture, applies it on its next frame; with no recorder running there is nothing to stop. */
+    private void taskFinish(String task){if(!running.get())stopSelf();else if(task!=null)finishTask.set(task);}
+    /** Recorder thread: applies a pending Stop dictation (see TaskTurns.stop); a dictation that has not begun is withdrawn here. */
+    private String taskStop(boolean active,int voiced){
+        String stop=finishTask.getAndSet(null);if(stop==null)return "";
+        String result=TaskTurns.stop(stop,active,captureTask,captureDictation,taskTarget,taskDictation,voiced);
+        if(result.equals("cancel")){requestCapture=false;taskTarget=null;taskDictation=false;TaskVoice.note(this,stop,"Dictation stopped · your draft is unchanged.");Cloud.prefs(this).edit().remove("task_voice").apply();}
+        return result;
     }
     Notification notification(String status){NotificationManager manager=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);NotificationStyle.channel(manager,"voice","Voice microphone",NotificationManager.IMPORTANCE_LOW,"Shows while the assistant's microphone is on");Intent open=new Intent(this,MainActivity.class);PendingIntent app=PendingIntent.getActivity(this,217,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);PendingIntent stop=PendingIntent.getService(this,218,new Intent(this,VoiceService.class).setAction(STOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);PendingIntent talk=PendingIntent.getService(this,219,new Intent(this,VoiceService.class).setAction(TALK),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);return new Notification.Builder(this,"voice").setSmallIcon(R.drawable.ic_stat_assistant).setColor(NativeNotifications.ACCENT).setColorized(true).setCategory(Notification.CATEGORY_SERVICE).setSubText("Voice").setContentTitle("Assistant voice").setContentText(status).setContentIntent(app).setOngoing(true).addAction(new Notification.Action.Builder(null,"Talk",talk).build()).addAction(new Notification.Action.Builder(null,"Stop",stop).build()).build();}
     void state(String message){if(destroyed)return;Cloud.prefs(this).edit().putString("voice_status",message).commit();((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(217,notification(message));sendBroadcast(new Intent("com.personalassistant.companion.VOICE_STATE").setPackage(getPackageName()));}

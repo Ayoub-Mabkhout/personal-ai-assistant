@@ -163,6 +163,26 @@ class BatteryUsageTests(unittest.TestCase):
         self.assertEqual(probe(['exclude\t%s|%s' % (a, b)]), ['restart or clock change'])
         self.assertEqual(Phone().stretch(OTHER, False, 3, 200).report()['idle_ms'], 0)
 
+    def test_any_voice_conversation_is_other_microphone_use_not_listening(self):
+        # microphone on, wake enabled, voice active (capture, reply, follow-up window), conversation mode, task_voice
+        cases = [
+            ((0, 1, 0, 0, ''), OFF),
+            ((1, 1, 0, 0, ''), LISTENING),               # plain Hey Chat listening
+            ((1, 0, 0, 0, ''), OTHER),                   # Talk without background listening
+            ((1, 1, 1, 0, ''), OTHER),                   # a capture, reply or follow-up window
+            ((1, 1, 0, 1, 'talk:task-1'), OTHER),        # a task conversation awaiting its answer on the communication path
+            ((1, 1, 0, 0, 'talk:task-1'), OTHER),
+            ((1, 1, 0, 1, ''), OTHER),                   # any conversation mode
+            ((1, 1, 0, 0, 'dictate:task-1'), LISTENING),  # a dictation request alone uses the recognition path
+        ]
+        got = probe(['mode\t%d\t%d\t%d\t%d\t%s' % row for row, _ in cases])
+        self.assertEqual(got, [str(expected) for _, expected in cases])
+
+    def test_the_sampler_records_the_shared_listener_state(self):
+        sampler = (ROOT / 'apps/android/src/com/personalassistant/companion/BatterySampler.java').read_text(encoding='utf-8')
+        self.assertIn('int mode=BatteryUsage.mode(AppUi.micActive(c),p.getBoolean("wake_enabled",false),p.getBoolean("voice_conversation_active",false),'
+                      'p.getBoolean("voice_conversation_mode",false),p.getString("task_voice",""));', sampler)
+
     def test_long_gaps_and_malformed_rows_do_not_count(self):
         phone = Phone().stretch(LISTENING, False, 26, 40, step=13 * 60)
         self.assertEqual(phone.report()['idle_ms'], 0)

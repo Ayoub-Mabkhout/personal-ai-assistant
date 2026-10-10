@@ -37,7 +37,9 @@ nothing is sent until you tap Send; tap it again to stop. **Talk about this task
 starts a conversation scoped to that task: each spoken turn is saved as a
 stable-ID follow-up of the same task, so it resumes the same worker session, and
 its answer is read aloud and shown in the conversation. Say **That was all** or
-tap **End conversation** to finish. Task turns use the conversation microphone
+tap **End conversation** to finish. Saying Hey Chat or tapping Talk while the
+answer is still awaited ends the task conversation and runs that request as an
+ordinary command; the answer then appears in the task and its notification. Task turns use the conversation microphone
 and audio routing but never open the live speech provider; with Transcription
 preview on, they only fill the draft. Microphone permission is requested through
 the app's usual prompt. A turn that cannot reach the server stays in the

@@ -9,11 +9,16 @@ import java.util.UUID;
  * Voice on the task details screen, driven by VoiceService's single recorder.
  * Dictation uses the dry-run transcription endpoint, which never executes: the words wait for the user's own Send.
  * A task conversation saves each spoken turn as a stable-ID follow-up of the same task (never a new command or a live
- * session), then reads that turn's answer aloud.
+ * session), then reads that turn's answer aloud. Once the server holds the turn, the microphone is free again while the
+ * answer is awaited in the background; it is only read aloud if no newer turn began and the conversation is still on.
  */
 final class TaskVoice {
-    /** VoiceService callbacks; every one is ignored once the user ends or replaces the turn. */
-    interface Host {boolean current();void state(String message);void sent();void reply(String text,boolean end);void done(String message);}
+    /**
+     * VoiceService callbacks; every one is ignored once the user ends or replaces the turn. current: no newer capture or turn
+     * began. talking: also, this task's conversation is still the active one. released: the server holds the follow-up, so
+     * the recorder may serve Hey Chat, Talk and barge-in again while the answer is awaited.
+     */
+    interface Host {boolean current();boolean talking();void state(String message);void sent();void released();void reply(String text,boolean end);void done(String message);}
     static final long ANSWER_WAIT_MS=10*60000L;
     private TaskVoice(){}
 
@@ -24,6 +29,8 @@ final class TaskVoice {
         if(!valid(id)||!(mode.equals("dictate")||mode.equals("talk")))return null;
         return new Intent(c,VoiceService.class).setAction(mode.equals("dictate")?VoiceService.TASK_DICTATE:VoiceService.TASK_TALK).putExtra("task_id",id);
     }
+    /** Stop dictation: the words already said are still transcribed into the draft; null when the ID is malformed. */
+    static Intent finish(Context c,String id){return valid(id)?new Intent(c,VoiceService.class).setAction(VoiceService.TASK_FINISH).putExtra("task_id",id):null;}
     /** dictate, talk or "" for this task, only while the microphone service is actually running. */
     static String mode(Context c,String id){if(!AppUi.micActive(c))return "";String value=Cloud.prefs(c).getString("task_voice","");return value.equals("dictate:"+id)?"dictate":value.equals("talk:"+id)?"talk":"";}
     /** Another voice conversation or task currently owns the microphone. */
@@ -32,13 +39,17 @@ final class TaskVoice {
         if(value.endsWith(":"+id))return false;return !value.isEmpty()||p.getBoolean("voice_conversation_active",false)||p.getBoolean("voice_conversation_mode",false);
     }
 
-    /** Dictated words wait on the phone until that task's screen takes them into its draft. */
+    /**
+     * Dictated words wait on the phone until that task's screen takes them into its draft. Each read-and-write is atomic under
+     * the class lock; apply() updates memory at once and writes to disk off the lock, so the screen's main-thread take on every
+     * voice broadcast and tick never waits for a disk write.
+     */
     static synchronized void deliver(Context c,String task,String text){
-        String key="task_dictation:"+task,old=Cloud.prefs(c).getString(key,"");Cloud.prefs(c).edit().putString(key,old.isEmpty()?text:old+" "+text).commit();
+        String key="task_dictation:"+task,old=Cloud.prefs(c).getString(key,"");Cloud.prefs(c).edit().putString(key,old.isEmpty()?text:old+" "+text).apply();
     }
-    static synchronized String take(Context c,String task){String key="task_dictation:"+task,value=Cloud.prefs(c).getString(key,"");if(!value.isEmpty())Cloud.prefs(c).edit().remove(key).commit();return value;}
-    static void note(Context c,String task,String text){if(task!=null)Cloud.prefs(c).edit().putString("task_voice_note:"+task,text).commit();}
-    static synchronized String takeNote(Context c,String task){String key="task_voice_note:"+task,value=Cloud.prefs(c).getString(key,"");if(!value.isEmpty())Cloud.prefs(c).edit().remove(key).commit();return value;}
+    static synchronized String take(Context c,String task){String key="task_dictation:"+task,value=Cloud.prefs(c).getString(key,"");if(!value.isEmpty())Cloud.prefs(c).edit().remove(key).apply();return value;}
+    static synchronized void note(Context c,String task,String text){if(task!=null)Cloud.prefs(c).edit().putString("task_voice_note:"+task,text).apply();}
+    static synchronized String takeNote(Context c,String task){String key="task_voice_note:"+task,value=Cloud.prefs(c).getString(key,"");if(!value.isEmpty())Cloud.prefs(c).edit().remove(key).apply();return value;}
 
     /** Dry-run upload of one capture. The server transcribes and returns without dispatching anything. */
     static String transcribe(Context c,short[] pcm,String id)throws Exception{
@@ -77,26 +88,31 @@ final class TaskVoice {
         String pending=pendingState(c,id);
         if("needs_review".equals(pending)){end(c,task,host,"The task did not accept that follow-up. It is kept on this phone for review.");return;}
         if(pending!=null){end(c,task,host,"Saved on this phone. It will be sent to the task when you are connected.");return;}
+        host.released();
         await(c,task,TaskTurns.turnId(id),host);
     }
 
-    /** Polls the task until this turn settles; the screen refreshes on each state change. */
+    /**
+     * Polls the task in the background until this turn settles; the screen refreshes on each state change. The answer is read
+     * aloud only while this conversation is still on and no newer turn began; otherwise the task screen and its notification
+     * carry it, and polling stops.
+     */
     private static void await(Context c,String task,String turn,Host host){
         long start=System.currentTimeMillis();String seen="";int polls=0;
-        while(host.current()&&System.currentTimeMillis()-start<ANSWER_WAIT_MS){
+        while(host.talking()&&System.currentTimeMillis()-start<ANSWER_WAIT_MS){
             if(!pause(host,polls++<10?3000:6000))return;
             try{
                 JSONObject detail=NativeTasks.detail(c,"agent",task),mine=null;JSONArray turns=detail.optJSONArray("turns");
                 for(int n=0;turns!=null&&n<turns.length();n++){JSONObject t=turns.optJSONObject(n);if(t!=null&&turn.equals(t.optString("id")))mine=t;}
                 if(mine==null)continue;String state=mine.optString("state");if(!state.equals(seen)){seen=state;NativeTasks.changed(c);}
-                if(!TaskTurns.outcome(state).equals("wait")){if(host.current())host.reply(TaskTurns.spoken(state,mine.optString("summary")),false);return;}
+                if(!TaskTurns.outcome(state).equals("wait")){if(host.talking())host.reply(TaskTurns.spoken(state,mine.optString("summary")),false);return;}
                 JSONObject connection=detail.optJSONObject("connection");
                 if("queued".equals(state)&&connection!=null&&!"ready".equals(connection.optString("laptop","ready"))&&System.currentTimeMillis()-start>20000){end(c,task,host,"Sent. The laptop is not connected, so the answer will appear in this task later.");return;}
             }catch(Exception ignored){}
         }
-        if(host.current())end(c,task,host,"The task is still working. Its answer will appear in this task.");
+        if(host.talking())end(c,task,host,"The task is still working. Its answer will appear in this task.");
     }
-    private static boolean pause(Host host,long ms){long until=System.currentTimeMillis()+ms;while(System.currentTimeMillis()<until){if(!host.current())return false;try{Thread.sleep(250);}catch(InterruptedException stop){Thread.currentThread().interrupt();return false;}}return host.current();}
+    private static boolean pause(Host host,long ms){long until=System.currentTimeMillis()+ms;while(System.currentTimeMillis()<until){if(!host.talking())return false;try{Thread.sleep(250);}catch(InterruptedException stop){Thread.currentThread().interrupt();return false;}}return host.talking();}
     /** null once the server acknowledged the follow-up; otherwise its outbox state. */
     private static String pendingState(Context c,String id){
         try{JSONArray rows=NativeTasks.pending(c);for(int i=0;i<rows.length();i++){JSONObject row=rows.getJSONObject(i);if(id.equals(row.optString("id")))return row.optString("state","saved");}}catch(Exception error){return "saved";}

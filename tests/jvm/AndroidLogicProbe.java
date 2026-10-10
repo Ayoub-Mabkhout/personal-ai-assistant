@@ -5,7 +5,7 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.util.*;
 
-/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split, status, the features checklist rules and the task voice rules. */
+/** Answers tab-separated requests on stdin for the companion classes that need no Android framework: sun, split, status, the features checklist rules and the task voice rules, including Stop dictation. */
 public final class AndroidLogicProbe {
     private AndroidLogicProbe(){}
 
@@ -47,10 +47,17 @@ public final class AndroidLogicProbe {
                 out.println(TaskTurns.outcome(f[1])+"\t"+TaskTurns.spoken(f[1],f[2].replace("\\n","\n")));
             }else if(f[0].equals("note")){
                 out.println(TaskTurns.note(f[1],f[2]));
+            }else if(f[0].equals("stop")){
+                // stop, capture active, capture task, capture is a dictation, requested task, request is a dictation, fresh speech
+                String result=TaskTurns.stop(blank(f[1]),f[2].equals("1"),blank(f[3]),f[4].equals("1"),blank(f[5]),f[6].equals("1"),Integer.parseInt(f[7]));
+                out.println(result.isEmpty()?"none":result);
+            }else if(f[0].equals("heard")){
+                int fresh=Integer.parseInt(f[1]);out.println(TaskTurns.stop("t",true,"t",true,null,false,fresh)+"\t"+CaptureTurnPolicy.finished(80000,fresh,19200,false));
             }else out.println("unknown request");
         }
     }
 
+    private static String blank(String value){return value.isEmpty()?null:value;}
     /** id,done,created,doneAt;... */
     private static List<FeatureBoard.Item> items(String spec){
         List<FeatureBoard.Item> list=new ArrayList<>();if(spec.isEmpty())return list;

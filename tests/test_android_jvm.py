@@ -2,8 +2,8 @@
 
 Covers the sunrise and sunset maths behind the Sunrise & sunset theme (synthetic coordinates only; deployments configure
 the real place privately), quick-add splitting, the voice status wording shared by the Voice tab, the locked entry
-and the assistant overlay, and the features checklist rules (offline replay, ordering, folding, retry outcomes), and
-runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
+and the assistant overlay, the features checklist rules (offline replay, ordering, folding, retry outcomes) and the task
+voice rules (including Stop dictation), and runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
 import json
 import math
 import os
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPANION = ROOT / 'apps/android/src/com/personalassistant/companion'
 PROBE = ROOT / 'tests/jvm/AndroidLogicProbe.java'
 HARNESS = ROOT / 'tests/jvm/DaylightThemeHarness.java'
-SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java', 'TaskTurns.java')] + [PROBE, HARNESS]
+SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java', 'TaskTurns.java', 'CaptureTurnPolicy.java')] + [PROBE, HARNESS]
 MAIN = 'com.personalassistant.companion.AndroidLogicProbe'
 # Synthetic round values; none of them stands for a real person's location.
 PLACES = ((0.0, 0.0), (35.0, 120.0), (-33.0, -75.0))
@@ -308,6 +308,29 @@ class TaskVoiceRuleTests(unittest.TestCase):
         self.assertIn('That was all', rows[3])
         self.assertEqual(rows[4], 'Starting the microphone…')
         self.assertEqual(rows[5], 'Microphone permission needed. Allow it in app settings.')
+
+    def test_stop_dictation_transcribes_what_was_said_instead_of_discarding_it(self):
+        # stop, capture active, capture task, capture is a dictation, requested task, request is a dictation, fresh speech
+        cases = [
+            (('t1', 1, 't1', 1, '', 0, 6400), 'finish'),   # words already said are transcribed into the draft
+            (('t1', 1, 't1', 1, '', 0, 2400), 'finish'),
+            (('t1', 1, 't1', 1, '', 0, 2399), 'drop'),     # nothing heard yet: the draft stays unchanged
+            (('t1', 0, 't1', 1, '', 0, 6400), 'none'),     # transcription in flight: it still reaches the draft
+            (('t1', 0, '', 0, 't1', 1, 0), 'cancel'),      # requested but not begun: withdrawn
+            (('t1', 1, '', 0, 't1', 1, 6400), 'cancel'),   # a command capture is running and the dictation still waits
+            (('t1', 1, 't1', 0, 't1', 0, 6400), 'none'),   # a task conversation turn is not a dictation
+            (('t1', 1, 't2', 1, '', 0, 6400), 'none'),     # another task's dictation
+            (('t1', 1, '', 0, '', 0, 6400), 'none'),       # an ordinary command capture
+            (('', 1, 't1', 1, '', 0, 6400), 'none'),
+        ]
+        got = ask(['stop\t%s\t%d\t%s\t%d\t%s\t%d\t%d' % row for row, _ in cases])
+        self.assertEqual(got, [expected for _, expected in cases])
+
+    def test_stop_dictation_uses_the_capture_policys_speech_minimum(self):
+        for fresh, row in zip((0, 2399, 2400, 12800), ask(['heard\t%d' % fresh for fresh in (0, 2399, 2400, 12800)])):
+            stop, finished = row.split('\t')
+            with self.subTest(fresh=fresh):
+                self.assertEqual(stop == 'finish', finished == 'true')
 
 
 @unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')

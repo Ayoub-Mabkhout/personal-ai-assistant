@@ -10,7 +10,8 @@ readings never leave the phone.
 (`battery-samples.tsv`, at most 2000 rows) with wall and elapsed time, CPU
 uptime, the whole-percent level, the charge counter in µAh where Android
 reports it, charger, screen state, listener state (off, listening, or other
-microphone use such as Talk and conversations) and the wake count.
+microphone use such as Talk and conversations, including a task conversation
+waiting for its answer on the call audio path) and the wake count.
 
 Readings never wake the phone on their own:
 

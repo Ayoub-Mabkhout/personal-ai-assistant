@@ -129,8 +129,8 @@ final class NativeTaskScreens {
             if(agent)voice();
         }
         @Override void insets(){body.setPadding(ui.dp(20),ui.dp(4),ui.dp(20),agent?ui.dp(16):ui.dp(24)+inset);composer.setPadding(ui.dp(16),ui.dp(14),ui.dp(16),ui.dp(14)+inset);}
-        /** Microphone: dictation fills the draft and sends nothing; tapping it again stops. Requests go through the app's permission flow. */
-        void dictate(){String mode=voiceMode();if(mode.equals("dictate"))stopVoice();else if(mode.isEmpty())startVoice("dictate");}
+        /** Microphone: dictation fills the draft and sends nothing; tapping it again stops, and what was already said still reaches the draft. Requests go through the app's permission flow. */
+        void dictate(){String mode=voiceMode();if(mode.equals("dictate"))finishDictation();else if(mode.isEmpty())startVoice("dictate");}
         /** Talk about this task: each spoken turn becomes a follow-up of this task and its answer is read aloud. */
         void talk(){String mode=voiceMode();if(mode.equals("talk"))stopVoice();else if(mode.isEmpty())startVoice("talk");}
         String voiceMode(){String mode=TaskVoice.mode(a,id);return mode.isEmpty()&&System.currentTimeMillis()<requestedUntil?requested:mode;}
@@ -141,6 +141,8 @@ final class NativeTaskScreens {
             requested=mode;requestedAt=now;requestedUntil=now+6000;noteUntil=0;((MainActivity)a).taskVoice(mode+":"+id);voice();
         }
         void stopVoice(){requested="";requestedUntil=0;try{a.startService(new Intent(a,VoiceService.class).setAction(VoiceService.END_CONVERSATION));}catch(Exception ignored){}voice();}
+        /** Stop dictation ends the capture and transcribes it into the draft; it never discards words already said. */
+        void finishDictation(){requested="";requestedUntil=0;Intent finish=TaskVoice.finish(a,id);try{if(finish!=null)a.startService(finish);}catch(Exception ignored){}voice();}
         /** Dictated words join the draft at the caret while the field is focused, otherwise at its end; the draft, its caret and stable follow-up IDs are untouched otherwise. */
         void dictated(){
             String words=TaskVoice.take(a,id);if(words.isEmpty())return;Editable text=instruction.getText();int length=text.length(),s=instruction.getSelectionStart(),e=instruction.getSelectionEnd();

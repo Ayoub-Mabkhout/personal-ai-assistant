@@ -19,7 +19,7 @@ final class BatterySampler {
             int raw=battery.getIntExtra(BatteryManager.EXTRA_LEVEL,-1),scale=battery.getIntExtra(BatteryManager.EXTRA_SCALE,100);if(raw<0||scale<=0)return;
             BatteryManager manager=(BatteryManager)c.getSystemService(Context.BATTERY_SERVICE);long charge=manager==null?0:manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);if(charge==Integer.MIN_VALUE||charge<0)charge=0;
             PowerManager power=(PowerManager)c.getSystemService(Context.POWER_SERVICE);boolean screen=power==null||power.isInteractive();
-            SharedPreferences p=Cloud.prefs(c);int mode=!AppUi.micActive(c)?BatteryUsage.OFF:p.getBoolean("wake_enabled",false)&&!p.getBoolean("voice_conversation_active",false)?BatteryUsage.LISTENING:BatteryUsage.OTHER;
+            SharedPreferences p=Cloud.prefs(c);int mode=BatteryUsage.mode(AppUi.micActive(c),p.getBoolean("wake_enabled",false),p.getBoolean("voice_conversation_active",false),p.getBoolean("voice_conversation_mode",false),p.getString("task_voice",""));
             BatteryUsage.Sample sample=new BatteryUsage.Sample(System.currentTimeMillis(),SystemClock.elapsedRealtime(),SystemClock.uptimeMillis(),Math.round(raw*100f/scale),charge,battery.getIntExtra(BatteryManager.EXTRA_PLUGGED,0)!=0,screen,mode,p.getLong("voice_wake_count",0));
             List<BatteryUsage.Sample> all=samples(c);BatteryUsage.Sample last=all.isEmpty()?null:all.get(all.size()-1);
             if(last!=null&&sample.sameState(last)&&sample.elapsed-last.elapsed>=0&&sample.elapsed-last.elapsed<DEBOUNCE_MS)return;

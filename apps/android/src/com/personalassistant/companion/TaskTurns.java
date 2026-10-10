@@ -12,11 +12,25 @@ final class TaskTurns {
     private static final Pattern START=Pattern.compile("(?:(?:start|enter|open) (?:a |the )?conversation(?: mode)?|conversation mode|let(?:['’]s| us) talk)[.!? ]*",Pattern.CASE_INSENSITIVE);
     private static final Pattern END=Pattern.compile("(?:stop|(?:end|finish|stop) (?:the )?conversation(?: mode)?|stop listening|goodbye|that was all|that['’]s all|I(?:['’]m| am) done)[.!? ]*",Pattern.CASE_INSENSITIVE);
     static final int SPOKEN_LIMIT=600;
+    /** Fresh speech, in samples, before a capture counts as heard: the minimum CaptureTurnPolicy.finished asks of every turn. */
+    static final int HEARD=2400;
 
     /** "end", "start" or null when the transcript is an instruction. */
     static String control(String text){
         if(text==null)return null;String cleaned=WAKE.matcher(text).replaceFirst("").trim();cleaned=PLEASE.matcher(cleaned).replaceFirst("");
         if(START.matcher(cleaned).matches())return "start";if(END.matcher(cleaned).matches())return "end";return null;
+    }
+
+    /**
+     * Stop dictation for task stop: "finish" transcribes the capture in progress into the draft, "drop" ends one that has heard no
+     * speech yet, "cancel" withdraws a dictation that has not begun, and "" leaves everything else alone, so a transcription already
+     * in flight still reaches the draft. Stopping never cancels words the user already said.
+     */
+    static String stop(String stop,boolean active,String captureTask,boolean captureDictation,String target,boolean targetDictation,int freshSpeech){
+        if(stop==null||stop.isEmpty())return "";
+        if(active&&captureDictation&&stop.equals(captureTask))return freshSpeech>=HEARD?"finish":"drop";
+        if(targetDictation&&stop.equals(target))return "cancel";
+        return "";
     }
 
     /** The relay's continuation job ID for a follow-up ID: "continue-" and the first 48 hex digits of its SHA-256. */

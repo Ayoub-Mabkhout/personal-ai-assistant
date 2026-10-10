@@ -101,5 +101,14 @@ final class BatteryUsage {
         return r;
     }
 
+    /**
+     * The listener state a reading records: OFF without the microphone, LISTENING only for plain Hey Chat listening, OTHER for any
+     * voice use. That includes a conversation between turns: a task conversation awaiting its answer keeps the microphone on the
+     * communication path (echo cancellation, speakerphone) although no capture or reply is active.
+     */
+    static int mode(boolean mic,boolean wake,boolean voiceActive,boolean conversation,String taskVoice){
+        if(!mic)return OFF;return wake&&!voiceActive&&!conversation&&(taskVoice==null||!taskVoice.startsWith("talk:"))?LISTENING:OTHER;
+    }
+
     static List<Sample> parse(List<String> lines){List<Sample> out=new ArrayList<>();for(String line:lines){Sample s=Sample.parse(line);if(s!=null)out.add(s);}return out;}
 }
