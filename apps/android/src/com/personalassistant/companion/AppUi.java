@@ -25,7 +25,7 @@ import java.util.function.BooleanSupplier;
  */
 final class AppUi {
     static final android.view.animation.Interpolator OUT=new PathInterpolator(.05f,.7f,.1f,1f),SLIDE=new PathInterpolator(.2f,0f,0f,1f);
-    private static final Typeface[] FACES=new Typeface[3];
+    private static final java.util.HashMap<Integer,Typeface> FACES=new java.util.HashMap<>();private static java.io.File fontFile;
 
     /** Null when built for a non-Activity host such as the assistant overlay; window() and sheets need an Activity. */
     final Activity activity;final Context context;final boolean dark;final float density;
@@ -35,7 +35,7 @@ final class AppUi {
 
     AppUi(Activity activity){this(activity,activity);}
     AppUi(Context context){this(context,context instanceof Activity?(Activity)context:null);}
-    private AppUi(Context context,Activity activity){
+    private AppUi(Context context,Activity activity){font(context);
         this.context=context;this.activity=activity;dark=dark(context);density=context.getResources().getDisplayMetrics().density;
         background=pick(0xFFFAF5EC,0xFF130E1C);surface=pick(0xFFFFFEFB,0xFF1D1729);surfaceAlt=pick(0xFFF3ECE4,0xFF281F38);
         text=pick(0xFF231A2E,0xFFF5F0FB);muted=pick(0xFF675C73,0xFFADA3BF);
@@ -93,10 +93,20 @@ final class AppUi {
         w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    static Typeface face(int weight){
-        int slot=weight>=700?2:weight>=500?1:0;
-        if(FACES[slot]==null)FACES[slot]=Build.VERSION.SDK_INT>=28?Typeface.create(Typeface.DEFAULT,weight>=700?700:weight>=500?500:400,false):slot==2?Typeface.create("sans-serif",Typeface.BOLD):Typeface.create(slot==1?"sans-serif-medium":"sans-serif",Typeface.NORMAL);
-        return FACES[slot];
+    /** The bundled Onest variable font, copied once to app storage so each weight can be instanced. */
+    static synchronized void font(Context context){
+        if(fontFile!=null)return;
+        java.io.File file=new java.io.File(context.getApplicationContext().getNoBackupFilesDir(),"onest-1.ttf");
+        try{if(!file.isFile()){java.io.File part=new java.io.File(file.getPath()+".part");try(java.io.InputStream in=context.getResources().openRawResource(R.raw.onest);java.io.OutputStream out=new java.io.FileOutputStream(part)){byte[] buffer=new byte[16384];int n;while((n=in.read(buffer))>0)out.write(buffer,0,n);}if(!part.renameTo(file))throw new java.io.IOException("font copy");}fontFile=file;}
+        catch(Exception unavailable){fontFile=null;}
+    }
+    /** Onest at the requested weight (400 regular to 800 extra bold); system sans if the font cannot load. */
+    static synchronized Typeface face(int weight){
+        int w=Math.max(100,Math.min(900,weight));Typeface cached=FACES.get(w);if(cached!=null)return cached;
+        Typeface made=null;
+        if(fontFile!=null)try{made=new Typeface.Builder(fontFile).setFontVariationSettings("'wght' "+w).setWeight(w).build();}catch(Exception ignored){}
+        if(made==null)made=Build.VERSION.SDK_INT>=28?Typeface.create(Typeface.DEFAULT,w,false):Typeface.create("sans-serif",w>=600?Typeface.BOLD:Typeface.NORMAL);
+        FACES.put(w,made);return made;
     }
     /** Size in sp, line height in sp (0 keeps the font's natural height), tracking in em. */
     TextView type(String value,float size,float line,int weight,float tracking,int color){

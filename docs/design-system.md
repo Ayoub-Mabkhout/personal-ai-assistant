@@ -36,7 +36,9 @@ Status is never colour alone: chips pair colour with an icon and a word.
 
 ## Type
 
-System sans (Roboto on Android, `system-ui` on the web). Weights 400, 500, 700.
+Onest (SIL Open Font License; licence in `apps/android/licenses/`), one variable font bundled as
+`res/raw/onest.ttf` and instanced per weight by `AppUi.face(weight)`; system sans is the fallback.
+The web uses `system-ui` until the font is self-hosted there. Weights 400, 500, 600, 700, 800.
 
 | Role | Size / line | Weight | Tracking |
 |---|---|---|---|
@@ -150,8 +152,8 @@ web surfaces use the same runtime location, never a place baked into source.
 ## Platform notes
 
 - Android draws everything with framework Views, `GradientDrawable`, and
-  Canvas shaders. No extra libraries, fonts or bitmaps, because the release APK
-  must stay below the 50 MiB bootstrap limit.
+  Canvas shaders. No extra libraries or bitmaps, and the one bundled font (Onest, about 190 KB), because
+  the release APK must stay below the 50 MiB bootstrap limit.
 - Web pages carry the same tokens as CSS custom properties, resolve their theme
   from the stored mode before first paint (Sunrise & sunset by default;
   System follows `prefers-color-scheme`), and stay self-contained under each
