@@ -29,7 +29,11 @@ final class MainReceipts {
         FrameLayout tile=new FrameLayout(a);tile.setBackground(ui.outline(ui.accentSoft,18,AppUi.alpha(ui.accent,.22f),1));tile.addView(MainParts.icon(ui,"history",ui.accent),new FrameLayout.LayoutParams(ui.dp(28),ui.dp(28),Gravity.CENTER));box.addView(tile,new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52)));
         LinearLayout words=ui.column();words.addView(ui.type("All task history",18,24,700,-.011f,ui.text));words.addView(ui.type("Full answers and follow-ups, here in Companion.",13.5f,18,400,0,ui.muted),MainParts.params(ui,-2,-2,0,2,0,0));box.addView(words,MainParts.weighted(ui,1,14,0,10,0));
         FrameLayout go=new FrameLayout(a);go.setBackground(ui.outline(ui.surface,19,ui.stroke,1));go.addView(MainParts.icon(ui,"arrow",ui.accent),new FrameLayout.LayoutParams(ui.dp(20),ui.dp(20),Gravity.CENTER));box.addView(go,new LinearLayout.LayoutParams(ui.dp(38),ui.dp(38)));
-        return box;
+        // Start a new task from here, the same screen the lock screen, side key and Quick Settings tile open.
+        LinearLayout column=ui.column();Button create=new Button(a);create.setAllCaps(false);create.setText("+  New task");create.setTextSize(16);create.setTypeface(AppUi.face(700));create.setTextColor(0xff2a1a5e);
+        create.setTag("activity_new_task");create.setBackground(ui.pressable(ui.outline(0xffefe9f8,20,0,0),20));create.setOnClickListener(v->a.startActivity(new android.content.Intent(a,QuickTaskActivity.class)));
+        column.addView(create,MainParts.params(ui,-1,ui.dp(56),0,0,0,12));column.addView(box);
+        return column;
     }
 
     void render(){

@@ -11,7 +11,7 @@ import wave
 from personal_assistant.groceries.mobile import Devices
 from personal_assistant.groceries.store import Groceries
 from personal_assistant.relay.store import Queue
-from personal_assistant.relay.voice import Capture,VoiceService,Transcriber
+from personal_assistant.relay.voice import Capture,Typed,VoiceService,Transcriber
 
 
 class ContextTests(unittest.TestCase):
@@ -40,6 +40,15 @@ class ContextTests(unittest.TestCase):
         with self.service.ledger.db() as db:db.execute('UPDATE voice_commands SET result=NULL WHERE id=?',(second['task_id'],))
         self.assertEqual(self.service.capture('phone-a',second_body),second)
         self.assertEqual(self.service.agents.status()['queued'],2)
+
+    def test_typed_request_is_queued_like_speech_and_replays_safely(self):
+        body=Typed(id='typed-lock-0001',created_at=datetime.now(timezone.utc).isoformat(),text='Book a dentist appointment next week')
+        first=self.service.typed('phone-a',body)
+        self.assertEqual(self.service.agents.get(first['task_id'])['payload']['command'],'Book a dentist appointment next week')
+        self.assertEqual(self.service.typed('phone-a',body),first)
+        self.assertEqual(self.service.agents.status()['queued'],1)
+        with self.assertRaises(Exception):
+            self.service.typed('phone-a',Typed(id='typed-lock-0001',created_at=body.created_at,text='Something else'))
 
     def test_wake_only_and_stop_do_not_enter_agent_queue(self):
         self.text='Hej Chat!';answer=self.service.capture('phone-a',self.body('wake-only-command'))

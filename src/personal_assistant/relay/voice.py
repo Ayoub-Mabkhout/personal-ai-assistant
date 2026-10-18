@@ -32,6 +32,15 @@ class Capture(BaseModel):
     session_id: str = Field(default='', max_length=64)
 
 
+class Typed(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
+    created_at: str
+    timezone: str = 'Europe/Berlin'
+    text: str = Field(min_length=1, max_length=4000)
+    native_timers: bool = False
+
+
 def conversation_control(text):
     """Exact controls only: never discard a substantive request containing them."""
     cleaned=re.sub(r'^\s*(?:hey|hej|ej)[ ,]+chat[,.!? ]*','',text,flags=re.I).strip()
@@ -159,6 +168,20 @@ class VoiceService:
             with self.ledger.db() as db:db.execute('UPDATE voice_commands SET result=? WHERE id=?',(json.dumps(result),identifier))
             return result
 
+    def typed(self,phone,body):
+        """A request typed on the phone (for example from the lock screen) is routed exactly like speech."""
+        identifier=self.identifier(phone,body.id);encoded=json.dumps(body.model_dump(),sort_keys=True)
+        fingerprint=hashlib.sha256(encoded.encode()).hexdigest()
+        with self.lock:
+            with self.ledger.db() as db:
+                old=db.execute('SELECT * FROM voice_commands WHERE id=?',(identifier,)).fetchone()
+                if old and old['fingerprint']!=fingerprint:raise HTTPException(409,'Request ID already has different content.')
+                if old and old['result']:return json.loads(old['result'])
+                if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,?,NULL,?)',(identifier,phone,fingerprint,encoded,body.text,time.time()))
+            result=self.dispatch(phone,identifier,body.text,body.timezone,body.created_at,'',body.native_timers)
+            with self.ledger.db() as db:db.execute('UPDATE voice_commands SET result=? WHERE id=?',(json.dumps(result),identifier))
+            return result
+
     def dispatch(self,phone,identifier,text,tz,created,session_id='',native_timers=False):
         from personal_assistant.groceries.intelligence import shopping_request
         cleaned=re.sub(r'^\s*(?:hey|hej|ej)[ ,]+chat[,.!? ]*','',text,flags=re.I).strip()
@@ -224,6 +247,9 @@ def voice_router(service):
     def capture(body:Capture,phone=Depends(device)):
         try:return service.capture(phone,body)
         except OSError:raise HTTPException(503,'Speech service unavailable. Recording remains queued on the phone.') from None
+    @api.post('/text')
+    def typed(body:Typed,phone=Depends(device)):
+        return service.typed(phone,body)
     @api.get('/status')
     def status(phone=Depends(device)):
         return {'connection':service.agents.status(),'live_available':bool(service.config.get('key_file')),

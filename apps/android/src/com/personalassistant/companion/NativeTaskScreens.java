@@ -18,7 +18,7 @@ final class NativeTaskScreens {
     private static final Map<Activity,List<Screen>> openScreens=new WeakHashMap<>();
     static void close(Activity activity){List<Screen> list=openScreens.remove(activity);if(list!=null)for(Screen screen:new ArrayList<>(list))screen.dialog.dismiss();}
     static void history(Activity a){List<Screen> list=openScreens.get(a);if(list!=null)for(Screen screen:list)if(screen instanceof History)return;new History(a).open();}
-    static void detail(Activity a,String kind,String id){if(id!=null&&id.matches("[A-Za-z0-9_-]{1,160}"))new Detail(a,kind.equals("command")?"command":"agent",id).open();}
+    static void detail(Activity a,String kind,String id){if(id!=null&&id.matches("[A-Za-z0-9_-]{1,160}")){String k=kind.equals("command")?"command":"agent";LastTaskActivity.remember(a,k,id,NativeTasks.cachedDetail(a,k,id).optString("request"));new Detail(a,k,id).open();}}
     static long timestamp(Object value){try{if(value instanceof Number)return ((Number)value).longValue()*1000;String raw=String.valueOf(value);return java.time.Instant.parse(raw).toEpochMilli();}catch(Exception ignored){return 0;}}
     static String state(String raw){if(raw.equals("leased")||raw.equals("running")||raw.equals("in_progress"))return "In progress";if(raw.equals("completed")||raw.equals("complete"))return "Completed";if(raw.equals("needs_input"))return "Needs your input";if(raw.equals("failed"))return "Failed";if(raw.equals("cancelled"))return "Cancelled";if(raw.equals("queued")||raw.equals("pending"))return "Queued";return raw.isEmpty()?"Received":raw.replace('_',' ');}
     private static String next(JSONObject page){return page.isNull("next_cursor")?"":page.optString("next_cursor","");}
