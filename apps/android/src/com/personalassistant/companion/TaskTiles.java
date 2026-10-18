@@ -14,14 +14,4 @@ final class TaskTiles {
         else service.startActivityAndCollapse(intent);
     }
     static void idle(TileService service){Tile tile=service.getQsTile();if(tile!=null){tile.setState(Tile.STATE_INACTIVE);tile.updateTile();}}
-
-    public static final class NewTask extends TileService {
-        @Override public void onStartListening(){super.onStartListening();idle(this);}
-        @Override public void onClick(){launch(this,QuickTaskActivity.class,71);}
-    }
-    public static final class LastTask extends TileService {
-        @Override public void onStartListening(){super.onStartListening();idle(this);}
-        // Task details are private: from the lock screen the tile asks for unlock before opening them.
-        @Override public void onClick(){if(isLocked())unlockAndRun(()->launch(this,LastTaskActivity.class,72));else launch(this,LastTaskActivity.class,72);}
-    }
 }
