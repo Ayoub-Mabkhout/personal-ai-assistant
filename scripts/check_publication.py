@@ -194,7 +194,9 @@ def scan_blob(name, data, identifiers=(), *, archive_member=False):
         return findings
     if ((suffix == ".png" and data.startswith(b"\x89PNG\r\n\x1a\n"))
             or (suffix in {".jpg", ".jpeg"} and data.startswith(b"\xff\xd8\xff"))
-            or (suffix == ".ico" and data.startswith(b"\x00\x00\x01\x00"))):
+            or (suffix == ".ico" and data.startswith(b"\x00\x00\x01\x00"))
+            # Bundled open-licence fonts: a real TrueType or OpenType file, still scanned above for secrets.
+            or (suffix in {".ttf", ".otf"} and data[:4] in (b"\x00\x01\x00\x00", b"OTTO"))):
         return findings
     findings.add(Finding(name, 1, "unsupported-binary"))
     return findings

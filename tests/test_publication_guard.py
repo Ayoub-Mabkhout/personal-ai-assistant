@@ -83,6 +83,8 @@ class ContentTests(unittest.TestCase):
         blob = b"\x00\xff" + synthetic_key().encode() + b"\x00"
         self.assertEqual(self.rules("payload.bin", blob), {"openai-key", "unsupported-binary"})
         self.assertIn("unsupported-binary", self.rules("payload.bin", b"\x00\xff"))
+        self.assertEqual(self.rules("font.ttf", b"\x00\x01\x00\x00\x00\x10" + b"\x00" * 64), set())
+        self.assertIn("unsupported-binary", self.rules("font.ttf", b"\x00\xff\x00\x00"))
 
     def test_source_images_do_not_hide_ascii_credentials(self):
         image = b"\x89PNG\r\n\x1a\n\x00\xff"
