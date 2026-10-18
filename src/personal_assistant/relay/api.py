@@ -26,7 +26,7 @@ class BodyLimit:
             return await self.app(scope, receive, send)
         body = bytearray()
         path=scope.get('path','')
-        limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else (
+        limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else 256*1024 if path=='/v1/banking/summary' else (
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
         if path.startswith('/groceries/v1/mobile/termux/'):
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
@@ -191,6 +191,12 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         app.state.file_drops=drops
         for drop_router in file_drop_router(drops,(submit_token,worker_token),device_auth(groceries_api.devices)):
             app.include_router(drop_router)
+    from .banking import Banking,banking_router
+    banking=Banking(Path(path).with_name('banking.sqlite3'),**({'clock':clock} if clock else {}))
+    app.state.banking=banking
+    banking_owner,banking_public,banking_phone=banking_router(banking,submit,device_auth(groceries_api.devices) if groceries else submit)
+    app.include_router(banking_owner);app.include_router(banking_public)
+    if groceries: app.include_router(banking_phone)
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))

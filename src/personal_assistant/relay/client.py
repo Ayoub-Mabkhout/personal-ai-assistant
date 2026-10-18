@@ -19,11 +19,11 @@ class OwnerClient:
         self.token_file = Path(config['submit_token_file'])
         self.opener = urllib.request.build_opener(NoRedirect)
 
-    def call(self, path, payload=None):
+    def call(self, path, payload=None, method=None):
         if not path.startswith('/') or path.startswith('//') or '\\' in path:
             raise ValueError('Use an absolute API path on the configured server.')
         token = self.token_file.read_text(encoding='utf-8-sig').strip()
         if len(token) < 32: raise ValueError('Invalid protected submit credential.')
         request = urllib.request.Request(self.origin + path, data=json.dumps(payload).encode() if payload is not None else None,
-            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method=method)
         with self.opener.open(request, timeout=15) as response: return json.load(response)
