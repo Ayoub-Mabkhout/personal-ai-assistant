@@ -33,7 +33,7 @@ def main():
     allowance = commands.add_parser('allowance'); allowance.add_argument('amount')
     allowance.add_argument('--start-day', type=int); allowance.add_argument('--definition')
     args = parser.parse_args()
-    config = json.loads(Path(args.config).read_text(encoding='utf-8'))
+    config = json.loads(Path(args.config).read_text(encoding='utf-8-sig'))
     ledger = service.open_ledger(config)
     out = lambda value: print(json.dumps(value, indent=1, ensure_ascii=False, default=str))
     if args.command == 'status':

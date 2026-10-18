@@ -28,7 +28,7 @@ def b64(data):
 class EnableBanking:
     def __init__(self, application_file, api=API, opener=None, clock=time.time):
         self.file = Path(application_file)
-        meta = json.loads(self.file.read_text(encoding='utf-8'))
+        meta = json.loads(self.file.read_text(encoding='utf-8-sig'))
         self.application_id, self.redirect_url = meta['application_id'], meta['redirect_url']
         self.key_file = self.file.parent / meta['private_key']
         self.api, self.clock = api.rstrip('/'), clock
