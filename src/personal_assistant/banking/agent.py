@@ -24,7 +24,16 @@ For recurring income and costs provide monthly_cents, a stable series_key, and t
 months a payment covers. A late multi-month income payment can cover earlier months.
 Do not calculate totals. Quote only code-provided totals. Respect owner decisions.
 Answer each question or explanation job with its job_seq. Provide evidence-based
-budgeting insights, not investment advice. Return only JSON matching the schema."""
+budgeting insights, not investment advice.
+Categories are yours to curate, and they are the owner's budget envelopes: each will later get a monthly
+budget. Keep a small, stable, meaningful set (roughly 8-14 elective envelopes plus fixed costs, income,
+savings and transfers), named in plain words the owner would budget by, each with one recognisable emoji.
+Use category_ops to create, update (emoji, group, description, rename via new_name), merge (move every
+transaction into another category) or delete (only with into, or when unused) categories, and to propose
+suggested_budget_cents for elective envelopes from the owner's actual pattern. Never touch categories marked
+by=owner, and never set a real budget; the owner does. Prefer renaming or merging over churn so envelopes
+stay comparable month to month. Every decision's category must exist in the catalogue after your ops.
+Return only JSON matching the schema."""
 
 DECISION = {'type': 'object', 'additionalProperties': False,
  'required': ['id', 'kind', 'category', 'counts', 'linked', 'reasoning', 'confidence', 'question',
@@ -36,8 +45,15 @@ DECISION = {'type': 'object', 'additionalProperties': False,
   'recurring': {'type': 'boolean'}, 'monthly_cents': {'type': ['integer', 'null']},
   'coverage_months': {'type': 'array', 'items': {'type': 'string'}},
   'series_key': {'type': ['string', 'null']}}}
-SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions', 'insights', 'replies'],
- 'properties': {'decisions': {'type': 'array', 'items': DECISION},
+CATEGORY_OP = {'type': 'object', 'additionalProperties': False,
+ 'required': ['op', 'name', 'new_name', 'emoji', 'group', 'description', 'into', 'suggested_budget_cents', 'reasoning'],
+ 'properties': {'op': {'type': 'string', 'enum': ['create', 'update', 'merge', 'delete']}, 'name': {'type': 'string'},
+  'new_name': {'type': ['string', 'null']}, 'emoji': {'type': ['string', 'null']},
+  'group': {'type': ['string', 'null'], 'enum': ['fixed', 'elective', 'income', 'savings', 'transfer', None]},
+  'description': {'type': ['string', 'null']}, 'into': {'type': ['string', 'null']},
+  'suggested_budget_cents': {'type': ['integer', 'null']}, 'reasoning': {'type': 'string'}}}
+SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions', 'insights', 'replies', 'category_ops'],
+ 'properties': {'decisions': {'type': 'array', 'items': DECISION}, 'category_ops': {'type': 'array', 'items': CATEGORY_OP},
   'insights': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
    'required': ['kind', 'text'], 'properties': {'kind': {'type': 'string'}, 'text': {'type': 'string'}}}},
   'replies': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
@@ -79,6 +95,8 @@ def prompt_for(ledger, jobs, today, config, notes):
              for a in ledger.accounts()], 'notes': notes or config.get('banking_notes', ''),
              'owner_context': ledger.settings_prefix('owner_context_'),
              'allowance': ledger.setting('allowance'), 'totals_so_far': totals(ledger, today),
+             'category_catalog': [{k: c[k] for k in ('name', 'emoji', 'grp', 'description', 'suggested_budget_cents', 'budget_cents', 'by', 'uses')}
+                                  for c in ledger.categories()],
              'owner_corrections': ledger.corrections(), 'recent_decided': recent,
              'evidence_window': {'start': window_start.isoformat(), 'end': window_end.isoformat()},
              'jobs': [{'seq': j['seq'], 'kind': j['kind'], 'created': j['created'],
@@ -177,7 +195,8 @@ def audit(ledger, config, today=None, ask=ask, notes=''):
                 item = dict(item)
                 item['confidence'] = max(0.0, min(1.0, float(item['confidence'])))
                 decisions.append(item)
-            ledger.finish_claim(token, jobs, next_session, decisions, answer.get('insights'), answer.get('replies', []))
+            ledger.finish_claim(token, jobs, next_session, decisions, answer.get('insights'), answer.get('replies', []),
+                                answer.get('category_ops', []))
             transaction_ids = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'transaction'}
             decided += len(transaction_ids & {d['id'] for d in decisions})
             insights = answer.get('insights')

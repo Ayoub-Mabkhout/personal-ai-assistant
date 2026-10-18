@@ -114,6 +114,11 @@ def main():
     syncing = commands.add_parser('sync'); syncing.add_argument('--attended', action='store_true')
     commands.add_parser('audit'); commands.add_parser('run'); commands.add_parser('summary')
     watching = commands.add_parser('watch'); watching.add_argument('--interval', type=int, default=21600)
+    category = commands.add_parser('category', help='your own category edits; the auditor never overrides them')
+    category.add_argument('name'); category.add_argument('--emoji'); category.add_argument('--group')
+    category.add_argument('--budget', help='monthly budget in euros'); category.add_argument('--rename')
+    category.add_argument('--merge-into'); category.add_argument('--delete', action='store_true')
+    commands.add_parser('categories')
     allowance = commands.add_parser('allowance'); allowance.add_argument('amount')
     allowance.add_argument('--start-day', type=int); allowance.add_argument('--definition')
     args = parser.parse_args()
@@ -157,6 +162,14 @@ def main():
     elif args.command == 'summary':
         summary = summarise(ledger); summary.pop('transactions')
         out(summary)
+    elif args.command == 'categories':
+        out(ledger.categories())
+    elif args.command == 'category':
+        known = any(c['name'] == args.name for c in ledger.categories())
+        op = {'op': 'delete' if args.delete else 'merge' if args.merge_into else 'update' if known else 'create',
+              'name': args.name, 'emoji': args.emoji, 'group': args.group, 'new_name': args.rename, 'into': args.merge_into,
+              'budget_cents': cents(args.budget) if args.budget else None}
+        out({'applied': ledger.apply_category_op(op, 'owner')})
     elif args.command == 'allowance':
         value = ledger.setting('allowance')
         value['amount_cents'] = cents(args.amount)

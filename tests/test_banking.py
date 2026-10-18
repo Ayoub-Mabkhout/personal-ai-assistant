@@ -27,6 +27,9 @@ def raw(reference, amount, debit, day, name='', status='BOOK', text='', iban='')
     return item
 
 
+raw_tx = raw
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -231,6 +234,58 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT kind,category,by FROM decisions WHERE id=?', ('owned',)).fetchone(),
                              ('expense', 'Groceries', 'owner'))
             self.assertIn('coverage_months', {r[1] for r in db.execute('PRAGMA table_info(decisions)')})
+
+
+class IncomeTrackerTests(unittest.TestCase):
+    def test_a_transfer_covering_two_months_fills_both_and_a_late_month_shows_missing(self):
+        with tempfile.TemporaryDirectory() as raw:
+            ledger = Ledger(Path(raw) / 'ledger.sqlite3')
+            ledger.link('Main', 'DE', {'session_id': 's', 'accounts': [{'uid': 'm', 'currency': 'EUR'}]})
+            ledger.store('m', [raw_tx('f1', '1000', False, '2026-09-10', 'Parent'), raw_tx('s1', '1200', False, '2026-09-28', 'Employer')], '2026-09-01')
+            ledger.decide('m:f1', 'income', 'Family complement', False, [], 'x', 1.0, None, 'owner', recurring=True,
+                          monthly_cents=50000, coverage_months=['2026-08', '2026-09'], series_key='income:family')
+            ledger.decide('m:s1', 'salary', 'Salary', False, [], 'x', 1.0, None, 'owner', recurring=True,
+                          monthly_cents=120000, coverage_months=['2026-09'], series_key='income:salary')
+            total = summarise(ledger, date(2026, 10, 18))
+            self.assertEqual(total['regular_income_cents'], 170000)
+            family = next(s for s in total['income_tracker'] if s['key'] == 'income:family')
+            self.assertEqual([(m['month'], m['received']) for m in family['months']],
+                             [('2026-08', True), ('2026-09', True), ('2026-10', False)])
+
+
+class ConsentProjectionTests(unittest.TestCase):
+    def test_provider_timestamps_are_published_as_plain_dates_for_the_relay_reminder(self):
+        with tempfile.TemporaryDirectory() as raw:
+            ledger = Ledger(Path(raw) / 'ledger.sqlite3')
+            ledger.link('Main', 'DE', {'session_id': 's', 'access': {'valid_until': '2027-04-16T15:55:46Z'}, 'accounts': []})
+            self.assertEqual(summarise(ledger, date(2026, 10, 18))['banks'], [{'bank': 'Main', 'valid_until': '2027-04-16'}])
+
+
+class CategoryCatalogueTests(unittest.TestCase):
+    def test_auditor_curates_categories_but_never_the_owners(self):
+        with tempfile.TemporaryDirectory() as raw:
+            ledger = Ledger(Path(raw) / 'ledger.sqlite3')
+            ledger.link('Main', 'DE', {'session_id': 's', 'accounts': [{'uid': 'm', 'currency': 'EUR'}]})
+            ledger.store('m', [raw_tx('a', '5', True, '2026-10-02', 'Kiosk'), raw_tx('b', '9', True, '2026-10-03', 'Bakery')], '2026-10-01')
+            ledger.decide('m:a', 'expense', 'Snacks', True, [], 'x', 0.9, None, 'ai')
+            ledger.decide('m:b', 'expense', 'Bakery', True, [], 'x', 0.9, None, 'ai')
+            ledger.apply_category_op({'op': 'create', 'name': 'Rent', 'group': 'fixed', 'emoji': 'R', 'budget_cents': 42260}, 'owner')
+            ops = [{'op': 'create', 'name': 'Food on the go', 'emoji': 'F', 'group': 'elective', 'suggested_budget_cents': 6000},
+                   {'op': 'merge', 'name': 'Snacks', 'into': 'Food on the go'},
+                   {'op': 'update', 'name': 'Bakery', 'new_name': 'Bakeries'},
+                   {'op': 'delete', 'name': 'Rent'},
+                   {'op': 'delete', 'name': 'Food on the go'}]
+            for op in ops:
+                try:
+                    ledger.apply_category_op(op, 'ai')
+                except ValueError:
+                    pass  # deleting a used category without a target is refused
+            names = {c['name']: c for c in ledger.categories()}
+            self.assertEqual(set(names), {'Food on the go', 'Bakeries', 'Rent'})
+            self.assertEqual(names['Rent']['budget_cents'], 42260)
+            self.assertIsNone(names['Food on the go']['budget_cents'])
+            self.assertEqual({r['id']: r['category'] for r in ledger.transactions()}, {'m:a': 'Food on the go', 'm:b': 'Bakeries'})
+            self.assertIn('category_catalog', summarise(ledger, date(2026, 10, 18)))
 
 
 class RelayBankingTests(unittest.TestCase):

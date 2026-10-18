@@ -19,6 +19,7 @@ import uuid
 KINDS = ('expense', 'fixed_cost', 'cash_withdrawal', 'fee', 'income', 'salary', 'internal_transfer', 'reimbursement',
          'refund', 'duplicate', 'lent', 'repaid_to_me', 'savings', 'other')
 RECURRING_COST_KINDS = ('expense', 'fixed_cost', 'fee')
+CATEGORY_GROUPS = ('fixed', 'elective', 'income', 'savings', 'transfer')
 DEFAULTS = {'allowance': {'mode': 'auto', 'currency': 'EUR', 'period': 'month', 'start_day': 1,
                           'definition': 'Regular monthly income less recurring costs; fixed costs do not count as elective spending.'}}
 UNSET = object()
@@ -111,7 +112,14 @@ class Ledger:
                 lease_token TEXT,lease_until REAL,updated REAL NOT NULL,process_pid INTEGER);
             INSERT OR IGNORE INTO audit_state(id,updated) VALUES(1,0);
             CREATE TABLE IF NOT EXISTS audit_outputs(job_seq INTEGER PRIMARY KEY,answer TEXT NOT NULL,at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS categories(name TEXT PRIMARY KEY,emoji TEXT,grp TEXT NOT NULL DEFAULT 'elective',
+                description TEXT NOT NULL DEFAULT '',budget_cents INTEGER,suggested_budget_cents INTEGER,
+                by TEXT NOT NULL DEFAULT 'ai',created REAL NOT NULL,updated REAL NOT NULL);
             ''')
+            # Categories already used by decisions become catalogue entries the auditor can then curate.
+            db.execute("""INSERT OR IGNORE INTO categories(name,grp,created,updated)
+                SELECT category,CASE WHEN MAX(kind='fixed_cost') THEN 'fixed' WHEN MAX(kind IN ('income','salary')) THEN 'income'
+                ELSE 'elective' END,0,0 FROM decisions WHERE category IS NOT NULL AND category<>'' GROUP BY category""")
             if 'process_pid' not in {r[1] for r in db.execute('PRAGMA table_info(audit_state)')}:
                 db.execute('ALTER TABLE audit_state ADD COLUMN process_pid INTEGER')
         db.close()
@@ -273,13 +281,20 @@ class Ledger:
             if not db.execute('SELECT changes()').fetchone()[0]:
                 raise RuntimeError('Audit lease expired before process start')
 
-    def finish_claim(self, token, jobs, session_id, decisions, insights, replies):
+    def finish_claim(self, token, jobs, session_id, decisions, insights, replies, category_ops=()):
         with self.db() as db:
             state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
             if state['lease_token'] != token or state['lease_until'] <= self.clock():
                 raise RuntimeError('Audit lease expired; response discarded')
             permitted = {json.loads(job['payload']).get('id') for job in jobs if job['kind'] == 'transaction'}
+            # Category changes first, so decisions can use a category created in the same answer.
+            for op in category_ops or ():
+                try:
+                    self.apply_category_op(op, 'ai', db)
+                except (KeyError, ValueError):
+                    continue  # an invalid suggestion never blocks the transaction decisions
             for item in decisions:
+                self.ensure_category(item.get('category'), item['kind'], db)
                 if item['id'] not in permitted:
                     # Revisions to older AI decisions are allowed, but owner decisions remain immutable.
                     row = db.execute('SELECT by FROM decisions WHERE id=?', (item['id'],)).fetchone()
@@ -344,6 +359,7 @@ class Ledger:
             if recurring is UNSET: recurring = False
             if monthly_cents is UNSET: monthly_cents = None
             if series_key is UNSET: series_key = None
+            self.ensure_category(category, kind, db)
             db.execute('INSERT OR REPLACE INTO decisions(id,kind,category,counts,linked,reasoning,confidence,question,by,at,'
                        'recurring,monthly_cents,coverage_months,series_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                        (identity, kind, category, int(bool(counts)), json.dumps(list(linked or [])), reasoning,
@@ -355,6 +371,74 @@ class Ledger:
                 self._enqueue(db, 'owner_answer', event_key or 'decision:' + fingerprint,
                               {'id': identity, 'kind': kind, 'category': category, 'reasoning': reasoning}, self.clock())
         return True
+
+    def categories(self):
+        """The category catalogue with how often each is used; categories are budget envelopes."""
+        with self.db() as db:
+            return [dict(r) for r in db.execute("""SELECT c.*,COUNT(d.id) uses FROM categories c LEFT JOIN decisions d
+                ON d.category=c.name GROUP BY c.name ORDER BY c.grp,c.name""")]
+
+    def apply_category_op(self, op, by, db=None):
+        """Create, update (or rename), merge or delete a category. The auditor never changes the owner's
+        categories or budgets; renames and merges carry every transaction with them."""
+        if db is None:
+            with self.db() as connection:
+                return self.apply_category_op(op, by, connection)
+        kind, name = op.get('op'), (op.get('name') or '').strip()
+        if not name or len(name) > 60:
+            raise ValueError('A category needs a name of at most 60 characters.')
+        group = op.get('group')
+        if group is not None and group not in CATEGORY_GROUPS:
+            raise ValueError('Unknown category group %r' % group)
+        row = db.execute('SELECT * FROM categories WHERE name=?', (name,)).fetchone()
+        if row and row['by'] == 'owner' and by != 'owner':
+            return False
+        now = self.clock()
+        if kind == 'create' and not row:
+            db.execute('INSERT INTO categories(name,emoji,grp,description,budget_cents,suggested_budget_cents,by,created,updated)'
+                       ' VALUES(?,?,?,?,?,?,?,?,?)', (name, op.get('emoji'), group or 'elective', op.get('description') or '',
+                       op.get('budget_cents') if by == 'owner' else None, op.get('suggested_budget_cents'), by, now, now))
+            return True
+        if kind in ('create', 'update'):
+            if not row:
+                raise KeyError(name)
+            fields = {'emoji': op.get('emoji'), 'grp': group, 'description': op.get('description'),
+                      'suggested_budget_cents': op.get('suggested_budget_cents')}
+            if by == 'owner':
+                fields.update(budget_cents=op.get('budget_cents'), by='owner')
+            fields = {k: v for k, v in fields.items() if v is not None}
+            new = (op.get('new_name') or '').strip()
+            if new and new != name:
+                if len(new) > 60 or db.execute('SELECT 1 FROM categories WHERE name=?', (new,)).fetchone():
+                    raise ValueError('Category %r already exists; merge instead.' % new)
+                db.execute('UPDATE categories SET name=? WHERE name=?', (new, name))
+                db.execute('UPDATE decisions SET category=? WHERE category=?', (new, name))
+                db.execute('UPDATE adjustments SET category=? WHERE category=?', (new, name))
+                name = new
+            if fields:
+                db.execute('UPDATE categories SET %s,updated=? WHERE name=?' % ','.join(k + '=?' for k in fields),
+                           list(fields.values()) + [now, name])
+            return True
+        if kind in ('merge', 'delete'):
+            if not row:
+                raise KeyError(name)
+            into = (op.get('into') or '').strip()
+            used = db.execute('SELECT COUNT(*) FROM decisions WHERE category=?', (name,)).fetchone()[0]
+            if used and not into:
+                raise ValueError('Category %r is in use; name a category to move its transactions into.' % name)
+            if into:
+                if into == name or not db.execute('SELECT 1 FROM categories WHERE name=?', (into,)).fetchone():
+                    raise ValueError('Unknown target category %r' % into)
+                db.execute('UPDATE decisions SET category=? WHERE category=?', (into, name))
+                db.execute('UPDATE adjustments SET category=? WHERE category=?', (into, name))
+            db.execute('DELETE FROM categories WHERE name=?', (name,))
+            return True
+        raise ValueError('Unknown category operation %r' % kind)
+
+    def ensure_category(self, name, kind, db):
+        if name and not db.execute('SELECT 1 FROM categories WHERE name=?', (name,)).fetchone():
+            group = 'fixed' if kind == 'fixed_cost' else 'income' if kind in ('income', 'salary') else 'elective'
+            db.execute('INSERT INTO categories(name,grp,created,updated) VALUES(?,?,?,?)', (name, group, self.clock(), self.clock()))
 
     def corrections(self, limit=60):
         query = ('SELECT t.id,t.day,t.amount_cents,t.counterparty,t.description,a.bank,d.kind,d.category,d.counts,d.reasoning,'
@@ -452,6 +536,24 @@ def summarise(ledger, today=None, insights=None):
             'amount_cents': adjustment['amount_cents'], 'category': category,
             'reasoning': adjustment['reason'], 'linked': json.loads(adjustment['linked'])})
     profile_rows = sorted(profiles.values(), key=lambda p: (p['kind'], p['category'], p['key']))
+    # Which months each regular income has arrived for; transfers covering several months fill each of them.
+    tracker, current = [], today.strftime('%Y-%m')
+    for (direction, key), profile in sorted(profiles.items()):
+        if direction != 'income':
+            continue
+        received = {}
+        for r in history:
+            if r['series_key'] == key and r['amount_cents'] > 0:
+                months = json.loads(r['coverage_months'] or '[]') or [(r['day'] or current)[:7]]
+                for m in months:
+                    received[m] = received.get(m, 0) + r['amount_cents'] // len(months)
+        first = min(received) if received else current
+        year, month, months = int(first[:4]), int(first[5:]), []
+        while '%04d-%02d' % (year, month) <= current:
+            m = '%04d-%02d' % (year, month)
+            months.append({'month': m, 'received': m in received, 'amount_cents': received.get(m, 0)})
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        tracker.append({'key': key, 'name': profile['category'], 'monthly_cents': profile['monthly_cents'], 'months': months[-6:]})
     actual_recurring = sum(r['amount_cents'] for r in real if r['recurring'] and r['monthly_cents'] is not None
                            and ((r['kind'] in ('income', 'salary') and r['amount_cents'] > 0)
                                 or (r['kind'] in RECURRING_COST_KINDS and r['amount_cents'] < 0)))
@@ -476,12 +578,15 @@ def summarise(ledger, today=None, insights=None):
         'fixed_costs': sorted(({'name': k, 'cents': v} for k, v in fixed.items()), key=lambda c: -c['cents']),
         'fixed_cost_transactions': [public(r) for r in rows if r['kind'] == 'fixed_cost'],
         'recurring_breakdown': profile_rows,
+        'income_tracker': tracker,
+        'category_catalog': [{k: c[k] for k in ('name', 'emoji', 'grp', 'description', 'budget_cents', 'suggested_budget_cents', 'by')}
+                             for c in ledger.categories()],
         'adjustments': [{k: a[k] for k in ('id', 'day', 'kind', 'amount_cents', 'category', 'reason', 'source')}
                         | {'linked': json.loads(a['linked'])} for a in adjustments],
         'review': [public(r) for r in review],
         'transactions': [public(r) for r in rows[:200]],
         'insights': insights if insights is not None else ledger.setting('insights') or [],
-        'banks': [{'bank': b['bank'], 'valid_until': b['valid_until']} for b in ledger.banks()],
+        'banks': [{'bank': b['bank'], 'valid_until': (b['valid_until'] or '')[:10] or None} for b in ledger.banks()],
     }
 
 

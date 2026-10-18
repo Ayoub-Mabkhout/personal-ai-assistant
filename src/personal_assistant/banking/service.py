@@ -12,7 +12,7 @@ BANKS = {'deutsche-bank': ('Deutsche Bank', 'DE'), 'revolut': ('Revolut', 'DE')}
 UNATTENDED_PER_DAY = 4  # PSD2 limit on fetches without the owner present
 HISTORY_DAYS = 90
 RELAY = '/relay/v1/banking'
-SUMMARY_LIMIT = 256 * 1024
+SUMMARY_LIMIT = 960 * 1024
 TRANSACTION_PAGE_SIZE = 200
 
 
@@ -120,6 +120,26 @@ def record_offset(ledger, identity, day, kind, amount_cents, category, linked, r
     return ledger.add_adjustment(identity, day, kind, amount_cents, category, linked, reason, source)
 
 
+HISTORY_MONTHS = 5
+
+
+def history(ledger, current_start, months=HISTORY_MONTHS):
+    """Compact boards for earlier periods, newest first, so the phone can swipe back through them."""
+    out, day = [], current_start
+    for _ in range(months):
+        day -= timedelta(days=1)
+        past = summarise(ledger, day, insights=[])
+        if not past['categories']:
+            break
+        compact = lambda r: {k: (r.get(k)[:160] if k == 'reasoning' and r.get(k) else r.get(k))
+                             for k in ('id', 'day', 'amount_cents', 'counterparty', 'description', 'kind', 'reasoning')}
+        out.append({'period': past['period'], 'spent_cents': past['spent_cents'], 'categories': past['categories'],
+                    'fixed_costs': past['fixed_costs'],
+                    'category_transactions': {k: [compact(r) for r in v] for k, v in past['category_transactions'].items()}})
+        day = date.fromisoformat(past['period']['start'])
+    return out
+
+
 def publish(relay, ledger, today=None, transaction_cursor=None, page_size=TRANSACTION_PAGE_SIZE):
     """Publish a bounded summary with complete category details and a stable transaction cursor.
 
@@ -144,6 +164,7 @@ def publish(relay, ledger, today=None, transaction_cursor=None, page_size=TRANSA
     summary['transactions'] = [public(row) for row in selected]
     summary['transactions_page'] = {'limit': page_size, 'returned': len(selected),
                                     'has_more': next_cursor is not None, 'next_cursor': next_cursor}
+    summary['months'] = history(ledger, date.fromisoformat(start))
     summary['generated'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
     encoded_size = len(json.dumps(summary, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
     if encoded_size > SUMMARY_LIMIT:
