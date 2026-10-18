@@ -1,3 +1,4 @@
 <resources>
+    <string name="money_widget_description">Free to spend per day, categories and leading category</string>
     <string name="widget_description">Your shopping list on the home screen. Tick items off and add new ones.</string>
 </resources>

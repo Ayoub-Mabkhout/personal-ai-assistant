@@ -37,6 +37,104 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertIn('sample',response.json()['themes'][0]['content'])
 
+    def test_money_endpoint_is_private_and_returns_empty_state_without_ledger(self):
+        client,headers=self.second_client(banking_ledger=str(self.root/'banking/ledger.sqlite3'))
+        self.assertEqual(client.get('/api/money').status_code,401)
+        response=client.get('/api/money',headers=headers)
+        self.assertEqual(response.status_code,200)
+        self.assertFalse(response.json()['available'])
+        self.assertEqual(response.json()['transactions'],[])
+
+    def test_money_endpoint_reads_local_ledger_and_exposes_category_and_fixed_fields(self):
+        from personal_assistant.banking.ledger import Ledger, summarise
+        path=self.root/'banking/ledger.sqlite3'
+        ledger=Ledger(path)
+        ledger.link('bank','DE',{'session_id':'session','accounts':[{'uid':'account','account_id':{'iban':'DE00'},'currency':'EUR'}]})
+        ledger.store('account',[
+            {'entry_reference':'rent','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':'2026-10-01','transaction_amount':{'amount':'500','currency':'EUR'},'creditor':{'name':'Landlord'}},
+            {'entry_reference':'food','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':'2026-10-02','transaction_amount':{'amount':'20','currency':'EUR'},'creditor':{'name':'Cafe'}},
+        ],'2026-10-01')
+        rows={row['counterparty']:row for row in ledger.transactions()}
+        ledger.decide(rows['Landlord']['id'],'fixed_cost','Housing',False,[],'Recurring',1,None,'ai')
+        ledger.decide(rows['Cafe']['id'],'expense','Eating out',True,[],'Meal',1,'Was this a work lunch?','ai')
+        client,headers=self.second_client(banking_ledger=str(path))
+        response=client.get('/api/money',headers=headers)
+        self.assertEqual(response.status_code,200)
+        value=response.json()
+        self.assertTrue(value['available'])
+        self.assertEqual(value['fixed_costs'],[{'name':'Housing','cents':50000}])
+        self.assertEqual(value['fixed_cents'],50000)
+        self.assertEqual(value['categories'],[{'name':'Eating out','cents':2000}])
+        self.assertEqual(value['review'][0]['question'],'Was this a work lunch?')
+        self.assertEqual(len(value['transactions']),2)
+        self.assertEqual(value['fixed_cost_transactions'][0]['category'],'Housing')
+        self.assertEqual(len(value['category_transactions']['Eating out']),1)
+        self.assertIn('recurring_breakdown',value)
+        self.assertEqual(value['free_cents'],value['allowance']['amount_cents'])
+
+    def test_money_question_uses_authenticated_durable_ledger_queue(self):
+        from personal_assistant.banking.ledger import Ledger
+        path=self.root/'banking/ledger.sqlite3'
+        client,headers=self.second_client(banking_ledger=str(path))
+        self.assertEqual(client.post('/api/money/questions',json={'request_id':'question-123','text':'Explain my spending'}).status_code,401)
+        response=client.post('/api/money/questions',json={'request_id':'question-123','text':'Explain my spending'},headers=headers)
+        self.assertEqual(response.status_code,200)
+        sequence=response.json()['sequence']
+        ledger=Ledger(path)
+        jobs=ledger.jobs('pending')
+        self.assertEqual([(job['kind'],job['job_key']) for job in jobs],[('question','question-123')])
+        self.assertEqual(json.loads(jobs[0]['payload']),{'text':'Explain my spending','transaction':None})
+        self.assertEqual(client.get(f'/api/money/questions/{sequence}',headers=headers).json(),
+                         {'sequence':sequence,'state':'pending','reply':None})
+        with ledger.db() as db:
+            db.execute('INSERT INTO audit_outputs VALUES(?,?,?)',(sequence,'Local auditor reply',ledger.clock()))
+        self.assertEqual(client.get(f'/api/money/questions/{sequence}',headers=headers).json()['reply'],'Local auditor reply')
+
+    def test_money_owner_answer_records_once_and_clears_review_question(self):
+        from personal_assistant.banking.ledger import Ledger,summarise
+        path=self.root/'banking/ledger.sqlite3';ledger=Ledger(path)
+        ledger.link('bank','DE',{'session_id':'session','accounts':[{'uid':'account','account_id':{'iban':'DE00'},'currency':'EUR'}]})
+        ledger.store('account',[{'entry_reference':'review','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':'2026-10-02',
+            'transaction_amount':{'amount':'22','currency':'EUR'},'creditor':{'name':'Merchant'}}],'2026-10-01')
+        row=ledger.transactions()[0]
+        ledger.decide(row['id'],'expense','Food',True,[],'Maybe a shared meal',1,'Was this a shared meal?','ai')
+        client,headers=self.second_client(banking_ledger=str(path));payload={'request_id':'answer-123','transaction':row['id'],'choice':'reimbursement','note':'This was my share being reimbursed.'}
+        self.assertEqual(client.post('/api/money/answers',json=payload).status_code,401)
+        response=client.post('/api/money/answers',json=payload,headers=headers)
+        self.assertEqual(response.status_code,200);self.assertEqual(response.json(),{'recorded':True,'duplicate':False})
+        self.assertEqual(client.post('/api/money/answers',json=payload,headers=headers).json(),{'recorded':True,'duplicate':True})
+        self.assertEqual(client.post('/api/money/answers',json={**payload,'note':'A different answer'},headers=headers).status_code,409)
+        decided=ledger.transactions(include_gone=True)[0]
+        self.assertEqual((decided['kind'],decided['by'],decided['question']),('reimbursement','owner',None))
+        self.assertIn('This was my share',decided['reasoning'])
+        self.assertEqual(summarise(ledger)['review'],[])
+        self.assertEqual(client.post('/api/money/answers',json={**payload,'request_id':'answer-456'},headers=headers).status_code,409)
+
+    def test_money_allowance_modes_and_period_definition_persist_locally(self):
+        path=self.root/'banking/ledger.sqlite3';client,headers=self.second_client(banking_ledger=str(path))
+        self.assertEqual(client.get('/api/money/allowance').status_code,401)
+        automatic={'mode':'auto','start_day':5,'definition':'Regular income less recurring costs.'}
+        self.assertEqual(client.post('/api/money/allowance',json=automatic,headers=headers).json()['mode'],'auto')
+        pinned={'mode':'pinned','amount_cents':175000,'start_day':5,'definition':'Owner-set monthly allowance.'}
+        self.assertEqual(client.post('/api/money/allowance',json=pinned,headers=headers).json()['amount_cents'],175000)
+        reopened,_=self.second_client(banking_ledger=str(path))
+        self.assertEqual(reopened.get('/api/money/allowance',headers=_).json(),{**pinned,'currency':'EUR','period':'month'})
+        self.assertEqual(client.post('/api/money/allowance',json={'mode':'pinned','start_day':1},headers=headers).status_code,422)
+
+    def test_shipped_money_page_uses_dashboard_route_and_supported_navigation(self):
+        source=(Path(__file__).resolve().parents[1]/'apps/dashboard/index.html').read_text(encoding='utf-8')
+        self.assertIn("data-page=\"money\"",source)
+        self.assertIn("shared('money')",source)
+        self.assertIn("const PAGES=['today','money'",source)
+        self.assertIn("const LOADERS={money:loadMoney",source)
+        for selector in ('.money-map','.money-block.fixed','.money-ring','.money-question-card','.money-category-hero','.chart-area','.money-monogram'):
+            self.assertIn(selector,source)
+        money_source=source[source.index('/* local money dashboard */'):source.index('/* accounts */')]
+        self.assertIn("api('money/questions'",money_source)
+        self.assertIn("api('money/answers'",money_source)
+        self.assertIn("api('money/allowance'",money_source)
+        self.assertNotIn("api('agent-prompts'",money_source)
+
     def test_daylight_preferences_remain_private_and_source_is_generic(self):
         prefs=self.root/'runtime/companion-preferences.json'
         prefs.write_text(json.dumps({'daylight':{'latitude':35.0,'longitude':-20.0},'secret':'omit'}))

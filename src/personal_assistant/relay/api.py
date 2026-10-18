@@ -26,7 +26,7 @@ class BodyLimit:
             return await self.app(scope, receive, send)
         body = bytearray()
         path=scope.get('path','')
-        limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else 256*1024 if path=='/v1/banking/summary' else (
+        limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else 1024*1024 if path=='/v1/banking/summary' else (
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
         if path.startswith('/groceries/v1/mobile/termux/'):
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
@@ -95,7 +95,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
     agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications),
                         **({'clock':clock} if clock else {}))
-    pump=None; reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
+    pump=None; reminder_pump=None; money_reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
     if groceries:
         if groceries.get('retailer_check', {}).get('enabled'):
             from personal_assistant.groceries.store import Groceries
@@ -118,6 +118,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     async def lifespan(app):
         if pump: pump.start()
         if reminder_pump: reminder_pump.start()
+        if money_reminder_pump: money_reminder_pump.start()
         if release_pump: release_pump.start()
         if native_pump: native_pump.start()
         if retailer_check: retailer_check.start()
@@ -125,6 +126,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         finally:
             if pump: pump.close()
             if reminder_pump: reminder_pump.close()
+            if money_reminder_pump: money_reminder_pump.close()
             if release_pump: release_pump.close()
             if native_pump: native_pump.close()
             if retailer_check: retailer_check.close()
@@ -191,11 +193,15 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         app.state.file_drops=drops
         for drop_router in file_drop_router(drops,(submit_token,worker_token),device_auth(groceries_api.devices)):
             app.include_router(drop_router)
-    from .banking import Banking,banking_router
+    from .banking import Banking,ConsentReminderPump,banking_router
     banking=Banking(Path(path).with_name('banking.sqlite3'),**({'clock':clock} if clock else {}))
     app.state.banking=banking
-    banking_owner,banking_public,banking_phone=banking_router(banking,submit,device_auth(groceries_api.devices) if groceries else submit)
-    app.include_router(banking_owner);app.include_router(banking_public)
+    if sender:
+        money_reminder_pump=ConsentReminderPump(banking,sender,visibility=notifications.get('visibility','private'))
+    app.state.money_reminder_pump=money_reminder_pump
+    banking_owner,banking_public,banking_phone,banking_conversation,banking_owner_view=banking_router(
+        banking,submit,device_auth(groceries_api.devices) if groceries else submit,owner_auth)
+    app.include_router(banking_owner);app.include_router(banking_public);app.include_router(banking_conversation);app.include_router(banking_owner_view)
     if groceries: app.include_router(banking_phone)
     if reminder_pump:
         from .reminders import reminder_router

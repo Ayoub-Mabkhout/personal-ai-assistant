@@ -6,12 +6,14 @@ import secrets
 import time
 
 from .enablebanking import EnableBanking
-from .ledger import KINDS, Ledger, summarise
+from .ledger import KINDS, Ledger, public, summarise
 
 BANKS = {'deutsche-bank': ('Deutsche Bank', 'DE'), 'revolut': ('Revolut', 'DE')}
 UNATTENDED_PER_DAY = 4  # PSD2 limit on fetches without the owner present
 HISTORY_DAYS = 90
 RELAY = '/relay/v1/banking'
+SUMMARY_LIMIT = 256 * 1024
+TRANSACTION_PAGE_SIZE = 200
 
 
 def home():
@@ -72,7 +74,7 @@ def sync(config, ledger, client=None, today=None, attended=False):
 COUNTING = ('expense', 'cash_withdrawal', 'fee', 'reimbursement', 'refund')
 
 
-def answer(ledger, row, choice, note=''):
+def answer(ledger, row, choice, note='', event_key=None):
     """The owner's word on one transaction: 'confirm' keeps the agent's decision, a kind replaces it."""
     if choice == 'confirm':
         if not row['kind']:
@@ -84,22 +86,67 @@ def answer(ledger, row, choice, note=''):
     else:
         return False
     return ledger.decide(row['id'], kind, row['category'], counts, json.loads(row['linked'] or '[]'),
-                         'Set by you' + (': ' + note if note else ''), 1.0, None, 'owner')
+                         'Set by you' + (': ' + note if note else ''), 1.0, None, 'owner',
+                         event_key=event_key)
 
 
 def settle(relay, ledger):
     """Applies the owner's answers given on the phone."""
     answers = relay.call(RELAY + '/answers')['items']
     rows = {r['id']: r for r in ledger.transactions(include_gone=True)}
-    applied = sum(1 for a in answers if a['transaction'] in rows and answer(ledger, rows[a['transaction']], a['choice'], a.get('note', '')))
-    if answers:
-        relay.call(RELAY + '/answers/ack', {'through': max(a['sequence'] for a in answers)})
+    applied = 0
+    for item in sorted(answers, key=lambda a: a['sequence']):
+        if item['transaction'] in rows and answer(ledger, rows[item['transaction']], item['choice'], item.get('note', ''),
+                                                    event_key='relay:' + str(item.get('id') or item['sequence'])):
+            applied += 1
+        else:
+            ledger.enqueue('owner_answer', 'relay:' + str(item.get('id') or item['sequence']),
+                           {'id': item['transaction'], 'choice': item['choice'], 'note': item.get('note', ''),
+                            'status': 'unapplied'})
+        # Acknowledge only after the local SQLite transaction has committed.
+        relay.call(RELAY + '/answers/ack', {'through': item['sequence']})
     return applied
 
 
-def publish(relay, ledger, today=None):
+def ask_question(ledger, request_id, text, transaction=None):
+    return ledger.enqueue('question', request_id, {'text': text, 'transaction': transaction})
+
+
+def explain(ledger, request_id, transaction, text=''):
+    return ledger.enqueue('explanation', request_id, {'transaction': transaction, 'text': text})
+
+
+def record_offset(ledger, identity, day, kind, amount_cents, category, linked, reason, source):
+    return ledger.add_adjustment(identity, day, kind, amount_cents, category, linked, reason, source)
+
+
+def publish(relay, ledger, today=None, transaction_cursor=None, page_size=TRANSACTION_PAGE_SIZE):
+    """Publish a bounded summary with complete category details and a stable transaction cursor.
+
+    Category and fixed-cost detail lists are never sliced. The generic transaction feed is
+    paged by (day,id); an oversized category payload fails before relay storage, never silently
+    publishes an incomplete category page.
+    """
+    if not 1 <= page_size <= TRANSACTION_PAGE_SIZE:
+        raise ValueError('page_size must be between 1 and %d' % TRANSACTION_PAGE_SIZE)
     summary = summarise(ledger, today)
-    summary['transactions'] = summary['transactions'][:60]
+    start, end = summary['period']['start'], summary['period']['end']
+    rows = ledger.transactions(start, end)
+    rows.sort(key=lambda row: (row['day'] or '', row['id']), reverse=True)
+    if transaction_cursor is not None:
+        if not isinstance(transaction_cursor, dict) or not isinstance(transaction_cursor.get('day'), str) or not isinstance(transaction_cursor.get('id'), str):
+            raise ValueError('transaction_cursor must contain day and id')
+        cursor_key = (transaction_cursor['day'], transaction_cursor['id'])
+        rows = [row for row in rows if (row['day'] or '', row['id']) < cursor_key]
+    selected = rows[:page_size]
+    next_cursor = ({'day': selected[-1]['day'], 'id': selected[-1]['id']}
+                   if len(rows) > len(selected) and selected else None)
+    summary['transactions'] = [public(row) for row in selected]
+    summary['transactions_page'] = {'limit': page_size, 'returned': len(selected),
+                                    'has_more': next_cursor is not None, 'next_cursor': next_cursor}
     summary['generated'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    encoded_size = len(json.dumps(summary, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
+    if encoded_size > SUMMARY_LIMIT:
+        raise ValueError('Complete Money summary exceeds the %d-byte relay limit; category details were not published.' % SUMMARY_LIMIT)
     relay.call(RELAY + '/summary', summary, method='PUT')
     return summary

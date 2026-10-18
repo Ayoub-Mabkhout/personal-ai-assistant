@@ -30,6 +30,9 @@ def main():
     if config.get('calendar_reminder_sync'):
         commands['calendar-reminders']=[config['python'],str(Path(config['repository'])/'scripts/sync_calendar_reminders.py'),
             '--config',str(args.config),'--watch',*(['--db',config['calendar_db']] if config.get('calendar_db') else [])]
+    if config.get('banking_schedule'):
+        commands['money']=[config['python'],str(Path(config['repository'])/'scripts/banking.py'),
+            '--config',str(args.config),'watch','--interval',str(config.get('banking_interval_seconds',21600))]
     if config.get('mail_automation_config'):
         commands['mail-automation']=[config['python'],str(Path(config['repository'])/'scripts/mail_automation.py'),
             '--config',config['mail_automation_config'],'--loop']

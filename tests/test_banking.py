@@ -1,6 +1,9 @@
 from datetime import date
+from contextlib import closing
 import json
 from pathlib import Path
+import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -10,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from personal_assistant.banking import service
 from personal_assistant.banking.agent import audit
-from personal_assistant.banking.ledger import Ledger, normalise, summarise
+from personal_assistant.banking.ledger import Ledger, _process_alive, normalise, summarise
 from personal_assistant.relay.api import create_app
 
 
@@ -56,13 +59,20 @@ class LedgerTests(unittest.TestCase):
         for identity, kind, counts, category in (('db:d1', 'internal_transfer', False, ''), ('rv:v1', 'internal_transfer', False, ''),
                 ('db:d2', 'salary', False, ''), ('db:d3', 'fixed_cost', False, 'Rent'), ('rv:v2', 'expense', True, 'Eating out'),
                 ('rv:v3', 'reimbursement', True, 'Eating out')):
-            self.ledger.decide(identity, kind, category, counts, [], 'test', 0.9, 'Sure?' if identity == 'rv:v3' else '', 'ai')
+            recurring = identity in ('db:d2', 'db:d3')
+            monthly = {'db:d2': 294000, 'db:d3': 90000}.get(identity)
+            self.ledger.decide(identity, kind, category, counts, [], 'test', 0.9, 'Sure?' if identity == 'rv:v3' else '', 'ai',
+                               recurring=recurring, monthly_cents=monthly, series_key=identity if recurring else None)
         total = summarise(self.ledger, date(2026, 10, 18))
-        self.assertEqual((total['spent_cents'], total['remaining_cents']), (2400, 117600))
+        self.assertEqual((total['spent_cents'], total['remaining_cents']), (2400, 201600))
+        self.assertEqual((total['regular_income_cents'], total['recurring_costs_cents'], total['free_to_spend_cents']),
+                         (294000, 90000, 204000))
         self.assertEqual(total['net_cents'], 294000 - 90000 - 4800 + 2400)
         self.assertEqual(total['period']['days_left'], 14)
-        self.assertEqual(total['safe_per_day_cents'], 117600 // 14)
-        self.assertEqual(total['categories'], [{'name': 'Eating out', 'cents': 2400}])
+        self.assertEqual(total['safe_per_day_cents'], 201600 // 14)
+        self.assertEqual(total['categories'], [{'name': 'Rent', 'cents': 90000}, {'name': 'Eating out', 'cents': 2400}])
+        self.assertEqual(total['fixed_costs'], [{'name': 'Rent', 'cents': 90000}])
+        self.assertEqual(len(total['category_transactions']['Eating out']), 2)
         self.assertEqual([r['id'] for r in total['review']], ['rv:v3'])
         # The owner's word stands against a later agent revision.
         rows = {r['id']: r for r in self.ledger.transactions()}
@@ -74,17 +84,153 @@ class LedgerTests(unittest.TestCase):
         self.ledger.store('rv', [raw('v1', '10', True, '2026-10-05', 'Cafe'), raw('v2', '5', True, '2026-10-06', 'Cafe')], '2026-10-01')
         seen = []
 
-        def ask(prompt, config):
+        def ask(prompt, config, session, on_start):
             seen.append(json.loads(prompt))
-            return {'decisions': [{'id': i, 'kind': 'expense', 'category': 'Eating out', 'counts': True, 'linked': [],
-                                   'reasoning': 'Coffee.', 'confidence': 1.4, 'question': ''} for i in ('rv:v1', 'rv:v2', 'rv:unknown')],
-                    'insights': [{'kind': 'pace', 'text': 'On track.'}]}
+            return ({'decisions': [{'id': i, 'kind': 'expense', 'category': 'Eating out', 'counts': True, 'linked': [],
+                                   'reasoning': 'Coffee.', 'confidence': 1.4, 'question': '', 'recurring': False,
+                                   'monthly_cents': None, 'coverage_months': [], 'series_key': None}
+                                  for i in ('rv:v1', 'rv:v2', 'rv:unknown')],
+                    'insights': [{'kind': 'pace', 'text': 'On track.'}], 'replies': []}, 'session-1')
         decided, insights = audit(self.ledger, {}, date(2026, 10, 18), ask=ask)
         self.assertEqual(decided, 2)
-        self.assertEqual(seen[0]['allowance']['amount'], '1200.00')
+        self.assertEqual(seen[0]['allowance']['mode'], 'auto')
         self.assertEqual({r['confidence'] for r in self.ledger.transactions()}, {1.0})
         self.assertEqual(self.ledger.setting('insights'), insights)
         self.assertEqual(audit(self.ledger, {}, ask=ask), (0, None))
+
+    def test_coverage_offsets_and_manual_pin(self):
+        self.ledger.store('db', [raw('wage', '2000', False, '2026-09-28', 'Employer'),
+                                 raw('support', '1000', False, '2026-09-10', 'Family'),
+                                 raw('rent', '800', True, '2026-10-03', 'Landlord'),
+                                 raw('food', '60', True, '2026-10-04', 'Market')], '2026-09-01')
+        self.ledger.decide('db:wage', 'salary', '', False, [], 'Regular wage', 1, '', 'ai',
+                           recurring=True, monthly_cents=200000, coverage_months=['2026-09'], series_key='wage')
+        self.ledger.decide('db:support', 'income', '', False, [], 'Two months of support', 1, '', 'ai',
+                           recurring=True, monthly_cents=50000, coverage_months=['2026-08', '2026-09'], series_key='support')
+        self.ledger.decide('db:rent', 'fixed_cost', 'Housing', False, [], 'Lease', 1, '', 'ai',
+                           recurring=True, monthly_cents=80000, series_key='rent')
+        self.ledger.decide('db:food', 'expense', 'Groceries', True, [], 'Food', 1, '', 'ai')
+        self.assertTrue(self.ledger.add_adjustment('cash-1', '2026-10-05', 'cash_offset', 2000,
+                                                   'Groceries', ['db:food'], 'Owner confirmed cash repayment', 'owner'))
+        self.assertFalse(self.ledger.add_adjustment('cash-1', '2026-10-05', 'cash_offset', 2000,
+                                                    'Groceries', ['db:food'], 'Owner confirmed cash repayment', 'owner'))
+        summary = summarise(self.ledger, date(2026, 10, 18))
+        self.assertEqual((summary['regular_income_cents'], summary['recurring_costs_cents'],
+                          summary['free_to_spend_cents']), (250000, 80000, 170000))
+        self.assertEqual((summary['spent_cents'], summary['remaining_cents']), (4000, 166000))
+        self.assertEqual(summary['net_cents'], -86000)
+        self.assertEqual(summary['payday_aware_net_cents'], 166000)
+        self.assertEqual(summary['categories'][1], {'name': 'Groceries', 'cents': 4000})
+        self.assertEqual(len(summary['category_transactions']['Groceries']), 2)
+        self.assertEqual(len(self.ledger.transactions()), 4)
+        self.ledger.set_setting('allowance', {'amount_cents': 120000, 'start_day': 1, 'period': 'month'})
+        self.assertEqual(summarise(self.ledger, date(2026, 10, 18))['remaining_cents'], 116000)
+
+    def test_queue_fence_replay_and_question_response(self):
+        self.ledger.store('rv', [raw('one', '5', True, '2026-10-01', 'Cafe')], '2026-10-01')
+        question = service.ask_question(self.ledger, 'request-1', 'Explain this month')
+        first = self.ledger.claim_jobs()
+        self.assertIsNone(self.ledger.claim_jobs())
+        token, jobs, _ = first
+        self.assertEqual([j['kind'] for j in jobs], ['transaction', 'question'])
+        decision = {'id': 'rv:one', 'kind': 'expense', 'category': 'Eating out', 'counts': True,
+                    'linked': [], 'reasoning': 'Cafe', 'confidence': 0.9, 'question': '',
+                    'recurring': False, 'monthly_cents': None, 'coverage_months': [], 'series_key': None}
+        self.ledger.finish_claim(token, jobs, 'session-1', [decision], [], [{'job_seq': question, 'text': 'One cafe payment.'}])
+        self.assertEqual(self.ledger.audit_output(question), 'One cafe payment.')
+        self.assertIsNone(self.ledger.claim_jobs())
+        self.ledger.decide('rv:one', 'expense', 'Eating out', True, [], 'Owner correction', 1, '', 'owner')
+        with self.assertRaises(RuntimeError):
+            self.ledger.finish_claim(token, jobs, 'session-1', [decision], [], [])
+        self.assertEqual(self.ledger.transactions()[0]['by'], 'owner')
+
+    def test_expired_claim_cannot_replay_a_mutation(self):
+        moment = [1000.0]
+        self.ledger.clock = lambda: moment[0]
+        self.ledger.store('rv', [raw('one', '5', True, '2026-10-01', 'Cafe')], '2026-10-01')
+        old_token, old_jobs, _ = self.ledger.claim_jobs(lease_seconds=10)
+        moment[0] += 11
+        new_token, new_jobs, _ = self.ledger.claim_jobs(lease_seconds=10)
+        self.assertNotEqual(old_token, new_token)
+        decision = {'id': 'rv:one', 'kind': 'expense', 'category': 'Eating out', 'counts': True,
+                    'linked': [], 'reasoning': 'Cafe', 'confidence': 1, 'question': '',
+                    'recurring': False, 'monthly_cents': None, 'coverage_months': [], 'series_key': None}
+        with self.assertRaises(RuntimeError):
+            self.ledger.finish_claim(old_token, old_jobs, 'stale', [decision], [], [])
+        self.ledger.finish_claim(new_token, new_jobs, 'current', [decision], [], [])
+        self.assertEqual(self.ledger.transactions()[0]['kind'], 'expense')
+
+    def test_expired_claim_waits_for_live_auditor_process(self):
+        moment = [1000.0]
+        self.ledger.clock = lambda: moment[0]
+        self.ledger.store('rv', [raw('one', '5', True, '2026-10-01', 'Cafe')], '2026-10-01')
+        token, _, _ = self.ledger.claim_jobs(lease_seconds=10)
+        self.assertTrue(_process_alive(os.getpid()))
+        self.ledger.set_claim_process(token, os.getpid())
+        moment[0] += 11
+        self.assertIsNone(self.ledger.claim_jobs())
+
+    def test_publish_keeps_category_details_and_paginates_transactions_over_sixty(self):
+        raws = [raw('fixed-%03d' % i, '12.34', True, '2026-10-%02d' % (1 + i % 18), 'Utility', text='Monthly bill')
+                for i in range(63)]
+        raws += [raw('food-%03d' % i, '8.50', True, '2026-10-%02d' % (1 + i % 18), 'Market', text='Groceries')
+                 for i in range(12)]
+        self.ledger.store('db', raws, '2026-10-01')
+        for i in range(63):
+            identity = 'db:fixed-%03d' % i
+            self.ledger.decide(identity, 'fixed_cost', 'Utilities', False, [], 'Monthly bill', 0.95, '', 'ai')
+        for i in range(12):
+            identity = 'db:food-%03d' % i
+            self.ledger.decide(identity, 'expense', 'Groceries', True, [], 'Food', 0.95, '', 'ai')
+
+        class Relay:
+            def __init__(self): self.payloads = []
+            def call(self, path, payload, method=None): self.payloads.append(payload)
+
+        relay = Relay()
+        first = service.publish(relay, self.ledger, date(2026, 10, 18), page_size=30)
+        self.assertEqual((len(first['transactions']), first['transactions_page']['returned']), (30, 30))
+        self.assertTrue(first['transactions_page']['has_more'])
+        self.assertEqual(len(first['category_transactions']['Utilities']), 63)
+        self.assertEqual(len(first['category_transactions']['Groceries']), 12)
+        self.assertEqual(len(first['fixed_cost_transactions']), 63)
+        self.assertLess(len(json.dumps(first, ensure_ascii=False).encode('utf-8')), service.SUMMARY_LIMIT)
+        all_ids = [row['id'] for row in first['transactions']]
+        cursor = first['transactions_page']['next_cursor']
+        while cursor:
+            page = service.publish(relay, self.ledger, date(2026, 10, 18), transaction_cursor=cursor, page_size=30)
+            all_ids.extend(row['id'] for row in page['transactions'])
+            cursor = page['transactions_page']['next_cursor']
+        self.assertEqual(len(all_ids), 75)
+        self.assertEqual(len(set(all_ids)), 75)
+        self.assertTrue(all('raw' not in row for row in first['fixed_cost_transactions']))
+
+    def test_publish_rejects_oversized_complete_detail_without_slicing(self):
+        self.ledger.store('db', [raw('large', '1', True, '2026-10-01', 'Shop', text='x' * service.SUMMARY_LIMIT)],
+                          '2026-10-01')
+        self.ledger.decide('db:large', 'expense', 'Other', True, [], 'Large test row', 1, '', 'ai')
+
+        class Relay:
+            def __init__(self): self.calls = 0
+            def call(self, *args, **kwargs): self.calls += 1
+
+        relay = Relay()
+        with self.assertRaisesRegex(ValueError, 'Complete Money summary exceeds'):
+            service.publish(relay, self.ledger, date(2026, 10, 18))
+        self.assertEqual(relay.calls, 0)
+
+    def test_legacy_owner_decision_survives_schema_migration(self):
+        path = Path(self.temp.name) / 'legacy.sqlite3'
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute('CREATE TABLE decisions(id TEXT PRIMARY KEY,kind TEXT NOT NULL,category TEXT,counts INTEGER NOT NULL,'
+                       "linked TEXT NOT NULL DEFAULT '[]',reasoning TEXT,confidence REAL,question TEXT,by TEXT NOT NULL,at REAL NOT NULL)")
+            db.execute('INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?)',
+                       ('owned', 'expense', 'Groceries', 1, '[]', 'Owner confirmed', 1, None, 'owner', 1.0))
+        Ledger(path)
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute('SELECT kind,category,by FROM decisions WHERE id=?', ('owned',)).fetchone(),
+                             ('expense', 'Groceries', 'owner'))
+            self.assertIn('coverage_months', {r[1] for r in db.execute('PRAGMA table_info(decisions)')})
 
 
 class RelayBankingTests(unittest.TestCase):

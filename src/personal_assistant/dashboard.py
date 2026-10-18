@@ -64,11 +64,32 @@ class FollowupEdit(BaseModel):
     note:str=Field(default='',max_length=1000)
 
 
+class MoneyQuestion(BaseModel):
+    request_id:str=Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
+    text:str=Field(min_length=1,max_length=4096)
+    transaction:str|None=Field(default=None,max_length=200)
+
+
+class MoneyAnswer(BaseModel):
+    request_id:str=Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
+    transaction:str=Field(min_length=1,max_length=200)
+    choice:str
+    note:str=Field(default='',max_length=1000)
+
+
+class MoneyAllowance(BaseModel):
+    mode:Literal['auto','pinned']
+    amount_cents:int|None=Field(default=None,ge=0,le=100_000_000)
+    start_day:int=Field(default=1,ge=1,le=28)
+    definition:str=Field(default='Regular monthly income less recurring costs; fixed costs do not count as elective spending.',min_length=1,max_length=400)
+
+
 def create_app(config):
     app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost'])
     token=secrets.token_urlsafe(32)
     runtime=Path(config['runtime_dir'])
+    money_path=Path(config.get('banking_ledger') or (Path.home()/'.personal-assistant'/'banking'/'ledger.sqlite3')).expanduser()
     profile=ROOT/'private/profile'
     edit_lock=threading.Lock()
     cloud=OwnerClient(config) if config.get('submit_token_file') else None
@@ -240,6 +261,116 @@ def create_app(config):
         job={'created':now.timestamp(),'payload':{'command':'Show my calendar this week',
             'timezone':config.get('timezone','Europe/Berlin'),'created_at':now.isoformat()}}
         return CalendarExecutor(config).execute(job,threading.Event())
+
+    @app.get('/api/money')
+    def money():
+        # Read only the already configured local ledger. Loading this page never opens a bank
+        # connection or invokes the auditor; an absent ledger remains an honest empty state.
+        if not money_path.is_file():
+            return {'available':False,'period':None,'allowance':None,'spent_cents':0,'remaining_cents':0,
+                    'income_cents':0,'fixed_cents':0,'free_cents':0,'categories':[],'fixed_costs':[],
+                    'review':[],'transactions':[],'insights':[]}
+        try:
+            from .banking.ledger import Ledger, summarise
+            value=summarise(Ledger(money_path))
+        except (OSError,sqlite3.Error,KeyError,ValueError):
+            raise HTTPException(503,'The local money ledger is temporarily unavailable.') from None
+        transactions=value.get('transactions') or []
+        # Prefer the ledger's complete aggregate fields; the legacy transaction list is capped.
+        explicit=value.get('fixed_costs')
+        if isinstance(explicit,list):
+            fixed_costs={str(x.get('name') or 'Fixed costs'):int(x.get('cents') or x.get('amount_cents') or 0) for x in explicit}
+        else:
+            fixed_costs={}
+            for row in transactions:
+                if row.get('kind')=='fixed_cost' and row.get('amount_cents',0)<0:
+                    name=row.get('category') or 'Fixed costs'
+                    fixed_costs[name]=fixed_costs.get(name,0)-row.get('amount_cents',0)
+        categories={}
+        raw_categories=value.get('categories')
+        if isinstance(raw_categories,list):
+            categories={str(x.get('name') or 'Other'):int(x.get('cents') or x.get('amount_cents') or 0) for x in raw_categories}
+            # Fixed costs occupy their own map region. Remove them from the elective region.
+            for name,cents in fixed_costs.items():
+                if name in categories:
+                    categories[name]=max(0,categories[name]-cents)
+            categories={name:cents for name,cents in categories.items() if cents>0}
+        else:
+            for row in transactions:
+                if row.get('counts') and row.get('kind')!='fixed_cost':
+                    name=row.get('category') or 'Other'
+                    categories[name]=categories.get(name,0)-int(row.get('amount_cents') or 0)
+        regular_income=value.get('regular_income_cents',value.get('income_cents',0))
+        free=value.get('free_to_spend_cents',value.get('free_cents',value.get('allowance',{}).get('amount_cents',0)))
+        return {**value,'available':True,'categories':sorted(({'name':k,'cents':v} for k,v in categories.items()),key=lambda x:-x['cents']),
+                'fixed_costs':[{'name':k,'cents':v} for k,v in fixed_costs.items()],
+                'fixed_cents':sum(fixed_costs.values()),'regular_income_cents':regular_income,'free_cents':free,
+                'category_transactions':value.get('category_transactions') or {},
+                'fixed_cost_transactions':value.get('fixed_cost_transactions') or []}
+
+    @app.post('/api/money/questions')
+    def ask_money_question(body:MoneyQuestion):
+        from .banking import service
+        from .banking.ledger import Ledger
+        if not body.text.strip(): raise HTTPException(422,'Enter a question for the local money auditor.')
+        try:
+            sequence=service.ask_question(Ledger(money_path),body.request_id,body.text.strip(),body.transaction)
+        except ValueError as error:
+            raise HTTPException(409,str(error)) from None
+        return {'sequence':sequence,'state':'queued','request_id':body.request_id}
+
+    @app.get('/api/money/questions/{sequence}')
+    def money_question_status(sequence:int):
+        from .banking.ledger import Ledger
+        if sequence<1 or not money_path.is_file(): raise HTTPException(404,'Question not found.')
+        ledger=Ledger(money_path)
+        with ledger.db() as db:
+            job=db.execute("SELECT kind,state FROM audit_jobs WHERE seq=? AND kind IN ('question','explanation')",(sequence,)).fetchone()
+        if not job: raise HTTPException(404,'Question not found.')
+        reply=ledger.audit_output(sequence)
+        return {'sequence':sequence,'state':'replied' if reply is not None else job['state'],'reply':reply}
+
+    @app.post('/api/money/answers')
+    def answer_money_question(body:MoneyAnswer):
+        from .banking import service
+        from .banking.ledger import KINDS,Ledger
+        if body.choice not in (*KINDS,'confirm'):
+            raise HTTPException(422,'Choose a supported transaction classification.')
+        if not body.note.strip(): raise HTTPException(422,'Add a short note explaining your answer.')
+        ledger=Ledger(money_path)
+        event_key='dashboard:'+body.request_id
+        with ledger.db() as db:
+            previous=db.execute('SELECT payload FROM audit_jobs WHERE kind=? AND job_key=?',('owner_answer',event_key)).fetchone()
+        row=next((item for item in ledger.transactions(include_gone=True) if item['id']==body.transaction),None)
+        if not row: raise HTTPException(404,'Transaction not found.')
+        if previous:
+            previous_payload=json.loads(previous['payload'])
+            expected_kind=row['kind'] if body.choice=='confirm' else body.choice
+            expected_reason='Set by you: '+body.note.strip()
+            if previous_payload.get('id')!=body.transaction or previous_payload.get('kind')!=expected_kind or previous_payload.get('reasoning')!=expected_reason:
+                raise HTTPException(409,'This answer request ID was already used for a different decision.')
+            return {'recorded':True,'duplicate':True}
+        if not row.get('question'): raise HTTPException(409,'This auditor question has already been answered.')
+        if not service.answer(ledger,row,body.choice,body.note.strip(),event_key=event_key):
+            raise HTTPException(422,'This choice cannot be applied to the transaction.')
+        return {'recorded':True,'duplicate':False}
+
+    @app.get('/api/money/allowance')
+    def money_allowance():
+        from .banking.ledger import DEFAULTS,Ledger
+        if not money_path.is_file(): return DEFAULTS['allowance']
+        return Ledger(money_path).setting('allowance') or DEFAULTS['allowance']
+
+    @app.post('/api/money/allowance')
+    def save_money_allowance(body:MoneyAllowance):
+        from .banking.ledger import DEFAULTS,Ledger
+        value={**DEFAULTS['allowance'],'mode':body.mode,'start_day':body.start_day,'definition':body.definition.strip()}
+        if body.mode=='pinned':
+            if body.amount_cents is None: raise HTTPException(422,'Enter a manual monthly amount.')
+            value['amount_cents']=body.amount_cents
+        ledger=Ledger(money_path)
+        ledger.set_setting('allowance',value)
+        return ledger.setting('allowance')
 
     @app.get('/api/documents')
     def documents(query:str=Query(default='',max_length=200)):

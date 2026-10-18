@@ -10,15 +10,41 @@ from datetime import date, timedelta
 from decimal import Decimal
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import time
+import uuid
 
 KINDS = ('expense', 'fixed_cost', 'cash_withdrawal', 'fee', 'income', 'salary', 'internal_transfer', 'reimbursement',
          'refund', 'duplicate', 'lent', 'repaid_to_me', 'savings', 'other')
-DEFAULTS = {'allowance': {'amount_cents': 120000, 'currency': 'EUR', 'period': 'month', 'start_day': 1,
-                          'definition': 'Day-to-day spending. Rent and other fixed costs do not count against it, '
-                                        'but they do count in net savings.'}}
+RECURRING_COST_KINDS = ('expense', 'fixed_cost', 'fee')
+DEFAULTS = {'allowance': {'mode': 'auto', 'currency': 'EUR', 'period': 'month', 'start_day': 1,
+                          'definition': 'Regular monthly income less recurring costs; fixed costs do not count as elective spending.'}}
+UNSET = object()
+
+
+def _process_alive(pid):
+    """A live orphaned model process keeps its lease fenced after the parent exits."""
+    if os.name == 'nt':
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.argtypes = (ctypes.c_uint, ctypes.c_int, ctypes.c_uint)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not handle:
+            return False
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 def cents(value):
@@ -66,6 +92,28 @@ class Ledger:
                 linked TEXT NOT NULL DEFAULT '[]',reasoning TEXT,confidence REAL,question TEXT,by TEXT NOT NULL,at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS syncs(at REAL NOT NULL,account TEXT NOT NULL,ok INTEGER NOT NULL,count INTEGER,error TEXT);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);''')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(decisions)')}
+            for name, definition in (('recurring', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('monthly_cents', 'INTEGER'), ('coverage_months', "TEXT NOT NULL DEFAULT '[]'"),
+                                     ('series_key', 'TEXT')):
+                if name not in columns:
+                    db.execute('ALTER TABLE decisions ADD COLUMN %s %s' % (name, definition))
+            db.executescript('''
+            CREATE TABLE IF NOT EXISTS adjustments(id TEXT PRIMARY KEY,day TEXT NOT NULL,kind TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,category TEXT NOT NULL,linked TEXT NOT NULL,reason TEXT NOT NULL,
+                source TEXT NOT NULL,at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS audit_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,
+                job_key TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',
+                token TEXT,attempts INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL,updated REAL NOT NULL,
+                UNIQUE(kind,job_key));
+            CREATE INDEX IF NOT EXISTS audit_jobs_state_seq ON audit_jobs(state,seq);
+            CREATE TABLE IF NOT EXISTS audit_state(id INTEGER PRIMARY KEY CHECK(id=1),session_id TEXT,
+                lease_token TEXT,lease_until REAL,updated REAL NOT NULL,process_pid INTEGER);
+            INSERT OR IGNORE INTO audit_state(id,updated) VALUES(1,0);
+            CREATE TABLE IF NOT EXISTS audit_outputs(job_seq INTEGER PRIMARY KEY,answer TEXT NOT NULL,at REAL NOT NULL);
+            ''')
+            if 'process_pid' not in {r[1] for r in db.execute('PRAGMA table_info(audit_state)')}:
+                db.execute('ALTER TABLE audit_state ADD COLUMN process_pid INTEGER')
         db.close()
 
     @contextmanager
@@ -87,7 +135,15 @@ class Ledger:
             row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
         return json.loads(row['value']) if row else DEFAULTS.get(key)
 
+    def settings_prefix(self, prefix):
+        with self.db() as db:
+            return [{'key': row['key'], 'value': json.loads(row['value'])}
+                    for row in db.execute('SELECT key,value FROM settings ORDER BY key')
+                    if row['key'].startswith(prefix)]
+
     def set_setting(self, key, value):
+        if key == 'allowance' and isinstance(value, dict) and 'amount_cents' in value:
+            value = {**value, 'mode': 'pinned'}
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key, json.dumps(value)))
 
@@ -135,6 +191,7 @@ class Ledger:
                     db.execute('INSERT INTO transactions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)', (row['id'], account, row['status'], row['day'],
                                row['amount_cents'], row['currency'], row['counterparty'], row['counterparty_iban'], row['description'],
                                row['raw'], now, now))
+                    self._enqueue(db, 'transaction', row['id'], {'id': row['id']}, now)
             listed = list(rows) or ['']
             db.execute('UPDATE transactions SET gone=? WHERE account=? AND status=\'pending\' AND gone IS NULL AND day>=? AND id NOT IN (%s)'
                        % ','.join('?' * len(listed)), [now, account, date_from] + listed)
@@ -142,6 +199,7 @@ class Ledger:
 
     def transactions(self, since=None, until=None, undecided=False, include_gone=False):
         query = ('SELECT t.*,a.bank,d.kind,d.category,d.counts,d.linked,d.reasoning,d.confidence,d.question,d.by,d.at decided '
+                 ',d.recurring,d.monthly_cents,d.coverage_months,d.series_key '
                  'FROM transactions t JOIN accounts a ON a.uid=t.account LEFT JOIN decisions d ON d.id=t.id WHERE 1=1')
         args = []
         if since: query += ' AND t.day>=?'; args.append(since)
@@ -151,24 +209,182 @@ class Ledger:
         with self.db() as db:
             return [dict(r) for r in db.execute(query + ' ORDER BY t.day DESC,t.first_seen DESC', args)]
 
-    def decide(self, identity, kind, category, counts, linked, reasoning, confidence, question, by):
+    @staticmethod
+    def _enqueue(db, kind, key, payload, now):
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        existing = db.execute('SELECT payload FROM audit_jobs WHERE kind=? AND job_key=?', (kind, str(key))).fetchone()
+        if existing:
+            if existing['payload'] != encoded:
+                raise ValueError('Audit job key already has different evidence')
+            return
+        db.execute('INSERT INTO audit_jobs(kind,job_key,payload,created,updated) VALUES(?,?,?,?,?)',
+                   (kind, str(key), encoded, now, now))
+
+    def enqueue(self, kind, key, payload):
+        if kind not in ('transaction', 'owner_answer', 'question', 'explanation'):
+            raise ValueError('Unknown audit job kind')
+        with self.db() as db:
+            self._enqueue(db, kind, key, payload, self.clock())
+            return db.execute('SELECT seq FROM audit_jobs WHERE kind=? AND job_key=?', (kind, str(key))).fetchone()[0]
+
+    def bootstrap_jobs(self):
+        """Bring undecided rows from a pre-queue live ledger into the durable queue."""
+        with self.db() as db:
+            now = self.clock()
+            for row in db.execute('SELECT t.id FROM transactions t LEFT JOIN decisions d ON d.id=t.id '
+                                  "WHERE (d.id IS NULL OR (d.by='ai' AND d.monthly_cents IS NULL)) "
+                                  'AND t.gone IS NULL ORDER BY t.day,t.first_seen,t.id'):
+                self._enqueue(db, 'transaction', row['id'], {'id': row['id']}, now)
+
+    def jobs(self, state='pending', limit=80):
+        with self.db() as db:
+            return [dict(r) for r in db.execute('SELECT * FROM audit_jobs WHERE state=? ORDER BY seq LIMIT ?', (state, limit))]
+
+    def claim_jobs(self, limit=80, lease_seconds=1200):
+        """Fence one auditor call; a second caller cannot claim while its lease is live."""
+        now, token = self.clock(), uuid.uuid4().hex
+        with self.db() as db:
+            state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
+            if state['lease_token'] and state['lease_until'] > now:
+                return None
+            if state['lease_token'] and state['process_pid'] and _process_alive(state['process_pid']):
+                return None
+            db.execute("UPDATE audit_jobs SET state='pending',token=NULL WHERE state='running'")
+            jobs = [dict(r) for r in db.execute("SELECT * FROM audit_jobs WHERE state='pending' ORDER BY seq LIMIT ?", (limit,))]
+            if not jobs:
+                return None
+            db.execute('UPDATE audit_state SET lease_token=?,lease_until=?,updated=?,process_pid=NULL WHERE id=1',
+                       (token, now + lease_seconds, now))
+            db.executemany("UPDATE audit_jobs SET state='running',token=?,attempts=attempts+1,updated=? WHERE seq=?",
+                           [(token, now, job['seq']) for job in jobs])
+            return token, jobs, state['session_id']
+
+    def renew_claim(self, token, lease_seconds=1200):
+        with self.db() as db:
+            now = self.clock()
+            db.execute('UPDATE audit_state SET lease_until=?,updated=? WHERE id=1 AND lease_token=? AND lease_until>?',
+                       (now + lease_seconds, now, token, now))
+            return bool(db.execute('SELECT changes()').fetchone()[0])
+
+    def set_claim_process(self, token, pid):
+        with self.db() as db:
+            db.execute('UPDATE audit_state SET process_pid=? WHERE id=1 AND lease_token=? AND lease_until>?',
+                       (pid, token, self.clock()))
+            if not db.execute('SELECT changes()').fetchone()[0]:
+                raise RuntimeError('Audit lease expired before process start')
+
+    def finish_claim(self, token, jobs, session_id, decisions, insights, replies):
+        with self.db() as db:
+            state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
+            if state['lease_token'] != token or state['lease_until'] <= self.clock():
+                raise RuntimeError('Audit lease expired; response discarded')
+            permitted = {json.loads(job['payload']).get('id') for job in jobs if job['kind'] == 'transaction'}
+            for item in decisions:
+                if item['id'] not in permitted:
+                    # Revisions to older AI decisions are allowed, but owner decisions remain immutable.
+                    row = db.execute('SELECT by FROM decisions WHERE id=?', (item['id'],)).fetchone()
+                    if not row or row['by'] != 'ai':
+                        continue
+                self.decide(item['id'], item['kind'], item.get('category'), item['counts'], item.get('linked'),
+                            item.get('reasoning'), item.get('confidence'), item.get('question'), 'ai',
+                            item.get('recurring'), item.get('monthly_cents'), item.get('coverage_months'),
+                            item.get('series_key'), db)
+            for reply in replies:
+                seq = reply.get('job_seq')
+                if seq in {j['seq'] for j in jobs if j['kind'] in ('question', 'explanation')}:
+                    db.execute('INSERT OR REPLACE INTO audit_outputs VALUES(?,?,?)',
+                               (seq, str(reply.get('text') or ''), self.clock()))
+            for job in jobs:
+                db.execute("UPDATE audit_jobs SET state='done',token=NULL,updated=? WHERE seq=? AND token=?",
+                           (self.clock(), job['seq'], token))
+            if insights is not None:
+                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', ('insights', json.dumps(insights)))
+            db.execute('UPDATE audit_state SET session_id=?,lease_token=NULL,lease_until=NULL,process_pid=NULL,updated=? WHERE id=1',
+                       (session_id, self.clock()))
+
+    def release_claim(self, token, session_id=None):
+        with self.db() as db:
+            state = db.execute('SELECT session_id FROM audit_state WHERE id=1 AND lease_token=?', (token,)).fetchone()
+            if not state: return
+            db.execute("UPDATE audit_jobs SET state='pending',token=NULL,updated=? WHERE token=?", (self.clock(), token))
+            db.execute('UPDATE audit_state SET lease_token=NULL,lease_until=NULL,process_pid=NULL,session_id=?,updated=? WHERE id=1',
+                       (session_id if session_id is not None else state['session_id'], self.clock()))
+
+    def audit_output(self, job_seq):
+        with self.db() as db:
+            row = db.execute('SELECT answer FROM audit_outputs WHERE job_seq=?', (job_seq,)).fetchone()
+            return row['answer'] if row else None
+
+    def decide(self, identity, kind, category, counts, linked, reasoning, confidence, question, by,
+               recurring=UNSET, monthly_cents=UNSET, coverage_months=UNSET, series_key=UNSET, db=None,
+               event_key=None):
         if kind not in KINDS:
             raise ValueError('Unknown kind %r' % kind)
-        with self.db() as db:
+        if monthly_cents not in (UNSET, None) and (not isinstance(monthly_cents, int) or monthly_cents < 0):
+            raise ValueError('monthly_cents must be a nonnegative integer')
+        months = list(coverage_months or []) if coverage_months is not UNSET else []
+        if any(not isinstance(m, str) or len(m) != 7 or m[4] != '-' or not m[:4].isdigit() or not m[5:].isdigit()
+               or not 1 <= int(m[5:]) <= 12 for m in months):
+            raise ValueError('Invalid coverage month')
+        if db is None:
+            with self.db() as connection:
+                return self.decide(identity, kind, category, counts, linked, reasoning, confidence, question, by,
+                                   recurring, monthly_cents, coverage_months, series_key, connection, event_key)
+        else:
             if not db.execute('SELECT 1 FROM transactions WHERE id=?', (identity,)).fetchone():
                 raise KeyError(identity)
-            current = db.execute('SELECT by FROM decisions WHERE id=?', (identity,)).fetchone()
+            current = db.execute('SELECT * FROM decisions WHERE id=?', (identity,)).fetchone()
             if current and current['by'] == 'owner' and by != 'owner':
                 return False  # the owner's word stands
-            db.execute('INSERT OR REPLACE INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?)', (identity, kind, category, int(bool(counts)),
-                       json.dumps(list(linked or [])), reasoning, confidence, question or None, by, self.clock()))
+            if current:
+                if recurring is UNSET: recurring = bool(current['recurring'])
+                if monthly_cents is UNSET: monthly_cents = current['monthly_cents']
+                if coverage_months is UNSET: months = json.loads(current['coverage_months'] or '[]')
+                if series_key is UNSET: series_key = current['series_key']
+            if recurring is UNSET: recurring = False
+            if monthly_cents is UNSET: monthly_cents = None
+            if series_key is UNSET: series_key = None
+            db.execute('INSERT OR REPLACE INTO decisions(id,kind,category,counts,linked,reasoning,confidence,question,by,at,'
+                       'recurring,monthly_cents,coverage_months,series_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (identity, kind, category, int(bool(counts)), json.dumps(list(linked or [])), reasoning,
+                        confidence, question or None, by, self.clock(), int(bool(recurring)), monthly_cents,
+                        json.dumps(months), series_key))
+            if by == 'owner':
+                fingerprint = hashlib.sha256(json.dumps([identity, kind, category, counts, linked, reasoning],
+                                                      sort_keys=True).encode()).hexdigest()[:16]
+                self._enqueue(db, 'owner_answer', event_key or 'decision:' + fingerprint,
+                              {'id': identity, 'kind': kind, 'category': category, 'reasoning': reasoning}, self.clock())
         return True
 
     def corrections(self, limit=60):
-        query = ('SELECT t.day,t.amount_cents,t.counterparty,t.description,a.bank,d.kind,d.category,d.counts,d.reasoning FROM decisions d '
+        query = ('SELECT t.id,t.day,t.amount_cents,t.counterparty,t.description,a.bank,d.kind,d.category,d.counts,d.reasoning,'
+                 'd.recurring,d.monthly_cents,d.coverage_months,d.series_key FROM decisions d '
                  'JOIN transactions t ON t.id=d.id JOIN accounts a ON a.uid=t.account WHERE d.by=\'owner\' ORDER BY d.at DESC LIMIT ?')
         with self.db() as db:
             return [dict(r) for r in db.execute(query, (limit,))]
+
+    def add_adjustment(self, identity, day, kind, amount_cents, category, linked, reason, source):
+        """Owner-confirmed off-bank offset; never inserted into bank transactions."""
+        if kind not in ('shared_cost_offset', 'cash_offset') or amount_cents <= 0 or not source or not reason:
+            raise ValueError('An offset needs a kind, positive cents, reason and source')
+        date.fromisoformat(day)
+        values = (identity, day, kind, amount_cents, category, json.dumps(list(linked)), reason, source)
+        with self.db() as db:
+            existing = db.execute('SELECT id,day,kind,amount_cents,category,linked,reason,source FROM adjustments WHERE id=?',
+                                  (identity,)).fetchone()
+            if existing:
+                if tuple(existing) != values:
+                    raise ValueError('Offset ID already has different evidence')
+                return False
+            db.execute('INSERT INTO adjustments VALUES(?,?,?,?,?,?,?,?,?)', (*values, self.clock()))
+            return True
+
+    def adjustments(self, since=None, until=None):
+        query, args = 'SELECT * FROM adjustments WHERE 1=1', []
+        if since: query += ' AND day>=?'; args.append(since)
+        if until: query += ' AND day<?'; args.append(until)
+        with self.db() as db:
+            return [dict(r) for r in db.execute(query + ' ORDER BY day,id', args)]
 
 
 def period(today, allowance):
@@ -188,27 +404,80 @@ def summarise(ledger, today=None, insights=None):
     allowance = ledger.setting('allowance')
     start, end = period(today, allowance)
     rows = ledger.transactions(start.isoformat(), end.isoformat())
+    history = ledger.transactions(until=end.isoformat())
+    adjustments = ledger.adjustments(start.isoformat(), end.isoformat())
     counted = [r for r in rows if r['kind'] and r['counts']]
-    real = [r for r in rows if r['kind'] not in ('internal_transfer', 'duplicate')]
-    spent = -sum(r['amount_cents'] for r in counted)
-    remaining = allowance['amount_cents'] - spent
+    real = [r for r in rows if r['kind'] and r['kind'] not in ('internal_transfer', 'duplicate')]
+    profiles = {}
+    for row in sorted(history, key=lambda r: (r['day'] or '', r['decided'] or 0, r['id'])):
+        if row['kind'] in ('income', 'salary') and row['amount_cents'] > 0:
+            direction = 'income'
+        elif row['kind'] in RECURRING_COST_KINDS and row['amount_cents'] < 0:
+            direction = 'cost'
+        else:
+            continue
+        key = row['series_key'] or ':'.join((direction, row['bank'], row['counterparty'] or row['category'] or row['id']))
+        if not row['recurring'] or row['monthly_cents'] is None:
+            if row['series_key']:
+                profiles.pop((direction, key), None)
+            continue
+        profiles[(direction, key)] = {'key': key, 'category': row['category'] or row['counterparty'] or 'Other',
+                                      'monthly_cents': row['monthly_cents'], 'source_id': row['id'],
+                                      'kind': row['kind'], 'coverage_months': json.loads(row['coverage_months'] or '[]'),
+                                      'confidence': row['confidence'], 'source_day': row['day']}
+    regular_income = sum(p['monthly_cents'] for (direction, _), p in profiles.items() if direction == 'income')
+    recurring_costs = sum(p['monthly_cents'] for (direction, _), p in profiles.items() if direction == 'cost')
+    free = max(0, regular_income - recurring_costs)
+    # The existing CLI writes amount_cents without a mode; that action is a manual pin.
+    pinned = 'amount_cents' in allowance
+    budget = allowance.get('amount_cents', 0) if pinned else free
+    spent = -sum(r['amount_cents'] for r in counted) - sum(a['amount_cents'] for a in adjustments)
+    remaining = budget - spent
     days_total, days_left = (end - start).days, (end - today).days
     elapsed = days_total - days_left + 1
-    categories = {}
-    for r in counted:
-        categories[r['category'] or 'Other'] = categories.get(r['category'] or 'Other', 0) - r['amount_cents']
+    categories, category_transactions, fixed = {}, {}, {}
+    for r in rows:
+        if r['kind'] not in ('expense', 'fixed_cost', 'cash_withdrawal', 'fee', 'reimbursement', 'refund'):
+            continue
+        category = r['category'] or 'Other'
+        categories[category] = categories.get(category, 0) - r['amount_cents']
+        category_transactions.setdefault(category, []).append(public(r))
+        if r['kind'] == 'fixed_cost' and r['amount_cents'] < 0:
+            fixed[category] = fixed.get(category, 0) - r['amount_cents']
+    for adjustment in adjustments:
+        category = adjustment['category'] or 'Other'
+        categories[category] = categories.get(category, 0) - adjustment['amount_cents']
+        category_transactions.setdefault(category, []).append({
+            'id': adjustment['id'], 'record_type': 'off_bank_offset', 'day': adjustment['day'],
+            'amount_cents': adjustment['amount_cents'], 'category': category,
+            'reasoning': adjustment['reason'], 'linked': json.loads(adjustment['linked'])})
+    profile_rows = sorted(profiles.values(), key=lambda p: (p['kind'], p['category'], p['key']))
+    actual_recurring = sum(r['amount_cents'] for r in real if r['recurring'] and r['monthly_cents'] is not None
+                           and ((r['kind'] in ('income', 'salary') and r['amount_cents'] > 0)
+                                or (r['kind'] in RECURRING_COST_KINDS and r['amount_cents'] < 0)))
+    cash_net = sum(r['amount_cents'] for r in real)
+    offset_total = sum(a['amount_cents'] for a in adjustments)
     review = [r for r in rows if r['kind'] and r['question'] and r['by'] == 'ai']
     return {
         'period': {'start': start.isoformat(), 'end': end.isoformat(), 'days_left': days_left, 'days_total': days_total},
-        'allowance': allowance, 'spent_cents': spent, 'remaining_cents': remaining,
+        'allowance': {**allowance, 'amount_cents': budget, 'mode': 'pinned' if pinned else 'auto'},
+        'regular_income_cents': regular_income, 'recurring_costs_cents': recurring_costs,
+        'free_to_spend_cents': free, 'spent_cents': spent, 'remaining_cents': remaining,
         'safe_per_day_cents': max(0, remaining) // max(1, days_left),
-        'expected_cents': allowance['amount_cents'] * elapsed // days_total,
+        'expected_cents': budget * elapsed // days_total,
         'income_cents': sum(r['amount_cents'] for r in real if r['amount_cents'] > 0),
         'outgoing_cents': -sum(r['amount_cents'] for r in real if r['amount_cents'] < 0),
-        'net_cents': sum(r['amount_cents'] for r in real),
+        'net_cents': cash_net, 'payday_aware_net_cents': cash_net - actual_recurring + regular_income - recurring_costs + offset_total,
+        'off_bank_offsets_cents': offset_total,
         'undecided': sum(1 for r in rows if not r['kind']),
         'decided': sum(1 for r in rows if r['kind']),
         'categories': sorted(({'name': k, 'cents': v} for k, v in categories.items()), key=lambda c: -c['cents']),
+        'category_transactions': category_transactions,
+        'fixed_costs': sorted(({'name': k, 'cents': v} for k, v in fixed.items()), key=lambda c: -c['cents']),
+        'fixed_cost_transactions': [public(r) for r in rows if r['kind'] == 'fixed_cost'],
+        'recurring_breakdown': profile_rows,
+        'adjustments': [{k: a[k] for k in ('id', 'day', 'kind', 'amount_cents', 'category', 'reason', 'source')}
+                        | {'linked': json.loads(a['linked'])} for a in adjustments],
         'review': [public(r) for r in review],
         'transactions': [public(r) for r in rows[:200]],
         'insights': insights if insights is not None else ledger.setting('insights') or [],
@@ -218,4 +487,6 @@ def summarise(ledger, today=None, insights=None):
 
 def public(row):
     return {k: row[k] for k in ('id', 'bank', 'status', 'day', 'amount_cents', 'currency', 'counterparty', 'description', 'kind',
-                                'category', 'counts', 'reasoning', 'confidence', 'question', 'by')} | {'linked': json.loads(row['linked'] or '[]')}
+                                'category', 'counts', 'reasoning', 'confidence', 'question', 'by', 'recurring',
+                                'monthly_cents', 'series_key')} | {'linked': json.loads(row['linked'] or '[]'),
+                                                                  'coverage_months': json.loads(row['coverage_months'] or '[]')}
