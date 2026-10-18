@@ -12,7 +12,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from .ledger import KINDS
+from .ledger import KINDS, summarise
 
 MODEL = 'claude-sonnet-5-5'
 BATCH = 80
@@ -41,7 +41,8 @@ and add a short question the owner can answer with one tap. Otherwise question i
 You may return decisions for the "recent" transactions too, but only to change one in the light of new evidence.
 Insights: at most 5 short, specific, actionable observations about this period (pace against the allowance, money
 still owed by friends, new or price-changed subscriptions, unusual charges, fees). Budgeting information only, never
-investment advice. Write amounts in euros like €12.50.'''
+investment advice. Write amounts in euros like €12.50. Quote totals only from "totals_so_far" (computed by code
+before this batch's decisions); never add up amounts yourself.'''
 
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions', 'insights'], 'properties': {
     'decisions': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
@@ -63,6 +64,16 @@ def compact(row):
         item['decision'] = {'kind': row['kind'], 'category': row['category'], 'counts': bool(row['counts']),
                             'linked': json.loads(row['linked'] or '[]'), 'by': row['by']}
     return item
+
+
+def totals(ledger, today):
+    """The code's own arithmetic for this period, so insights quote these figures instead of estimating."""
+    s = summarise(ledger, today, insights=[])
+    euros = lambda c: '%.2f' % (c / 100)
+    return {'period': s['period'], 'allowance_spent': euros(s['spent_cents']), 'allowance_left': euros(s['remaining_cents']),
+            'safe_per_day': euros(s['safe_per_day_cents']), 'straight_line_spend_by_today': euros(s['expected_cents']),
+            'income': euros(s['income_cents']), 'outgoing': euros(s['outgoing_cents']), 'net': euros(s['net_cents']),
+            'categories': {c['name']: euros(c['cents']) for c in s['categories']}}
 
 
 def claude(config):
@@ -107,7 +118,7 @@ def audit(ledger, config, today=None, ask=ask, notes=''):
         prompt = json.dumps({'today': today.isoformat(), 'accounts': accounts, 'notes': notes or config.get('banking_notes', ''),
             'allowance': {'amount': '%.2f' % (allowance['amount_cents'] / 100), 'currency': allowance['currency'],
                           'period': allowance['period'], 'definition': allowance['definition']},
-            'owner_corrections': ledger.corrections(), 'recent': recent, 'undecided': [compact(r) for r in pending]},
+            'totals_so_far': totals(ledger, today), 'owner_corrections': ledger.corrections(), 'recent': recent, 'undecided': [compact(r) for r in pending]},
             ensure_ascii=False, default=str)
         answer = ask(prompt, config)
         allowed = ids | {r['id'] for r in recent if r['decision']['by'] == 'ai'}
