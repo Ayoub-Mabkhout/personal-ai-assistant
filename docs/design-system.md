@@ -153,7 +153,7 @@ web surfaces use the same runtime location, never a place baked into source.
 
 - Android draws everything with framework Views, `GradientDrawable`, and
   Canvas shaders. No extra libraries or bitmaps, and the one bundled font (Onest, about 190 KB), because
-  the release APK must stay below the 50 MiB bootstrap limit.
+  the release APK must stay below the 64 MiB updater limit.
 - Web pages carry the same tokens as CSS custom properties, resolve their theme
   from the stored mode before first paint (Sunrise & sunset by default;
   System follows `prefers-color-scheme`), and stay self-contained under each

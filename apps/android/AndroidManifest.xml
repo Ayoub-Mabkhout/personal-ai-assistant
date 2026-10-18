@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.personalassistant.companion" android:versionCode="20" android:versionName="0.9.1">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.personalassistant.companion" android:versionCode="21" android:versionName="0.9.2">
 <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>
 <uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/><uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -32,6 +32,7 @@
 <provider android:name=".FileDropProvider" android:authorities="com.personalassistant.companion.files" android:exported="false" android:grantUriPermissions="true"/>
 <service android:name=".VoiceService" android:foregroundServiceType="microphone" android:exported="false"/>
 <service android:name=".MicrophoneTile" android:label="Assistant microphone" android:icon="@drawable/ic_tile_mic" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true"><intent-filter><action android:name="android.service.quicksettings.action.QS_TILE"/></intent-filter></service>
+<service android:name=".WakeModelJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
 <service android:name=".VoiceRetryJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
 <service android:name=".AssistantVoiceInteractionService" android:permission="android.permission.BIND_VOICE_INTERACTION" android:exported="true"><intent-filter><action android:name="android.service.voice.VoiceInteractionService"/></intent-filter><meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction"/></service>
 <service android:name=".AssistantVoiceSessionService" android:permission="android.permission.BIND_VOICE_INTERACTION" android:exported="true"/>

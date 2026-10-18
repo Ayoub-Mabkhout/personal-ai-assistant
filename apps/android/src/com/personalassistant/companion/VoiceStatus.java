@@ -14,6 +14,8 @@ final class VoiceStatus {
     /** Only the Voice tab (inApp) has a Resume button; only the other screens can tell the user to open the app. */
     static VoiceStatus of(String raw,boolean mic,boolean wake,boolean test,boolean conversation,IntSupplier pending,boolean inApp){
         String low=raw.toLowerCase(Locale.ROOT);boolean loading=low.contains("starting")||low.contains("preparing")||low.contains("loading");
+        // The wake model is fetched once outside the APK; listening starts by itself when it arrives.
+        if(wake&&!mic&&low.contains("hey chat model"))return new VoiceStatus("Getting Hey Chat ready",low.contains("retry")?raw:"Downloading the wake model once (about 40 MB). Listening starts on its own; use Talk meanwhile.","idle",true);
         if(inApp&&wake&&!mic&&!loading)return new VoiceStatus(test?"Wake test paused":"Listening paused","Background listening is enabled, but the microphone is off. Resume to restart it.","idle",loading);
         if(test)return new VoiceStatus(loading?"Getting ready...":"Wake test","Local only. Say Hey Chat at your normal volume.",loading?"working":"idle",loading);
         if(loading)return new VoiceStatus("Getting ready...","The microphone and wake model are starting.","working",true);

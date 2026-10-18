@@ -22,7 +22,7 @@ DEPENDENCIES = {
 GRAMMAR = ["hey chat", "hey cat", "hey chad", "hey jack", "hey pat", "hey charles", "hate chatting", "[unk]"]
 
 
-def prepare(cache, abis, diagnostic=True):
+def prepare(cache, abis, diagnostic=True, bundle_model=False):
     cache = Path(cache).resolve()
     cache.mkdir(parents=True, exist_ok=True)
     files, jars, sources = [], [], [MODEL_URL]
@@ -66,12 +66,15 @@ def prepare(cache, abis, diagnostic=True):
             target.write_bytes(archive.read(item))
             digest = sha(target)
             model_files.append({"path": relative.as_posix(), "sha256": digest})
-            files.append({"path": str(target), "entry": "assets/voice/vosk/model/" + relative.as_posix(), "sha256": digest})
+            # Release APKs leave the model out; the phone fetches the archive once and checks these hashes.
+            if bundle_model:
+                files.append({"path": str(target), "entry": "assets/voice/vosk/model/" + relative.as_posix(), "sha256": digest})
     model_files.sort(key=lambda item: item["path"])
     identity = hashlib.sha256(json.dumps(model_files, sort_keys=True).encode()).hexdigest()
     settings = {"schema_version": 1, "sample_rate": 16000, "frame_samples": 320, "stable_samples": 1280,
                 "grammar": GRAMMAR, "partial_words": False, "model_identity": identity, "model_files": model_files,
-                "model_archive_sha256": MODEL_SHA, "diagnostic_only": diagnostic, "diagnostic_no_activation": diagnostic}
+                "model_archive_sha256": MODEL_SHA, "model_archive_url": MODEL_URL, "model_archive_root": "vosk-model-small-en-us-0.15",
+                "model_archive_bytes": model.stat().st_size, "diagnostic_only": diagnostic, "diagnostic_no_activation": diagnostic}
     path = assets / "settings.json"
     path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     files.append({"path": str(path), "entry": "assets/voice/vosk/settings.json", "sha256": sha(path)})
@@ -99,5 +102,6 @@ if __name__ == "__main__":
     parser.add_argument("--cache", type=Path, default=Path.home() / ".personal-assistant/android-vosk")
     parser.add_argument("--abis", nargs="+", choices=("arm64-v8a", "x86_64"), default=["arm64-v8a"])
     parser.add_argument("--release", action="store_true", help="Only after independent Android/negative-stream quality checks pass")
+    parser.add_argument("--bundle-model", action="store_true", help="Diagnostic builds only: put the model inside the APK")
     args = parser.parse_args()
-    print(json.dumps(prepare(args.cache, args.abis, not args.release)))
+    print(json.dumps(prepare(args.cache, args.abis, not args.release, args.bundle_model)))

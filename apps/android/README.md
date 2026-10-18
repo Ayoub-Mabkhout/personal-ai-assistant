@@ -83,6 +83,6 @@ Release R8 rules preserve app/native wake reflection while shrinking SDK code
 and resources. The selected runtime's ABIs constrain JNI packaging. Ordinary
 ZIP entries use level-9 compression; native libraries and `resources.arsc`
 stay uncompressed, then 16 KiB zip alignment and signing run. Every extracted
-model file retains its declared SHA-256. The v6 bootstrap must remain below
-50 MiB so the older updater can fetch it; future updater/feed limits are 64 MiB.
+model file retains its declared SHA-256. Releases may be up to 64 MiB, the limit
+of the installed updater, the release feed and the relay.
 Diagnostic `--assets` builds are automatically marked non-publishable.

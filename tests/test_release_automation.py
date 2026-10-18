@@ -39,8 +39,9 @@ class ReleaseAutomationTests(unittest.TestCase):
             for name in release.REQUIRED_ASSETS - {"assets/voice/vosk/settings.json"}:
                 archive.writestr(name, b"generic license fixture")
             archive.writestr("assets/voice/vosk/settings.json", json.dumps(settings or {
-                "diagnostic_only": False, "diagnostic_no_activation": False}))
-            archive.writestr("assets/voice/vosk/model/am/final.mdl", b"fake model")
+                "diagnostic_only": False, "diagnostic_no_activation": False,
+                "model_archive_url": "https://example.invalid/model.zip", "model_archive_sha256": "a" * 64,
+                "model_files": [{"path": "am/final.mdl", "sha256": "b" * 64}]}))
             archive.writestr("lib/arm64-v8a/libvosk.so", b"fake native runtime")
             for name, content in (extra or {}).items():
                 archive.writestr(name, content)
@@ -64,6 +65,8 @@ class ReleaseAutomationTests(unittest.TestCase):
         cases = [({"assets/replay/input.pcm": b"synthetic"}, None, b"production"),
                  ({"lib/x86_64/libvosk.so": b"fake"}, None, b"production"),
                  ({"assets/other.json": b"{}"}, None, b"production"),
+                 ({"assets/voice/vosk/model/am/final.mdl": b"bundled model"}, None, b"production"),
+                 ({}, {"diagnostic_only": False, "diagnostic_no_activation": False}, b"production"),
                  ({}, {"diagnostic_only": True, "diagnostic_no_activation": True}, b"production"),
                  ({}, None, b"Lcom/personalassistant/companion/ReplayVoiceService;")]
         for extra, settings, dex in cases:
@@ -201,3 +204,10 @@ class ReleaseSecretStagingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 staging.cleanup()
             self.assertTrue(Path(outside).exists())
+
+
+class ReleaseSizeCapTests(unittest.TestCase):
+    def test_release_cap_matches_the_installed_updater(self):
+        updater = (Path(__file__).resolve().parents[1] / 'apps/android/src/com/personalassistant/companion/Updates.java').read_text(encoding='utf-8')
+        self.assertIn('size>64*1024*1024', updater)
+        self.assertEqual(release.MAX_APK_BYTES, 64 * 1024 * 1024)

@@ -21,7 +21,7 @@ def publish(apk,host,key,known_hosts,config):
     payload=apk.read_bytes()
     if (release.get('package_name')!='com.personalassistant.companion'
         or release.get('sha256')!=hashlib.sha256(payload).hexdigest()
-        or release.get('size')!=len(payload) or len(payload)>50*1024*1024):
+        or release.get('size')!=len(payload) or len(payload)>64*1024*1024):
         raise ValueError('APK and release sidecar do not match.')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+',host):raise ValueError('Use user@SSH-host.')
     ssh=['ssh','-i',str(key),'-o','IdentitiesOnly=yes','-o','BatchMode=yes',

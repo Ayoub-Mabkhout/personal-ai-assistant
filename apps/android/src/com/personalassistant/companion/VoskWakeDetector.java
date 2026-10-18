@@ -14,6 +14,10 @@ public final class VoskWakeDetector implements WakeDetector {
     private Method accept,getPartial,getResult;private final short[] frame=new short[320];
     private int pending,stableSamples;private long totalSamples,activationSamples=-1;private boolean ready,triggered,inactiveDiagnostic;
     private String lastPartial="";private int detectorGain=1;
+    static JSONObject settings(Context context)throws Exception{return new JSONObject(new String(read(context.getAssets().open(ASSET+"settings.json")),"UTF-8"));}
+    static File folder(Context context,String identity){return new File(context.getFilesDir(),"wake-vosk-"+identity);}
+    /** Diagnostic builds may still carry the model inside the APK. */
+    static boolean bundled(Context context){try{String[] names=context.getAssets().list(ASSET+"model");return names!=null&&names.length>0;}catch(IOException missing){return false;}}
     public static WakeDetector create(Context context)throws Exception {
         try{context.getAssets().open(ASSET+"settings.json").close();Class.forName("org.vosk.Model");}
         catch(FileNotFoundException|ClassNotFoundException missing){return null;}
@@ -21,13 +25,17 @@ public final class VoskWakeDetector implements WakeDetector {
         catch(LinkageError error){throw new IOException("Vosk wake runtime is incompatible with this phone",error);}
     }
     private VoskWakeDetector(Context context)throws Exception {
-        JSONObject settings=new JSONObject(new String(read(context.getAssets().open(ASSET+"settings.json")),"UTF-8"));
+        JSONObject settings=settings(context);
         if(settings.getInt("schema_version")!=1||settings.getInt("sample_rate")!=16000||settings.getInt("frame_samples")!=320||settings.getInt("stable_samples")!=1280||!settings.getJSONArray("grammar").toString().equals(GRAMMAR))throw new IOException("Unsupported Vosk wake policy");
         detectorGain="sensitive".equals(Cloud.prefs(context).getString("wake_sensitivity","balanced"))?2:1;
         inactiveDiagnostic=settings.optBoolean("diagnostic_no_activation",false);
         if(inactiveDiagnostic&&!settings.optBoolean("diagnostic_only",false))throw new IOException("Inactive wake policy requires diagnostic metadata");
         String identity=settings.getString("model_identity");if(!identity.matches("[a-f0-9]{64}"))throw new IOException("Invalid Vosk model identity");
-        File folder=new File(context.getFilesDir(),"wake-vosk-"+identity),complete=new File(folder,".complete");
+        File folder=folder(context,identity),complete=new File(folder,".complete");
+        if(!complete.exists()&&!bundled(context)){
+            // Release builds ship the model outside the APK: fetch it once, then listening starts as before.
+            WakeModelJob.schedule(context);throw new IOException("Hey Chat model is downloading");
+        }
         if(!complete.exists()){
             if(!folder.isDirectory()&&!folder.mkdirs())throw new IOException("Cannot prepare Vosk model directory");
             JSONArray files=settings.getJSONArray("model_files");String base=folder.getCanonicalPath()+File.separator;

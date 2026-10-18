@@ -48,7 +48,7 @@ After reviewing and merging the completed feature and passing the publication
 guard, push the source commit and then the matching version tag. The workflow
 verifies the signed package/version with the official SDK, rejects diagnostic
 classes, private audio, foreign native ABIs, unexpected assets and debuggable or
-instrumentation manifests, and enforces the existing app's 50 MiB updater limit.
+instrumentation manifests, and enforces the installed app's 64 MiB updater limit.
 
 Publication first creates a GitHub draft containing the APK and release JSON. It
 then sends those exact APK bytes to the narrow server endpoint using `PUT`, with
@@ -76,3 +76,15 @@ Actions are pinned to full commit SHAs verified in their official repositories:
 and [download-artifact v7.0.0](https://github.com/actions/download-artifact/releases/tag/v7.0.0).
 This follows GitHub's guidance on [immutable action references and least-privilege
 workflow permissions](https://docs.github.com/en/actions/reference/security/secure-use).
+
+## Wake model outside the APK
+
+Release APKs carry the Vosk native runtime and `assets/voice/vosk/settings.json`, but not the
+model files. The settings pin the upstream model archive (`model_archive_url`,
+`model_archive_sha256`) and every model file's SHA-256. On first use `WakeModelJob` downloads the
+archive once (resuming partial downloads), verifies it, unpacks only the listed files into
+`files/wake-vosk-<model identity>/`, checks each hash, writes the `.complete` marker and restarts
+background listening. Phones that already unpacked the same model never download it again.
+`release_companion.py verify` rejects a release that bundles model files or lacks the pinned
+source and hashes. Diagnostic builds can still bundle the model with
+`fetch_vosk_runtime.py --bundle-model`.

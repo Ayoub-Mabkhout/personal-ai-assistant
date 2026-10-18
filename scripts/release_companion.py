@@ -21,7 +21,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "com.personalassistant.companion"
-MAX_APK_BYTES = 50 * 1024 * 1024
+MAX_APK_BYTES = 64 * 1024 * 1024  # the installed updater (Updates.java) and the relay accept 64 MiB
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 REQUIRED_ASSETS = {
@@ -106,8 +106,10 @@ def verify_artifact(apk, tag, manifest=ROOT / "apps/android/AndroidManifest.xml"
             path = PurePosixPath(name)
             if path.is_absolute() or ".." in path.parts or "\\" in name:
                 raise ValueError("Unsafe APK entry.")
-            if name.startswith("assets/") and not name.startswith(("assets/voice/vosk/model/", "assets/voice/licenses/")) and name != "assets/voice/vosk/settings.json":
-                raise ValueError("Only the generic Vosk model and license assets may be released.")
+            if name.startswith("assets/voice/vosk/model/"):
+                raise ValueError("The wake model is downloaded by the phone; it must not be inside the release APK.")
+            if name.startswith("assets/") and not name.startswith("assets/voice/licenses/") and name != "assets/voice/vosk/settings.json":
+                raise ValueError("Only the Vosk wake settings and license assets may be released.")
             if path.suffix.lower() in {".pcm", ".wav", ".m4a", ".mp3", ".jks", ".keystore", ".p12", ".pem", ".key"}:
                 raise ValueError("Private audio or credential material cannot be released.")
             if name.startswith("lib/") and not name.startswith("lib/arm64-v8a/"):
@@ -117,8 +119,13 @@ def verify_artifact(apk, tag, manifest=ROOT / "apps/android/AndroidManifest.xml"
         settings = json.loads(archive.read("assets/voice/vosk/settings.json"))
         if settings.get("diagnostic_only") is not False or settings.get("diagnostic_no_activation") is not False:
             raise ValueError("Diagnostic wake settings cannot be released.")
-        if not any(name.startswith("assets/voice/vosk/model/") for name in names) or not any(name.startswith("lib/arm64-v8a/") for name in names):
-            raise ValueError("The normal release requires the generic model and ARM64 runtime.")
+        if not any(name.startswith("lib/arm64-v8a/") for name in names):
+            raise ValueError("The normal release requires the ARM64 wake runtime.")
+        source, archive_sha, model_files = settings.get("model_archive_url"), settings.get("model_archive_sha256"), settings.get("model_files")
+        if (not isinstance(source, str) or not source.startswith("https://") or not re.fullmatch(r"[a-f0-9]{64}", str(archive_sha))
+                or not isinstance(model_files, list) or not model_files
+                or not all(isinstance(f, dict) and re.fullmatch(r"[a-f0-9]{64}", str(f.get("sha256"))) for f in model_files)):
+            raise ValueError("The release must name a pinned HTTPS wake model archive and every model file hash.")
     if aapt:
         badging = command([aapt, "dump", "badging", apk])
         package = re.search(r"package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging)
