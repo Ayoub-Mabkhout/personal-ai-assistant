@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="660" viewBox="0 0 1440 660" role="img" aria-labelledby="title description">
+  <title id="title">Personal Assistant — Say it. Keep moving.</title>
+  <desc id="description">A violet and plum illustration of the voice orb and a queued task receipt. A self-hosted personal assistant with native Android, headless agents, and durable queues.</desc>
+  <defs>
+    <linearGradient id="base" x2="1" y2="1"><stop stop-color="#171022"/><stop offset="1" stop-color="#100C18"/></linearGradient>
+    <radialGradient id="wash"><stop stop-color="#6035C4" stop-opacity=".46"/><stop offset="1" stop-color="#6035C4" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pink"><stop stop-color="#C14C9F" stop-opacity=".28"/><stop offset="1" stop-color="#C14C9F" stop-opacity="0"/></radialGradient>
+    <linearGradient id="rim" x2=".8" y2="1"><stop stop-color="#D6C5FF"/><stop offset=".4" stop-color="#9C70EE"/><stop offset="1" stop-color="#A854BE"/></linearGradient>
+    <radialGradient id="orb" cx=".32" cy=".2" r=".92"><stop stop-color="#E9DEFF"/><stop offset=".21" stop-color="#BA9AFF"/><stop offset=".5" stop-color="#9257E9"/><stop offset=".77" stop-color="#BD50AA"/><stop offset="1" stop-color="#371D68"/></radialGradient>
+    <radialGradient id="sheen" cx=".35" cy=".2" r=".9"><stop stop-color="#FFFFFF" stop-opacity=".48"/><stop offset=".5" stop-color="#E4D3FF" stop-opacity="0"/></radialGradient>
+    <filter id="glow" x="-.5" y="-.5" width="2" height="2"><feGaussianBlur stdDeviation="26"/></filter>
+  </defs>
+  <rect width="1440" height="660" rx="28" fill="url(#base)"/>
+  <ellipse cx="1050" cy="285" rx="485" ry="420" fill="url(#wash)"/>
+  <ellipse cx="1390" cy="590" rx="535" ry="340" fill="url(#pink)"/>
+  <rect x="1" y="1" width="1438" height="658" rx="27" fill="none" stroke="#3A2B4E"/>
+  <g fill="#77618E" opacity=".2">
+    <circle cx="1328" cy="78" r="2"/><circle cx="1352" cy="78" r="2"/><circle cx="1376" cy="78" r="2"/><circle cx="1328" cy="102" r="2"/><circle cx="1352" cy="102" r="2"/><circle cx="1376" cy="102" r="2"/>
+  </g>
+  <g font-family="Onest, Inter, Segoe UI, Arial, sans-serif">
+    <circle cx="82" cy="75" r="12" fill="url(#orb)"/><text x="106" y="84" fill="#F5F0FB" font-size="27" font-weight="700" letter-spacing="-.8">personal<tspan fill="#B39CFF">.</tspan></text>
+    <text x="70" y="231" fill="#F5F0FB" font-size="93" font-weight="700" letter-spacing="-4">Say it.</text>
+    <text x="70" y="337" fill="#D3BEFF" font-size="93" font-weight="700" letter-spacing="-4">Keep moving.</text>
+    <text x="76" y="414" fill="#F5F0FB" font-size="27" font-weight="500" letter-spacing="-.4">A self-hosted personal assistant.</text>
+    <text x="76" y="458" fill="#BBAECC" font-size="22">Voice on your phone. Agents on your laptop.</text>
+    <g font-size="16" font-weight="500" fill="#D9CCF0">
+      <rect x="75" y="533" width="151" height="42" rx="21" fill="#281E39" stroke="#49345F"/><text x="150" y="560" text-anchor="middle">Native Android</text>
+      <rect x="238" y="533" width="170" height="42" rx="21" fill="#281E39" stroke="#49345F"/><text x="323" y="560" text-anchor="middle">Headless agents</text>
+      <rect x="420" y="533" width="167" height="42" rx="21" fill="#281E39" stroke="#49345F"/><text x="503" y="560" text-anchor="middle">Durable queues</text>
+    </g>
+    <circle cx="1110" cy="280" r="160" fill="#A35DEC" opacity=".22" filter="url(#glow)"/>
+    <circle cx="1110" cy="280" r="177" fill="none" stroke="#A98AE3" stroke-opacity=".17"/>
+    <circle cx="1110" cy="280" r="151" fill="none" stroke="#BB9CE9" stroke-opacity=".24"/>
+    <circle cx="1110" cy="280" r="123" fill="url(#rim)"/>
+    <circle cx="1110" cy="280" r="119" fill="url(#orb)"/>
+    <circle cx="1110" cy="280" r="117" fill="url(#sheen)"/>
+    <rect x="1100" y="245" width="20" height="45" rx="10" fill="#FFF" fill-opacity=".94"/>
+    <path d="M1088 277v7a22 22 0 0 0 44 0v-7m-22 29v14m-13 0h26" fill="none" stroke="#FFF" stroke-width="4" stroke-linecap="round"/>
+    <g transform="translate(910 452)">
+      <rect width="402" height="105" rx="23" fill="#231A32" stroke="#695181"/>
+      <circle cx="42" cy="43" r="18" fill="#3A2B58"/>
+      <path d="M42 34v9l6 4" fill="none" stroke="#D2BFFF" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="75" y="43" fill="#F5F0FB" font-size="21" font-weight="600">Queued for laptop</text>
+      <text x="75" y="73" fill="#BCAFD0" font-size="17">Ready when your computer is.</text>
+    </g>
+  </g>
+</svg>

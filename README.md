@@ -1,208 +1,200 @@
-# Personal assistant
+<div align="center">
 
-An extensible assistant with its own calendar, headless integrations, execution
-history and phone interface. Public reusable code and an ignored private
-workspace share this checkout.
+![Personal Assistant — Say it. Keep moving.](docs/media/hero.svg)
 
-The selected phone interface is the native Assistant Companion, backed by an
-always-on HTTPS relay and an outbound laptop worker. It provides local wake
-capture, offline queues, shopping, task history and same-session follow-ups.
-Standalone relay login and native notifications replace the retired Home Assistant stack. Phone access works over the internet; shared LAN discovery is
-unnecessary. Host details, provider configuration and credentials stay outside
-public source files. A clone does not inherit a deployed owner's connections.
+**A phone-first assistant with real tools, persistent agents, and a life outside the chat window.**
 
-- [Architecture and implementation sequence](docs/architecture.md)
-- [Running costs](docs/costs.md)
-- [Repository layout and private storage](docs/repository-layout.md)
-- [Calendar commands](docs/calendar.md)
-- [Connectivity and source integration design](docs/connectivity-and-integrations.md)
-- [Server deployment and phone connection](docs/server-deployment.md)
-- [Laptop worker and local dashboard](docs/laptop-services.md)
-- [Read-only mail and document collection](docs/mail-ingestion.md)
-- [Per-task coding environments](docs/coding-workbench.md)
-- [Themed personal context](docs/personal-profile.md)
-- [Phone shopping and recipes](docs/groceries.md)
-- [Shared features checklist (Companion and dashboard)](docs/features-checklist.md)
-- [Android and extended voice options](docs/phone-voice.md)
-- [Custom wake-word and buffered capture design](docs/custom-phone-voice.md)
-- [Receiving-only WhatsApp bridge](docs/whatsapp.md)
-- [Agent inbox and persistent Luna dispatcher](docs/task-dispatch.md)
-- [Phone task updates and answers](docs/phone-task-status.md)
-- [Replying to task notifications](docs/notification-replies.md)
-- [Cloud calendar reminders](docs/calendar-reminders.md)
-- [Background mail collection and follow-ups](docs/mail-automation.md)
-- [Phone widget and alarms](docs/phone-companion.md)
-- [Phone scripting through Termux (Claude/Codex/shared CLI)](docs/termux-bridge.md)
-- [Companion app and local wake testing](docs/companion-app.md)
-- [Native task history, notifications and Firebase setup](docs/native-companion.md)
-- [Signed releases and GitHub Actions](docs/releases.md)
-- [AnyList recipe migration](docs/anylist-migration.md)
+[Explore the app](#the-app-in-use) · [How it works](#the-system) · [Run your own](#run-your-own) · [Roadmap](docs/roadmap.md)
 
-## Feature tracker
+[![Source checks](https://github.com/Ayoub-Mabkhout/personal-ai-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Ayoub-Mabkhout/personal-ai-assistant/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Ayoub-Mabkhout/personal-ai-assistant?color=8E6BFF&label=companion)](https://github.com/Ayoub-Mabkhout/personal-ai-assistant/releases/latest)
+![Android 8+](https://img.shields.io/badge/Android-8%2B-C46CF0)
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-B39CFF)
+![Self-hosted](https://img.shields.io/badge/your_infrastructure-your_rules-38284F)
 
-Keep this checklist current when a feature ships. Checked means implemented and
-validated at the level stated; physical-phone outcomes and provider setup have
-separate checks. Unchecked means remaining work. Ideas below are a backlog, not
-configured services or a commitment to build everything. Keep personal details
-and runtime evidence in the ignored private workspace.
+</div>
 
-### Working
+## A thought should become a task. Not another thing to remember.
 
-- [x] Remote HTTPS phone access through the standalone relay.
-- [x] Durable cloud queues: programmatic commands and agent prompts stay separate.
-- [x] Laptop startup, reconnect, readiness reporting and interrupted-task recovery.
-- [x] Persistent Luna dispatcher chooses worker model/effort and reviews results.
-- [x] Headless local coding agents with execution logs and per-task environments.
-- [x] Programmed commands run directly; unmatched native and legacy voice requests
-      enter the Luna queue without a dispatch prefix; dashboard submission also works.
-- [x] Legacy phone task-status notifications and signed task answer pages;
-      opening a notification without signing in is confirmed on the handset.
-- [x] Assistant-owned local calendar: agendas, appointments, edits and audit history.
-- [x] Live Gmail search, thread reading and authorized email sending from agents.
-- [x] Email skill: context gathering, related threads, writing and document filing.
-- [x] Attachment catalogue, duplicate detection and original-file filing workflow;
-      at least one original attachment downloaded and verified.
-- [x] WhatsApp linked-device connection and received-message archive.
-- [x] Cloud shopping list independent of laptop uptime; phone app, recipes and
-      offline shopping outbox. Adding an item through phone Assist is confirmed.
-- [x] Local dashboard: Today, Documents, Notes and editable visual Profile;
-      light and dark themes.
-- [x] Themed personal profile, private storage boundaries and reusable skill library.
+Say **“Hey Chat”**, give the assistant a job, and get on with your day.
+The native Android app captures the request, the cloud relay stores it in
+its queue, and a persistent orchestrator picks the right laptop agent to do it.
+You get status updates, a result, and a conversation you can return to.
 
-### Next priorities
+The laptop can sleep. The queue remembers. Your shopping list still works.
 
-- [x] Native voice capture and configured cloud transcription.
-- [x] Handset voice recognition and latency field checks.
-- [ ] File semantic search: text extraction, OCR, exact filters, embeddings,
-      source excerpts and incremental indexing.
-- [x] Calendar reminder projection and cloud delivery while the laptop sleeps.
-- [x] Native reminder snooze control and durable cloud rescheduling.
-- [x] Native reminder delivery/snooze on the handset.
-- [ ] Additional reminder dismissal controls.
-- [x] Contextual task notification replies: cloud ingress, durable queueing and
-      the same Luna session.
-- [x] Follow-ups from task details resume the existing worker session directly;
-      queued instructions and results stay on the original conversation page.
-- [x] Cloud task history with search, pagination and links to resumable task pages.
-- [x] Paired native task history/details, cached answers, timestamps and stable-ID
-      follow-ups that resume the recorded worker session.
-- [x] Native task notification/reply, reminder, alarm and update event journal;
-      provider acceptance and phone receipt are separate records.
-- [x] Firebase client/server provisioning and real background FCM delivery with
-      authenticated receipts and native Details opening verified on an emulator.
-- [x] Native Companion notification delivery, FCM error health, owner notification status and a deploy
-      preflight; see [native delivery](docs/native-companion.md#native-delivery).
-- [x] Native notification display and Reply end to end on the handset.
-- [x] Standalone relay authentication and native-only service deployment; see the retirement runbook.
-- [ ] Task cancellation/retry and attachment access from phone task history.
-- [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
-- [ ] Finish attachment backfill and establish complete historical coverage.
+```text
+“Summarize my unread email and save the attachments.”
+“Add eggs, coffee, and sparkling water to my shopping list.”
+“Set a timer for 12 minutes.”
+```
 
-### Voice and phone
+These are examples of supported workflows. Connected accounts and model access
+are configured by each deployment.
 
-- [x] Native Voice, Shopping, Activity and Settings pages with light/dark/system
-      themes, tonal gradients, subtle motion and preserved drafts during updates.
-- [x] Dusk Aurora across native screens, dashboard, groceries and task pages;
-      sunrise/sunset uses private runtime settings and follows System when unset.
-- [x] Version 0.6 single-command voice: one wake/Talk, one acknowledged readback,
-      then wake standby when background listening is enabled.
-- [x] Explicit Start conversation control or spoken request; **That was all**
-      ends continuing turns and preserves the background wake setting.
-- [x] Timestamped native voice chat with distinct requests and acknowledgements;
-      linked queued tasks open their native conversation.
-- [x] Local wake-test flow with microphone level, partial words and detection
-      count; locked screen-off no-command behavior verified on an emulator.
-- [x] Explicit background listening, paused-listening resume and microphone
-      Quick Settings tile; setup shortcuts keep the usual Home app.
-- [x] Native cached recipe ingredient picker with offline additions and selected
-      quantities, plus recent command receipts and native full task history.
-- [x] Native buffered voice capture and durable command retries; spoken follow-ups
-      are enabled through explicit conversation mode.
-- [x] Optional GPT-Live speech bridge using existing stores and the Luna queue.
-- [x] Alternative Realtime conversational speech, with server speech detection,
-      backend action receipts and interruption playback reset.
-- [ ] Verify conversation entry **Hey Chat, let's talk** and exit **That was all** on the handset.
-- [ ] Selectively speak completed task results when useful and permitted, without
-      repeating queued acknowledgements or reading every background result aloud.
-- [ ] Add a fast path for suitable questions that avoids unnecessary full task dispatch.
-- [ ] Evaluate a lightweight local or fast acknowledgement model with truthful
-      queue/completion wording and measured latency/cost.
-- [x] Lock-screen assistant entry and warm screen-off capture verified on an emulator.
-- [x] Locked-phone voice and wake detection field checks.
-- [ ] Measure wake-word battery use on the phone with Settings > Hey Chat battery ([how](docs/listener-battery.md)).
-- [x] Phone-local command capture and durable replay when the cloud is unreachable.
-- [x] Offline voice capture/reconnect and exactly one result on the handset.
-- [x] Paired companion alarm queue and Clock-intent handoff with delivery status.
-- [x] Tag-based signed release automation, durable update events, verified downloads and
-      Android installer handoff; diagnostic/private-fixture APKs are rejected.
-- [x] Companion update installation and data preservation on the handset.
-- [x] Clock alarm handoff verified on the handset.
-- [x] Native countdown timers, cancellation/recovery and Live/Realtime receipts.
-- [ ] Verify the new timer build and immediate locked-screen wake cue on the handset.
-- [ ] Additional alarm management.
-- [x] Native shopping widget, quick-add entry, cached list and offline mutation queue.
-- [x] Native pairing, task screens and widget handset checks.
-- [x] Shared recipe import, ingredient selection and AnyList migration procedure.
-- [ ] Import and verify actual AnyList exports; complete the personal migration.
-- [ ] Recipe ingredient scaling, pantry tracking and shopping-list consolidation.
-- [x] Persistent 12-hour retailer check, conservative synonyms and expiring source-backed grocery tags.
-- [ ] Obtain supported REWE catalogue access; public headless requests currently return HTTP 403.
-- [x] Intelligent cloud grocery edits: multi-item additions, removals, corrections and atomic retries.
+## The app, in use
 
-### Email, messages and documents
+<table>
+  <tr>
+    <td width="50%"><a href="docs/media/today-light.png"><img src="docs/media/today-light.png" alt="Actual Today dashboard in light mode, showing a calendar and queued and completed tasks with fictional demo data" width="100%"/></a></td>
+    <td width="50%"><a href="docs/media/money-dark.png"><img src="docs/media/money-dark.png" alt="Actual Money dashboard in dark mode, showing the monthly allowance and spending map with fictional demo data" width="100%"/></a></td>
+  </tr>
+  <tr>
+    <td><strong>Your day, with the details in reach.</strong><br/>Calendar, requests, follow-ups, and a place to save a thought.</td>
+    <td><strong>A ledger you can have a conversation with.</strong><br/>Spending, recurring costs, and a financial auditor that retains your corrections.</td>
+  </tr>
+</table>
 
-- [ ] Connect the remaining personal/academic Outlook account.
-- [ ] Background Gmail/Outlook sync using independently authenticated crawlers.
-- [ ] WhatsApp media downloads and voice-note transcription.
-- [ ] WhatsApp search and conversation summaries exposed to task workers.
-- [ ] Authorized WhatsApp sending with recorded delivery outcomes.
-- [x] Email deadline/renewal/awaiting-reply records with exact excerpts and review status.
-- [ ] Extract obligations from document contents, including scanned files.
-- [ ] Suggest filing categories for new documents; preserve originals and provenance.
-- [ ] Unified search across files, email, messages and personal notes.
+<sub>Real dashboard screens, rendered with fictional demo data. Click a screen to inspect it. Dusk Aurora spans warm light mode, ink-and-plum dark mode, and the native Companion.</sub>
 
-### Everyday assistant ideas
+<details>
+<summary><strong>See the voice-to-task flow</strong></summary>
 
-- [ ] A useful daily brief: agenda, deadlines, waiting replies and outstanding tasks.
-- [ ] Personal task list with recurring chores, priorities and reminders.
-- [x] Follow-ups dashboard with source links and Done/Dismiss/Reopen controls.
-- [ ] Extend follow-up tracking to promises and non-email sources.
-- [ ] Appointment preparation: relevant documents, location and questions to ask.
-- [ ] Subscription/contract renewal tracking and cancellation reminders.
-- [ ] Receipt/invoice organisation and spending summaries.
-- [ ] Travel preparation: bookings, tickets, packing list and departure reminders.
-- [ ] Application tracking and reusable CV/cover-letter preparation.
-- [ ] Study/research workspace: papers, citations, notes and thesis milestones.
-- [ ] Profile updates suggested from new information, with sources and corrections.
+![Voice request, buffered capture and a queued laptop receipt in an illustrative native screen](docs/media/voice-to-task.png)
 
-### Reliability and maintenance
+<sub>A source-inspired illustration of the native flow, using a fictional request. The actual Companion also includes Money, widgets, notifications, and settings.</sub>
 
-- [ ] Verify real laptop sleep/resume and queued-command recovery end to end.
-- [x] Notification state field checks, including offline delivery.
-- [ ] Backup automation and tested restore for calendar, queues, files and settings.
-- [ ] Connection-health alerts for expired authentication or failed services.
-- [ ] Per-task runtime/model usage reporting and a hosting-cost overview.
+</details>
 
-## Development setup
+## Small everyday jobs. Proper agent work. One assistant.
+
+| | What you can do |
+| :--- | :--- |
+| **Voice & phone** | Local **Hey Chat** detection, buffered capture, single-command acknowledgements, optional conversation mode, timers, alarm handoff, and home-screen widgets. |
+| **Tasks & agents** | Submit by voice, text, or dashboard. Follow queued → working → completed states. Open a result, add an instruction, and resume the **same worker session**. |
+| **Shopping & recipes** | Keep a cloud list that works while the laptop is off. Make multi-item edits, import recipes, select ingredients, and replay offline changes without duplicate mutations. |
+| **Money** | Import read-only bank transactions. Explore categories and recurring costs, track income and allowance, inspect explanations, and teach a persistent specialist with your corrections. |
+| **Life admin** | Use an assistant-owned calendar, reminders and snooze, live email tools, attachment filing with provenance, follow-up tracking, notes, documents, and an editable personal profile. |
+
+### The agent keeps the thread
+
+A persistent Luna orchestrator chooses the worker, model, effort, and relevant
+skills. Coding, email, and other tool-driven jobs run headlessly on the laptop.
+Tasks retain their execution history and follow-ups resume the recorded worker
+session. A long agent job does not block the separate programmatic queue.
+
+[Task dispatch](docs/task-dispatch.md) · [Task history & updates](docs/phone-task-status.md) · [Notification replies](docs/notification-replies.md)
+
+### Your money gets more than a category label
+
+The dedicated financial auditor keeps an ordered job queue, a persistent session,
+and a dated spending narrative. It interprets transactions; code calculates the
+totals. Your explicit corrections take precedence over model decisions.
+
+The interface puts the spending map at the center, separates fixed costs from
+free spending, and lets you inspect the payments and reasoning behind a category.
+Bank connections are **read-only**: this integration cannot move money.
+
+[Money architecture & behavior](docs/money.md)
+
+### The useful parts stay useful offline
+
+The phone stores captured commands and shopping edits for retry. The relay
+holds laptop tasks until the worker reconnects. Shopping talks directly to the
+cloud; timers run on the phone. Projected calendar reminders can be delivered
+without the laptop being awake.
+
+Offline means **saved and waiting**, not a fabricated success message.
+
+[Connectivity](docs/connectivity-and-integrations.md) · [Shopping & recipes](docs/groceries.md) · [Calendar reminders](docs/calendar-reminders.md)
+
+## The system
+
+```mermaid
+flowchart LR
+    Phone["Android Companion<br/>Wake · capture · widgets · timers"]
+    Relay["HTTPS relay<br/>Queues · shopping · task history · push"]
+    Laptop["Your laptop<br/>Luna orchestrator + task workers"]
+    Tools["Your tools<br/>Email · calendar · files · bank ledger"]
+    Phone <-->|"Mobile data or Wi-Fi"| Relay
+    Relay <-->|"Outbound connection"| Laptop
+    Laptop <--> Tools
+```
+
+| Layer | Responsibility |
+| :--- | :--- |
+| **Phone** | Wake detection and audio buffering, interface, local capture queue, timers, notification actions, and widgets. |
+| **Cloud** | Always-on HTTPS access, durable queues, shopping and recipes, task history, reminder projection, and native push events. |
+| **Laptop** | Headless agents, connected tools, the primary calendar, document vault, financial ledger, and local dashboard. |
+
+Wake detection runs locally. Transcription and optional Realtime conversation use
+configured cloud providers; model requests may include task context. This is
+self-hosted orchestration, not a claim that every model runs on-device.
+
+[Architecture](docs/architecture.md) · [Native Companion](docs/companion-app.md) · [Design system](docs/design-system.md)
+
+## Run your own
+
+This is a configurable system, not a hosted account you sign into. A clone starts
+with reusable code and empty configuration: it does not inherit anyone's inbox,
+phone pairing, profile, bank connections, or deployment.
+
+**Start with the local Python workspace:**
 
 ```powershell
+git clone https://github.com/Ayoub-Mabkhout/personal-ai-assistant.git
+cd personal-ai-assistant
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -e '.[server,test]'
 .venv/Scripts/python.exe scripts/bootstrap_workspace.py
 ./scripts/verify.ps1
 ```
 
-Read the calendar setup before initializing a new store. Bootstrap creates
-private folders/templates without overwriting files. The first portable skill
-is skills/local-calendar/SKILL.md.
+Then connect the pieces:
 
-## Private workspace
+1. **Deploy the relay:** follow [server deployment](docs/server-deployment.md) to configure HTTPS and owner authentication.
+2. **Start the laptop services:** configure the worker and dashboard using [laptop services](docs/laptop-services.md). Agent backends need their own authenticated access.
+3. **Pair the phone:** install [Assistant Companion](https://github.com/Ayoub-Mabkhout/personal-ai-assistant/releases/latest), then follow [native setup](docs/native-companion.md).
+4. **Connect the tools you want:** [email](docs/mail-ingestion.md), [calendar](docs/calendar.md), [Money](docs/money.md), or [Termux phone scripting](docs/termux-bridge.md).
 
-Keep profile/documents in ignored private/, databases/traces/continuity in
-ignored state/, and local configuration in config/local/. When present,
-state/CONTEXT.md contains continuity and state/source-conversation.md the transcript.
+The Android app supports Android 8 and later. Speech APIs, model access,
+Firebase push configuration, and hosting have separate setup and possible costs.
+A self-built APK needs your own signing identity and Firebase client configuration.
+The code has no assistant-hosting subscription; provider plans determine your bill.
 
-GitHub is public. Actual credentials belong in a protected external store;
-account metadata contains references only. This checkout is under OneDrive:
-Git ignore does not prevent OneDrive sync. Do not sync actively written SQLite
-stores between machines or place raw credentials here.
+[Release and signing setup](docs/releases.md) · [Hosting notes](docs/costs.md) · [Environment layout](docs/repository-layout.md)
+
+## Built to be extended, not filled with somebody else's data
+
+```text
+apps/android/             Native Companion
+apps/dashboard/           Local dashboard
+src/personal_assistant/   Relay, workers, calendar, mail, banking, and domain logic
+skills/                   Reusable agent skills
+scripts/                  Setup, automation, validation, and release routines
+infra/server/             Server deployment
+```
+
+Personal profiles, documents, databases, and traces live in ignored runtime
+storage. Credentials belong in a protected store outside the repository;
+`private/auth/` holds references and metadata. A publication guard runs before
+commits and in CI. Git ignore is a source-control boundary, not encryption.
+
+For a new capability, add the domain behavior, expose it through the appropriate
+worker or relay path, and give task agents a focused skill. Keep personal facts
+as runtime inputs. Tests use temporary stores and fake providers.
+
+[Storage boundaries](docs/repository-layout.md) · [Coding workbench](docs/coding-workbench.md) · [Personal context](docs/personal-profile.md)
+
+## What's next
+
+The system is under active development. Semantic file search, richer attachment
+handling, bank-consent renewal reminders, and more phone controls remain on the
+[roadmap](docs/roadmap.md). Provider support, phone battery behavior, and physical
+handset verification are separate from passing local tests.
+
+The full checklist lives in [docs/roadmap.md](docs/roadmap.md). The Companion and
+dashboard also share an editable [Features list](docs/features-checklist.md).
+
+<details>
+<summary><strong>Documentation map</strong></summary>
+
+| Area | Guides |
+| :--- | :--- |
+| **Start & operate** | [Deployment](docs/server-deployment.md) · [Laptop services](docs/laptop-services.md) · [Releases](docs/releases.md) · [Costs](docs/costs.md) |
+| **Voice & phone** | [Voice](docs/phone-voice.md) · [Wake detection & buffering](docs/custom-phone-voice.md) · [Native notifications](docs/native-companion.md) · [Widgets & alarms](docs/phone-companion.md) · [Termux](docs/termux-bridge.md) |
+| **Agents & context** | [Dispatch](docs/task-dispatch.md) · [Task updates](docs/phone-task-status.md) · [Coding workbench](docs/coding-workbench.md) · [Profile](docs/personal-profile.md) |
+| **Everyday tools** | [Calendar](docs/calendar.md) · [Reminders](docs/calendar-reminders.md) · [Groceries](docs/groceries.md) · [AnyList migration](docs/anylist-migration.md) · [Money](docs/money.md) |
+| **Mail & documents** | [Ingestion](docs/mail-ingestion.md) · [Background collection](docs/mail-automation.md) · [WhatsApp](docs/whatsapp.md) · [Repository layout](docs/repository-layout.md) |
+
+</details>
