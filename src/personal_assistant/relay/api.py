@@ -21,7 +21,8 @@ class BodyLimit:
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
-                                                                       or scope.get('path','').startswith('/v1/files/'))):
+                                                                       or scope.get('path','').startswith('/v1/files/')
+                                                                       or scope.get('path','').startswith('/groceries/v1/mobile/task-attachments/'))):
             # Streamed uploads enforce their own declared, bounded size.
             return await self.app(scope, receive, send)
         body = bytearray()
@@ -168,7 +169,10 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         from .mobile_tasks import mobile_task_router
         from .mobile_push import mobile_push_router
         from .mobile_settings import mobile_settings_router
-        app.include_router(mobile_task_router(groceries_api.devices,{'command':queue,'agent':agent_queue}))
+        from .task_attachments import TaskAttachments
+        task_attachments=TaskAttachments(Path(path).with_name('task-attachments.sqlite3'),Path(path).with_name('task-attachments'))
+        app.state.task_attachments=task_attachments
+        app.include_router(mobile_task_router(groceries_api.devices,{'command':queue,'agent':agent_queue},task_attachments))
         app.include_router(mobile_push_router(mobile_events))
         app.include_router(mobile_settings_router(groceries_api.devices,
             mobile_settings_file or Path(groceries['path']).with_name('companion-preferences.json')))
@@ -187,6 +191,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.state.features=features
     app.include_router(features_router(features,submit,'/v1/features'))
     if groceries:
+        from .task_attachments import attachment_router
+        app.include_router(attachment_router(task_attachments,device_auth(groceries_api.devices),(submit_token,worker_token)))
         app.include_router(features_router(features,device_auth(groceries_api.devices),'/groceries/v1/mobile/features'))
         from .file_drops import FileDrops,file_drop_router
         drops=FileDrops(mobile_events,Path(path).with_name('file-drops'),**(file_drops or {}))

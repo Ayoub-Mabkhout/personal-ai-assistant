@@ -69,7 +69,9 @@ and runtime evidence in the ignored private workspace.
       preflight; see [native delivery](native-companion.md#native-delivery).
 - [x] Native notification display and Reply end to end on the handset.
 - [x] Standalone relay authentication and native-only service deployment; see the retirement runbook.
-- [ ] Task cancellation/retry and attachment access from phone task history.
+- [x] Pictures/files on new tasks and same-session follow-ups, durable phone uploads,
+      worker originals and cached attachment access from native task history.
+- [ ] Task cancellation/retry controls from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
 - [ ] Finish attachment backfill and establish complete historical coverage.
 

@@ -208,3 +208,28 @@ docker compose --env-file /opt/personal-assistant/.env run --rm --no-deps -T rel
 Follow [retirement and recovery](retire-home-assistant.md) before removing legacy
 services. Verify the actual paired handset receives and opens native task details;
 provider acceptance and emulator proof alone do not establish handset delivery.
+
+## Files attached to tasks
+
+Use the paperclip in **New task**, or in **Continue this task** on a task's details
+page. Choose photos/screenshots or documents from Android's system picker. Select
+up to ten originals, each at most 25 MiB. Add an instruction and tap Send.
+
+Companion copies selected files to private app storage before sending. Removing a
+file from the draft removes it from that message. Sending saves a durable outbox;
+connection failure keeps the instruction and files on the phone for automatic
+retry. Task history shows locally saved new tasks while they await upload. The
+composer names the file being uploaded; received messages retain file buttons in
+the conversation, which open a verified cached copy in a suitable phone app.
+
+Attachment-bearing new tasks enter Luna's agent queue after every file uploads.
+Follow-ups stay on their original task and resume its recorded worker session.
+Text-only requests retain their existing immediate/programmed command routing.
+The laptop can sleep during upload/queueing. File analysis waits for its worker.
+
+Relay attachment originals and metadata live in its private persistent data
+volume. The default total quota is 1 GiB; files remain with their task history.
+Unbound uploads can only be read by their uploader. Paired phones can read files
+linked to shared task history; service credentials can download linked files for
+execution. Retries use stable IDs and verify original size and SHA-256. No public
+attachment URL or broad Android storage permission is required.

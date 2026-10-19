@@ -195,3 +195,22 @@ spawned workers with the requested model/effort, wrote two checked artifacts, an
 the second prompt recalled the first. A programmatic calendar query completed
 while both agent prompts remained queued. Tests cover queue separation, serial
 claims, stale leases, cancellation, cached outcomes and interrupted-call recovery.
+
+## Task attachments
+
+Companion uploads originals to the paired, streaming
+`PUT /groceries/v1/mobile/task-attachments/{id}` route. Its base64 UTF-8 JSON
+`X-Attachment-Manifest` contains `name`, `mime`, `size` and `sha256`. Uploads are
+bounded to 25 MiB and verified before becoming available. Task submission uses
+`POST /groceries/v1/mobile/tasks` with `id`, `text`, `created_at`, `timezone` and
+`attachments` (up to ten uploaded IDs). The existing paired follow-up endpoint
+accepts the same optional `attachments` list. Stable envelope and file IDs make
+acknowledgement retries idempotent, including same-session follow-ups.
+
+The worker downloads associated originals through authenticated
+`/relay/v1/agent/attachments/{id}` metadata and `/content` routes, into its private
+job `attachments/` directory. Verified local paths reach Luna, every assigned
+worker, resumed sessions and the development-session forwarding message. Files
+remain data; they cannot override the user's instruction. These API operations
+alone make no model calls. Legacy owner web follow-ups reject attachment IDs;
+use Companion's paired uploader to associate and validate them.

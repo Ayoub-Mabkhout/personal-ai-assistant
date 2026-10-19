@@ -87,8 +87,12 @@ final class NativeTaskScreens {
         }
         void render(){
             more.setEnabled(!busy);more.setVisibility(cursor.isEmpty()||items.isEmpty()?View.GONE:View.VISIBLE);
-            String signature=query+"|"+cursor+"|"+items;if(signature.equals(shown))return;boolean first=shown==null;shown=signature;rows.removeAllViews();
-            if(items.isEmpty()){rows.addView(query.isEmpty()?ui.empty("history","No tasks yet","Laptop requests and their answers will appear here.","Refresh",this::reload):ui.empty("search","No matching tasks","Try another word from the request or answer.","Clear search",()->search.setText("")));return;}
+            JSONArray localTasks=NativeTasks.newPending(a);String signature=query+"|"+cursor+"|"+items+"|"+localTasks;if(signature.equals(shown))return;boolean first=shown==null;shown=signature;rows.removeAllViews();
+            for(int n=0;n<localTasks.length();n++){JSONObject pending=localTasks.optJSONObject(n);if(pending==null)continue;JSONObject draft=pending.optJSONObject("body");if(draft==null||!draft.optString("text").toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT)))continue;
+                LinearLayout card=ui.card();card.addView(ui.savedChip("Saved on this phone"));ui.space(card,8);card.addView(ui.heading(draft.optString("text")));JSONArray files=draft.optJSONArray("attachments");for(int k=0;files!=null&&k<files.length();k++){try{JSONObject file=TaskAttachments.metadata(a,files.getString(k));card.addView(ui.detail(file.optString("name")+" · "+TaskAttachments.size(file.optLong("size"))));}catch(Exception ignored){}}
+                card.addView(ui.detail("Waiting for connection. Refresh retries the upload."));rows.addView(card);
+            }
+            if(items.isEmpty()&&rows.getChildCount()==0){rows.addView(query.isEmpty()?ui.empty("history","No tasks yet","Laptop requests and their answers will appear here.","Refresh",this::reload):ui.empty("search","No matching tasks","Try another word from the request or answer.","Clear search",()->search.setText("")));return;}
             for(JSONObject item:items)rows.addView(card(item));
             if(first)AppUi.stagger(rows);
         }
@@ -104,7 +108,7 @@ final class NativeTaskScreens {
 
     private static final class Detail extends Screen {
         final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved,voiceNote;final EditText instruction;final AppUi.Fab send;final ImageButton mic;final AppUi.Pill talk;final Set<String> queued=new HashSet<>();
-        String rendered;boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder;int total=-1;long lastDay;
+        String rendered;boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder;int total=-1;long lastDay;LinearLayout attachmentDraft;
         // Voice: the service owns the microphone; "requested" bridges the moment between a tap and the service starting.
         String requested="",shownMode,lastNote="";long requestedUntil,requestedAt,noteUntil;boolean ticking;final Runnable tick=()->{ticking=false;voice();};
         Detail(Activity a,String kind,String id){
@@ -123,6 +127,9 @@ final class NativeTaskScreens {
             voiceNote=ui.type("",12.5f,18,500,0,ui.muted);voiceNote.setTag("task_voice_status");voiceNote.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);voiceNote.setVisibility(View.GONE);voiceNote.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(voiceNote);
             saved=ui.type("",12.5f,18,500,0,ui.muted);saved.setTag("task_followup_status");saved.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);saved.setVisibility(View.GONE);saved.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(saved);
             composer.setVisibility(agent?View.VISIBLE:View.GONE);root.addView(composer,new LinearLayout.LayoutParams(-1,-2));insets();refreshSend();
+            attachmentDraft=ui.column();composer.addView(attachmentDraft,1,new LinearLayout.LayoutParams(-1,-2));
+            head.addView(ui.iconButton("attach","Attach photos or files",()->TaskAttachments.choose(a,"task:"+id)),0,new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44)));
+            TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);
             instruction.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){Cloud.prefs(a).edit().putString("task_draft:"+id,s.toString()).apply();refreshSend();}public void afterTextChanged(Editable e){}});
             body.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(follow){boolean snap=jump;jump=false;end(snap);}});
             scroll.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{int was=ob-ot;if(was>0&&b-t<was&&body.getHeight()-scroll.getScrollY()-was<=ui.dp(40))scroll.post(()->end(true));});
@@ -162,7 +169,7 @@ final class NativeTaskScreens {
         void refreshSend(){send.setEnabled(canContinue&&!instruction.getText().toString().trim().isEmpty());}
         void end(boolean snap){follow=false;int to=Math.max(0,body.getHeight()-(scroll.getHeight()-scroll.getPaddingTop()-scroll.getPaddingBottom()));if(snap||!AppUi.motion())scroll.scrollTo(0,to);else scroll.smoothScrollTo(0,to);}
         void settle(){int now=messages.getChildCount()+pendingMessages.getChildCount();if(now>total){follow=true;jump=total<0;}total=now;}
-        @Override void changed(){pending();if(busy)return;busy=true;network.execute(()->{try{JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();});}catch(Exception error){safe(()->{busy=false;pending();});}});}
+        @Override void changed(){TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);pending();if(busy)return;busy=true;network.execute(()->{try{JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();});}catch(Exception error){safe(()->{busy=false;pending();});}});}
         @Override void reload(){load();}
         @Override void load(){
             JSONObject cached=NativeTasks.cachedDetail(a,kind,id);if(cached.length()>0)render(cached);pending();if(busy)return;busy=true;spin();note("Loading task...","refresh",false);
@@ -170,7 +177,7 @@ final class NativeTaskScreens {
         }
         void submit(){
             String text=instruction.getText().toString().trim();if(text.isEmpty())return;
-            try{NativeTasks.enqueueFollowup(a,id,text);instruction.setText("");Cloud.prefs(a).edit().remove("task_draft:"+id).apply();waiting=true;line(saved,"");pending();network.execute(()->{try{NativeTasks.flush(a);safe(this::load);}catch(Exception error){safe(this::pending);}});}
+            try{NativeTasks.enqueueFollowupWithId(a,id,text,UUID.randomUUID().toString(),TaskAttachments.ids(TaskAttachments.draft(a,"task:"+id)));instruction.setText("");attachmentDraft.setTag(null);TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);Cloud.prefs(a).edit().remove("task_draft:"+id).apply();waiting=true;line(saved,"");pending();network.execute(()->{try{NativeTasks.flush(a);safe(this::load);}catch(Exception error){safe(this::pending);}});}
             catch(Exception error){line(saved,"Could not save the instruction. Your text is still here.");}
         }
         void pending(){
@@ -180,7 +187,7 @@ final class NativeTaskScreens {
                     JSONObject entry=queue.getJSONObject(n);if(!id.equals(entry.optString("task_id")))continue;count++;long at=timestamp(entry.opt("created"));boolean review="needs_review".equals(entry.optString("state"));
                     if(at>0&&TaskViews.day(at)!=day){day=TaskViews.day(at);pendingMessages.addView(TaskViews.separator(ui,at));}
                     AppUi.StatusChip badge=review?ui.statusChip("Needs review · kept on this phone","danger"):ui.savedChip("Saved on this phone · sending when connected");badge.setSingleLine(false);badge.setMaxLines(2);
-                    View item=TaskViews.bubble(ui,entry.optString("instruction"),true,"You",at,badge);if(item==null)continue;pendingMessages.addView(item);if(queued.add(entry.optString("id"))&&primed)AppUi.enter(item,0);
+                    View item=TaskViews.bubble(ui,entry.optString("instruction"),true,"You",at,badge);if(item==null)continue;pendingMessages.addView(item);JSONArray files=entry.optJSONArray("attachments");for(int k=0;files!=null&&k<files.length();k++){try{JSONObject file=TaskAttachments.metadata(a,files.getString(k));pendingMessages.addView(ui.detail(file.optString("name")+" · "+TaskAttachments.size(file.optLong("size"))));}catch(Exception ignored){}}if(queued.add(entry.optString("id"))&&primed)AppUi.enter(item,0);
                 }
                 primed=true;
                 if(count>0){waiting=true;line(saved,"");}else if(waiting){waiting=false;line(saved,"Follow-up received by the server.");main.postDelayed(()->{if(saved.getText().toString().equals("Follow-up received by the server."))line(saved,"");},5000);}
@@ -193,16 +200,17 @@ final class NativeTaskScreens {
             String signature=value.toString();
             if(!signature.equals(rendered)||placeholder){
                 int before=placeholder?0:messages.getChildCount();rendered=signature;placeholder=false;messages.removeAllViews();lastDay=0;
-                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")));
-                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null)exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")));}
+                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")),value.optJSONArray("attachments"));
+                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null){exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")),turn.optJSONArray("attachments"));}}
                 for(int n=before;before>0&&n<messages.getChildCount();n++)AppUi.enter(messages.getChildAt(n),(n-before)*60);
             }
             canContinue=agent&&value.optBoolean("can_followup",true);if(instruction.isEnabled()!=canContinue){instruction.setEnabled(canContinue);instruction.setAlpha(canContinue?1f:.55f);}refreshSend();voice();
             if(agent&&!canContinue)line(saved,"This task cannot be continued.");else if(saved.getText().toString().equals("This task cannot be continued."))line(saved,"");
             settle();
         }
-        void exchange(String request,long asked,String answer,String raw,long answered){
+        void exchange(String request,long asked,String answer,String raw,long answered,JSONArray files){
             message(request,true,"You",asked,null);
+            TaskAttachments.show(a,ui,messages,files);
             if(!answer.isEmpty())message(answer,false,"Assistant",answered,raw.equals("completed")||raw.equals("complete")?null:stateChip(raw));
             else{LinearLayout row=ui.row();row.setPadding(ui.dp(4),0,0,ui.dp(14));row.addView(stateChip(raw));messages.addView(row);}
         }

@@ -1,6 +1,8 @@
 """Paired-owner task conversations; no HA login, worker traces or admin capability."""
 import base64
 import json
+import hashlib
+from pydantic import BaseModel,ConfigDict,Field
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from .continuations import Continuations, Followup
 
@@ -84,7 +86,16 @@ class MobileTasks:
                 'state': job['state'], 'created': created, 'connection': self.queues['agent'].status()}
 
 
-def mobile_task_router(devices, queues):
+class NewTask(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    id:str=Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
+    text:str=Field(min_length=1,max_length=4096)
+    created_at:str
+    timezone:str='UTC'
+    attachments:list[str]=Field(default_factory=list,max_length=10)
+
+
+def mobile_task_router(devices, queues,attachments=None):
     api = APIRouter(prefix='/groceries/v1/mobile')
     tasks = MobileTasks(queues)
 
@@ -101,12 +112,34 @@ def mobile_task_router(devices, queues):
                 limit: int = Query(default=30, ge=1, le=100), phone=Depends(device)):
         return tasks.history(q, cursor, limit)
 
+    @api.post('/tasks')
+    def new_task(body:NewTask,phone=Depends(device)):
+        identifier='mobile-'+hashlib.sha256((phone+'|'+body.id).encode()).hexdigest()[:48]
+        if body.attachments:
+            if attachments is None:raise HTTPException(503,'Task attachments unavailable.')
+            attachments.bind(body.attachments,identifier,phone)
+        payload={'id':identifier,'command':body.text,'created_at':body.created_at,'timezone':body.timezone}
+        if body.attachments:payload['attachments']=body.attachments
+        job,created=queues['agent'].submit(payload,source='phone_typed')
+        return {'task_id':job['id'],'status':job['state'],'reply':'Queued to the laptop: '+body.text,'created':created,'connection':queues['agent'].status()}
+
     @api.get('/tasks/{kind}/{identifier}')
     def detail(kind: str, identifier: str, phone=Depends(device)):
-        return tasks.detail(kind, identifier)
+        result=tasks.detail(kind, identifier)
+        if attachments and kind=='agent':
+            root=tasks.continuations.root(identifier)
+            result['attachments']=attachments.describe(root['payload'].get('attachments',[]))
+            for turn,job in zip(result['turns'],tasks.continuations.turns(identifier)):
+                turn['attachments']=attachments.describe(job['payload'].get('attachments',[]))
+        return result
 
     @api.post('/tasks/{kind}/{identifier}/followups')
     def followup(kind: str, identifier: str, body: Followup, phone=Depends(device)):
+        if body.attachments:
+            if kind!='agent' or attachments is None:raise HTTPException(422,'Attachments require an agent task.')
+            tasks.continuations.root(identifier)
+            child='continue-'+hashlib.sha256(body.id.encode()).hexdigest()[:48]
+            attachments.bind(body.attachments,child,phone)
         return tasks.followup(kind, identifier, body)
 
     return api

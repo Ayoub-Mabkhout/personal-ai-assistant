@@ -77,6 +77,7 @@ def task_router(queues,assets,user_verifier=None,task_links=None,mobile_settings
         if task_links and x_task_followup:
             if not task_links.verify_followup(kind,identifier,x_task_followup):raise HTTPException(401,'Invalid follow-up link.')
         else:authorize(request,authorization)
+        if body.attachments:raise HTTPException(422,'Upload attachments through the paired Companion app.')
         job,created=continuations.accept(identifier,body)
         return {'id':job['id'],'state':job['state'],'created':created,'connection':queues['agent'].status()}
 

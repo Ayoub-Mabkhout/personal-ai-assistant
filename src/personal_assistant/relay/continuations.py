@@ -12,6 +12,7 @@ class Followup(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     id:str=Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
     instruction:str=Field(min_length=1,max_length=4096)
+    attachments:list[str]=Field(default_factory=list,max_length=10)
 
     @field_validator('instruction')
     @classmethod
@@ -47,7 +48,8 @@ class Continuations:
 
     def accept(self,identifier,body):
         root=self.root(identifier);root_id=root['id']
-        digest=hashlib.sha256(json.dumps([root_id,body.instruction],ensure_ascii=False).encode()).hexdigest()
+        parts=[root_id,body.instruction]+([body.attachments] if body.attachments else [])
+        digest=hashlib.sha256(json.dumps(parts,ensure_ascii=False).encode()).hexdigest()
         child='continue-'+hashlib.sha256(body.id.encode()).hexdigest()[:48]
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -60,6 +62,7 @@ class Continuations:
                          'created_at':datetime.fromtimestamp(self.queue.clock(),timezone.utc).isoformat(),
                          'expires_at':None,'resume_task':{'root_id':root_id},
                          'workspace':root['payload'].get('workspace')}
+                if body.attachments:payload['attachments']=body.attachments
                 db.execute('INSERT INTO turns(id,root,fingerprint,payload) VALUES(?,?,?,?)',(body.id,root_id,digest,json.dumps(payload)))
         job,created=self.queue.submit(payload,source='task_continuation');self.accepted(body.id)
         return job,created

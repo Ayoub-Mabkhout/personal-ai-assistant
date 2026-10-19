@@ -7,14 +7,13 @@ import android.text.InputType;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
-import org.json.JSONObject;
-import java.util.UUID;
+import org.json.*;
 
 /** New task over the lock screen: type or dictate, then send. Shows no history or task details while locked. */
 public final class QuickTaskActivity extends Activity {
     /** Dictation target shared with task details: words are transcribed and appended to this draft, nothing is sent. */
     private static final String VOICE="quick-task";
-    private AppUi ui;private EditText input;private TextView status;private Button send;private ImageButton mic;private boolean sending;
+    private AppUi ui;private EditText input;private TextView status;private Button send;private ImageButton mic;private boolean sending;private LinearLayout attachments;
     private final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable tick=new Runnable(){public void run(){if(isFinishing())return;take();main.postDelayed(this,500);}};
     @Override public void onCreate(Bundle state){
@@ -30,8 +29,10 @@ public final class QuickTaskActivity extends Activity {
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(3);input.setGravity(Gravity.TOP|Gravity.START);
         input.setPadding(ui.dp(16),ui.dp(14),ui.dp(16),ui.dp(14));input.setBackground(ui.outline(ui.surface,20,ui.stroke,1));input.setText(Cloud.prefs(this).getString("quick_task_draft",""));input.setSelection(input.length());
         box.addView(input,new LinearLayout.LayoutParams(-1,-2));ui.space(box,14);
+        attachments=ui.column();box.addView(attachments,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout actions=ui.row();
         mic=ui.iconButton("voice","Dictate",this::dictate);mic.setTag("quick_task_mic");actions.addView(mic,new LinearLayout.LayoutParams(ui.dp(56),ui.dp(56)));
+        actions.addView(ui.iconButton("attach","Attach photos or files",()->TaskAttachments.choose(this,"new-task")),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(56)));
         send=new Button(this);send.setAllCaps(false);send.setText("Send");send.setTextSize(16);send.setTypeface(AppUi.face(700));send.setTextColor(0xff2a1a5e);
         send.setBackground(ui.pressable(ui.outline(0xffefe9f8,18,0,0),18));send.setOnClickListener(v->send());
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,ui.dp(56),1);sp.setMarginStart(ui.dp(12));actions.addView(send,sp);box.addView(actions);ui.space(box,14);
@@ -46,6 +47,8 @@ public final class QuickTaskActivity extends Activity {
     @Override public void onDestroy(){if(isFinishing())stopDictation();super.onDestroy();}
     /** Appends what was dictated so far and keeps the microphone label in step with the dictation state. */
     private void take(){
+        TaskAttachments.renderDraft(this,ui,attachments,"new-task",()->{});
+        if(sending){String transfer=Cloud.prefs(this).getString("task_attachment_transfer","");if(!transfer.isEmpty())status.setText(transfer);}
         String words=TaskVoice.take(this,VOICE);if(!words.isEmpty()){input.append((input.length()==0?"":" ")+words);input.setSelection(input.length());}
         String note=TaskVoice.takeNote(this,VOICE);if(!note.isEmpty())status.setText(note);
         boolean on="dictate".equals(TaskVoice.mode(this,VOICE));mic.setContentDescription(on?"Finish dictation":"Dictate");mic.setActivated(on);mic.setAlpha(on?1f:.85f);
@@ -71,17 +74,16 @@ public final class QuickTaskActivity extends Activity {
         if("dictate".equals(TaskVoice.mode(this,VOICE))){status.setText("Finish dictation with the microphone, then tap Send.");return;}
         String text=input.getText().toString().trim();if(text.isEmpty()){status.setText("Type or dictate a request first.");return;}if(sending)return;
         if(Cloud.prefs(this).getString("token","").isEmpty()){status.setText("Pair Companion first, while unlocked.");return;}
-        sending=true;send.setEnabled(false);status.setText("Sending…");
+        sending=true;send.setEnabled(false);status.setText("Saving task and attachments…");
         // A stable ID per draft makes a retry after a dropped connection replay safely instead of queueing twice.
-        String id=Cloud.prefs(this).getString("quick_task_id","");if(id.isEmpty()){id="typed-"+UUID.randomUUID().toString().replace("-","").substring(0,24);Cloud.prefs(this).edit().putString("quick_task_id",id).commit();}
-        final String request=id;
+        final String request;try{request=NativeTasks.enqueueNew(this,text);}catch(Exception error){sending=false;send.setEnabled(true);status.setText("Could not save this task. Your draft is still here.");return;}
+        input.setText("");attachments.setTag(null);TaskAttachments.renderDraft(this,ui,attachments,"new-task",()->{});
         new Thread(()->{String reply;boolean ok;
-            try{JSONObject body=new JSONObject().put("id",request).put("text",text).put("created_at",java.time.Instant.now().toString()).put("timezone",java.util.TimeZone.getDefault().getID()).put("native_timers",true);
-                JSONObject result=(JSONObject)Cloud.call(this,"voice/text",body,true);reply=result.optString("reply","Sent to your assistant.");ok=true;}
-            catch(Exception e){reply="Not sent: "+(e.getMessage()==null?"no connection":e.getMessage())+". Your text is kept; try again.";ok=false;}
+            try{NativeTasks.flush(this);JSONObject receipt=new JSONObject(Cloud.prefs(this).getString("task_new_receipt:"+request,"{}"));reply=receipt.optString("reply","Task received by the server.");ok=receipt.length()>0;}
+            catch(Exception e){reply="Saved on this phone. Task and files will send when connected. "+(e.getMessage()==null?"":e.getMessage());ok=false;}
             final String shown=reply;final boolean sent=ok;
             runOnUiThread(()->{sending=false;send.setEnabled(true);status.setText(shown);
-                if(sent){Cloud.prefs(this).edit().remove("quick_task_draft").remove("quick_task_id").apply();input.setText("");NativeTasks.changed(this);input.postDelayed(this::finish,1800);}});
+                if(sent){NativeTasks.changed(this);input.postDelayed(this::finish,1800);}});
         }).start();
     }
 }

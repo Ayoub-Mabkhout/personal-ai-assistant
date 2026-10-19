@@ -60,7 +60,8 @@ class TaskVoiceSourceTests(unittest.TestCase):
         self.assertIn('new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48));mp.leftMargin', screens)
         self.assertIn('"Stop dictation"', screens)
         # Typed follow-ups still use the durable stable-ID outbox.
-        self.assertIn('NativeTasks.enqueueFollowup(a,id,text)', screens)
+        self.assertIn('NativeTasks.enqueueFollowupWithId(a,id,text,', screens)
+        self.assertIn('TaskAttachments.ids(TaskAttachments.draft(a,"task:"+id))', screens)
 
     def test_microphone_permission_is_requested_only_by_the_app_and_new_task(self):
         requests = []
