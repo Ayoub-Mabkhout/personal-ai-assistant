@@ -25,6 +25,15 @@ DEFAULTS = {'allowance': {'mode': 'auto', 'currency': 'EUR', 'period': 'month', 
 UNSET = object()
 
 
+def decision_version(row):
+    """Exact decision revision, including edits made at an identical clock time."""
+    row = dict(row)
+    fields = ('kind', 'category', 'counts', 'linked', 'reasoning', 'confidence', 'question', 'by',
+              'recurring', 'monthly_cents', 'coverage_months', 'series_key')
+    return hashlib.sha256(json.dumps({**{k: row.get(k) for k in fields},
+                                     'at': row.get('decided', row.get('at'))}, sort_keys=True).encode()).hexdigest()
+
+
 def _process_alive(pid):
     """A live orphaned model process keeps its lease fenced after the parent exits."""
     if os.name == 'nt':
@@ -286,7 +295,20 @@ class Ledger:
             state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
             if state['lease_token'] != token or state['lease_until'] <= self.clock():
                 raise RuntimeError('Audit lease expired; response discarded')
+            answered = {r.get('job_seq') for r in replies if str(r.get('text') or '').strip()}
+            if any(j['kind'] in ('question', 'explanation') and j['seq'] not in answered for j in jobs):
+                raise ValueError('Auditor response omitted a requested reply')
             permitted = {json.loads(job['payload']).get('id') for job in jobs if job['kind'] == 'transaction'}
+            reviews = {}
+            for job in jobs:
+                payload = json.loads(job['payload'])
+                if job['kind'] == 'owner_answer' and payload.get('authority') == 'review_interpretation':
+                    reviews[payload.get('id')] = payload
+            decided_ids = {item['id'] for item in decisions}
+            for identity, review in reviews.items():
+                current = db.execute('SELECT * FROM decisions WHERE id=?', (identity,)).fetchone()
+                if current and decision_version(current) == review.get('decision_version') and identity not in decided_ids:
+                    raise ValueError('Auditor response omitted an owner review decision')
             # Category changes first, so decisions can use a category created in the same answer.
             for op in category_ops or ():
                 try:
@@ -295,15 +317,22 @@ class Ledger:
                     continue  # an invalid suggestion never blocks the transaction decisions
             for item in decisions:
                 self.ensure_category(item.get('category'), item['kind'], db)
-                if item['id'] not in permitted:
+                by = 'ai'
+                review = reviews.get(item['id'])
+                if review:
+                    current = db.execute('SELECT * FROM decisions WHERE id=?', (item['id'],)).fetchone()
+                    if not current or decision_version(current) != review.get('decision_version'):
+                        continue  # A newer owner edit supersedes this review.
+                    by = 'owner'
+                elif item['id'] not in permitted:
                     # Revisions to older AI decisions are allowed, but owner decisions remain immutable.
                     row = db.execute('SELECT by FROM decisions WHERE id=?', (item['id'],)).fetchone()
                     if not row or row['by'] != 'ai':
                         continue
                 self.decide(item['id'], item['kind'], item.get('category'), item['counts'], item.get('linked'),
-                            item.get('reasoning'), item.get('confidence'), item.get('question'), 'ai',
+                            item.get('reasoning'), item.get('confidence'), item.get('question'), by,
                             item.get('recurring'), item.get('monthly_cents'), item.get('coverage_months'),
-                            item.get('series_key'), db)
+                            item.get('series_key'), db, enqueue_owner=not bool(review))
             for reply in replies:
                 seq = reply.get('job_seq')
                 if seq in {j['seq'] for j in jobs if j['kind'] in ('question', 'explanation')}:
@@ -332,7 +361,7 @@ class Ledger:
 
     def decide(self, identity, kind, category, counts, linked, reasoning, confidence, question, by,
                recurring=UNSET, monthly_cents=UNSET, coverage_months=UNSET, series_key=UNSET, db=None,
-               event_key=None):
+               event_key=None, enqueue_owner=True):
         if kind not in KINDS:
             raise ValueError('Unknown kind %r' % kind)
         if monthly_cents not in (UNSET, None) and (not isinstance(monthly_cents, int) or monthly_cents < 0):
@@ -344,7 +373,7 @@ class Ledger:
         if db is None:
             with self.db() as connection:
                 return self.decide(identity, kind, category, counts, linked, reasoning, confidence, question, by,
-                                   recurring, monthly_cents, coverage_months, series_key, connection, event_key)
+                                   recurring, monthly_cents, coverage_months, series_key, connection, event_key, enqueue_owner)
         else:
             if not db.execute('SELECT 1 FROM transactions WHERE id=?', (identity,)).fetchone():
                 raise KeyError(identity)
@@ -365,7 +394,7 @@ class Ledger:
                        (identity, kind, category, int(bool(counts)), json.dumps(list(linked or [])), reasoning,
                         confidence, question or None, by, self.clock(), int(bool(recurring)), monthly_cents,
                         json.dumps(months), series_key))
-            if by == 'owner':
+            if by == 'owner' and enqueue_owner:
                 fingerprint = hashlib.sha256(json.dumps([identity, kind, category, counts, linked, reasoning],
                                                       sort_keys=True).encode()).hexdigest()[:16]
                 self._enqueue(db, 'owner_answer', event_key or 'decision:' + fingerprint,
@@ -559,7 +588,7 @@ def summarise(ledger, today=None, insights=None):
                                 or (r['kind'] in RECURRING_COST_KINDS and r['amount_cents'] < 0)))
     cash_net = sum(r['amount_cents'] for r in real)
     offset_total = sum(a['amount_cents'] for a in adjustments)
-    review = [r for r in rows if r['kind'] and r['question'] and r['by'] == 'ai']
+    review = [r for r in rows if r['kind'] and r['question']]
     return {
         'period': {'start': start.isoformat(), 'end': end.isoformat(), 'days_left': days_left, 'days_total': days_total},
         'allowance': {**allowance, 'amount_cents': budget, 'mode': 'pinned' if pinned else 'auto'},

@@ -14,7 +14,7 @@ import java.util.UUID;
 public final class QuickTaskActivity extends Activity {
     private AppUi ui;private EditText input;private TextView status;private Button send;private boolean sending;
     @Override public void onCreate(Bundle state){
-        AppUi.theme(this);super.onCreate(state);ui=new AppUi(this);ui.window();
+        AppUi.theme(this);super.onCreate(state);AppBack.install(this,this::back);ui=new AppUi(this);ui.window();
         if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(true);setTurnScreenOn(true);}
         else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE|WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -34,12 +34,17 @@ public final class QuickTaskActivity extends Activity {
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,ui.dp(56),1);sp.setMarginStart(ui.dp(10));actions.addView(send,sp);box.addView(actions);ui.space(box,14);
         status=ui.detail("");status.setGravity(Gravity.CENTER);box.addView(status,new LinearLayout.LayoutParams(-1,-2));
         box.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));
-        box.addView(ui.ghostButton("Close",this::finish),new LinearLayout.LayoutParams(-1,-2));
+        box.addView(ui.ghostButton("Close",this::back),new LinearLayout.LayoutParams(-1,-2));
         ScrollView scroll=new ScrollView(this);scroll.setFitsSystemWindows(true);scroll.setFillViewport(true);scroll.setBackground(ui.pageBackground());scroll.addView(box);setContentView(scroll);
         input.requestFocus();
     }
     @Override public void onResume(){super.onResume();input.postDelayed(()->{input.requestFocus();InputMethodManager keyboard=getSystemService(InputMethodManager.class);if(keyboard!=null)keyboard.showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);},150);}
     @Override public void onPause(){if(!sending)Cloud.prefs(this).edit().putString("quick_task_draft",input.getText().toString()).apply();super.onPause();}
+    @Override public void onBackPressed(){back();}
+    private void back(){
+        if(isTaskRoot())startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("open_tab","home"));
+        finish();
+    }
     private void send(){
         String text=input.getText().toString().trim();if(text.isEmpty()){status.setText("Type or say a request first.");return;}if(sending)return;
         if(Cloud.prefs(this).getString("token","").isEmpty()){status.setText("Pair Companion first, while unlocked.");return;}

@@ -26,6 +26,7 @@ final class MainVoice {
         detail=ui.detail("Tap Talk to start.");detail.setGravity(Gravity.CENTER);hero.addView(detail,MainParts.params(ui,-1,-2,24,4,24,16));
         meter=new AppUi.Meter(a,ui);meter.setTag("voice_level");hero.addView(meter,MainParts.params(ui,ui.dp(150),ui.dp(26),0,0,0,20));page.addView(hero);
 
+        Button newTask=ui.primaryButton("New task",()->a.startActivity(new android.content.Intent(a,QuickTaskActivity.class)));newTask.setTag("home_new_task");page.addView(newTask,MainParts.params(ui,-1,ui.dp(52),0,0,0,16));
         LinearLayout live=ui.card();liveCard=live;LinearLayout liveHead=ui.row();View dot=new View(a);dot.setBackground(ui.outline(ui.aurora[2],4,0,0));liveHead.addView(dot,new LinearLayout.LayoutParams(ui.dp(8),ui.dp(8)));liveHead.addView(ui.label("Live transcript"),MainParts.params(ui,-2,-2,8,0,0,0));live.addView(liveHead);
         words=ui.type("",17,25,500,-.003f,ui.text);live.addView(words,MainParts.params(ui,-1,-2,0,6,0,0));page.addView(liveCard);
 
