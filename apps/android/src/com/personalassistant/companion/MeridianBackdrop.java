@@ -8,10 +8,15 @@ import android.os.SystemClock;
  * Meridian page background. Under the Voice home it paints the hero: the Aurora sky for the sun's elevation, sun bloom or
  * moon and stars, drifting volumetric clouds lit from the sun or moon, four Alpine ridges with snow, rim light, fog and
  * spruces, then rain or snow. Other tabs get a short sky strip; every page gets quiet weather in its gaps (beads of rain,
- * mist, drifting snow and frost, a warm glow or faint stars). It animates only while visible and motion is enabled.
+ * mist, drifting snow and frost, a warm glow or faint stars). It animates only while visible and motion is enabled, one
+ * frame per display refresh. Each cloud layer is lit off the main thread as a seamless tile every 1.5 s and slid by
+ * sub-pixel offsets on the GPU every frame, so the drift stays smooth at 60 to 120 Hz.
  */
-final class MeridianBackdrop extends Drawable implements Runnable {
-    private static final int BW=180,BH=104,FW=384,FH=112;
+final class MeridianBackdrop extends Drawable implements android.view.Choreographer.FrameCallback {
+    private static final int BW=180,BH=104,FW=384,FH=112;private static final long RELIGHT=1500;
+    /** Per layer: scale (screen widths per tile), drift in field widths per ms, field offset, opacity. */
+    private static final float[][] LAYERS={{1f,.0000045f,0f,.85f},{1.7f,.0000105f,.37f,1f}};
+    private static final java.util.concurrent.ExecutorService LIGHTING=java.util.concurrent.Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"meridian-lighting");t.setPriority(Thread.MIN_PRIORITY);return t;});
     /** The moon sits clear of the header chips and the orb. */
     private static final float MOON_X=.80f,MOON_Y=.30f;
     private static volatile float[] field;private static boolean building;
@@ -20,15 +25,19 @@ final class MeridianBackdrop extends Drawable implements Runnable {
     private final AppUi ui;private final AppUi.Wash wash;private final float density;
     private MeridianSky sky;private long skyAt;
     private int heroPx,stripPx,offset;private boolean hero;
-    private boolean running,visible=true;private long last,cloudsAt=-1;private float time;
-    private final Bitmap clouds=Bitmap.createBitmap(BW,BH,Bitmap.Config.ARGB_8888);private final int[] pixels=new int[BW*BH];private boolean cloudsReady;
+    private boolean running,visible=true;private long lastFrame;private float time;
+    private volatile Bitmap[] tiles;private volatile boolean lighting;private long litAt=-1;private int[] litSky;
     private final Paint fill=new Paint(Paint.ANTI_ALIAS_FLAG),line=new Paint(Paint.ANTI_ALIAS_FLAG),image=new Paint(Paint.FILTER_BITMAP_FLAG),add=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final java.util.Random random=new java.util.Random(11);
     private final float[][] rain=new float[171][3],snow=new float[128][4],beads=new float[26][4],flakes=new float[18][3],mist=new float[3][3];
     private final java.util.ArrayList<float[]> splashes=new java.util.ArrayList<>();
     private final float[][] trails=new float[26][80];private final int[] trailLength=new int[26];
     // Cached geometry for the current size and sky.
-    private int cachedW,cachedH;private int[] cachedSky;private Path[] ridgePaths,rimPaths;private Shader[] ridgeShaders,snowShaders,fogShaders;private float[][] ridgeTops;private Shader skyShader,fadeShader,stripShader;private int[] stripSky;private int stripH;
+    private int cachedW,cachedH;private int[] cachedSky;private Path[] ridgePaths,rimPaths;private Shader[] ridgeShaders,snowShaders,fogShaders,glowShaders;private float[][] ridgeTops;private Shader skyShader,fadeShader,stripShader,stripGlow,moonGlow,moonShader,rayShader;private Path rays;private int[] stripSky;private int stripH;
+    private float sunX,sunY,stripX,stripY;
+    // Page-gap shaders are built at the origin once per size and placed with a canvas translation.
+    private int gapW=-1,gapH=-1;private Shader[] beadShaders;private Shader mistShader,frostShader,warmShader;private final Path trail=new Path();
+    private Bitmap[] shaded;private BitmapShader[] tileShaders;private final Matrix tileMatrix=new Matrix();private final Paint tilePaint=new Paint(Paint.FILTER_BITMAP_FLAG);
 
     MeridianBackdrop(AppUi ui){
         this.ui=ui;wash=new AppUi.Wash(ui);density=ui.density;sky=MeridianSky.now(ui.context);skyAt=SystemClock.uptimeMillis();
@@ -48,13 +57,13 @@ final class MeridianBackdrop extends Drawable implements Runnable {
     MeridianSky sky(){return sky;}
 
     @Override public boolean setVisible(boolean visible,boolean restart){boolean changed=super.setVisible(visible,restart);this.visible=visible;if(visible)start();else stop();return changed;}
-    private void start(){if(running||!visible)return;running=true;last=SystemClock.uptimeMillis();scheduleSelf(this,last+16);}
-    private void stop(){running=false;unscheduleSelf(this);}
-    @Override public void run(){
-        if(!running)return;long now=SystemClock.uptimeMillis();float dt=Math.min(100,now-last)/33f;last=now;time+=dt*33;
-        if(AppUi.motion())step(dt);invalidateSelf();
-        boolean busy=sky.kind==MeridianSky.RAIN||sky.kind==MeridianSky.SNOW;
-        if(AppUi.motion())scheduleSelf(this,now+(busy?33:66));else running=false;
+    private void start(){if(running||!visible||!AppUi.motion())return;running=true;lastFrame=0;android.view.Choreographer.getInstance().postFrameCallback(this);}
+    private void stop(){running=false;android.view.Choreographer.getInstance().removeFrameCallback(this);}
+    /** One step per display frame, timed by vsync; particle speeds are defined per 33 ms. */
+    @Override public void doFrame(long nanos){
+        if(!running)return;if(!AppUi.motion()){running=false;invalidateSelf();return;}
+        float ms=lastFrame==0?16f:Math.min(100f,(nanos-lastFrame)/1e6f);lastFrame=nanos;time+=ms;
+        step(ms/33f);invalidateSelf();android.view.Choreographer.getInstance().postFrameCallback(this);
     }
 
     @Override protected void onBoundsChange(Rect b){wash.setBounds(b);}
@@ -73,6 +82,13 @@ final class MeridianBackdrop extends Drawable implements Runnable {
     private void geometry(int w,int h){
         if(w==cachedW&&h==cachedH&&cachedSky==sky.sky)return;cachedW=w;cachedH=h;cachedSky=sky.sky;int[] s=sky.sky;
         skyShader=new LinearGradient(0,0,0,h*.8f,new int[]{s[0],s[1],s[2]},new float[]{0,.45f,1},Shader.TileMode.CLAMP);
+        // A high sun stays below the header so the white title and weather pill keep their contrast.
+        double e=sky.elevation;float low=1-MeridianSky.smooth(4,22,Math.abs(e)),glowK=(sky.kind==MeridianSky.CLEAR&&sky.cover<.5f?1:.55f)*(.55f+.45f*low);
+        sunX=sky.sunX*w;sunY=(float)Math.max(.27,.62-e*.0125)*h;float[][] glow={{.9f,.10f},{.45f,.16f},{.2f,.28f},{.07f,.6f}};glowShaders=new Shader[4];
+        for(int i=0;i<4;i++)glowShaders[i]=new RadialGradient(sunX,sunY,Math.max(1,w*glow[i][0]),AppUi.alpha(s[3],glow[i][1]*glowK),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP);
+        rayShader=new LinearGradient(0,0,w*.7f,0,AppUi.alpha(s[3],.16f*low),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP);rays=new Path();
+        for(int i=0;i<12;i++){double a=Math.toRadians(30*(i+1)),cs=Math.cos(a),sn=Math.sin(a);float r=w*.7f,hw=w*.035f;rays.moveTo(0,0);rays.lineTo((float)(r*cs+hw*sn),(float)(r*sn-hw*cs));rays.lineTo((float)(r*cs-hw*sn),(float)(r*sn+hw*cs));rays.close();}
+        float mx=w*MOON_X,my=h*MOON_Y,mr=11*density;moonGlow=new RadialGradient(mx,my,66*density,0x47E1D7FF,0x00E1D7FF,Shader.TileMode.CLAMP);moonShader=new RadialGradient(mx-mr*.35f,my-mr*.35f,mr*1.35f,0xFFFFFBF2,0xFFCFC4EE,Shader.TileMode.CLAMP);
         fadeShader=new LinearGradient(0,h*.84f,0,h,ui.background&0x00FFFFFF,ui.background,Shader.TileMode.CLAMP);
         float day=MeridianSky.smooth(-6,8,sky.elevation);int near=MeridianSky.mix(0xFF1E1238,0xFF5E4C92,day),horizon=s[2];
         ridgePaths=new Path[4];rimPaths=new Path[4];ridgeShaders=new Shader[4];snowShaders=new Shader[4];fogShaders=new Shader[4];ridgeTops=new float[4][];
@@ -92,16 +108,14 @@ final class MeridianBackdrop extends Drawable implements Runnable {
 
     private void paintHero(Canvas c,int w,int h){
         geometry(w,h);int[] s=sky.sky;double e=sky.elevation;boolean sun=sky.sun,clear=sky.kind==MeridianSky.CLEAR&&sky.cover<.5f;float low=1-MeridianSky.smooth(4,22,Math.abs(e));
-        // A high sun stays below the header so the white title and weather pill keep their contrast.
-        float sx=sky.sunX*w,sy=(float)Math.max(.27,.62-e*.0125)*h;
+        float sx=sunX,sy=sunY;
         fill.setShader(skyShader);c.drawRect(0,0,w,h,fill);fill.setShader(null);
         if(!sun){float fade=1-MeridianSky.smooth(-8,-2,e);for(float[] st:stars){float a=(.25f+.55f*(.5f+.5f*(float)Math.sin(time*.002+st[3])))*fade*(sky.kind==MeridianSky.CLEAR?1:.35f);fill.setColor(AppUi.alpha(0xFFFFFAFF,a));c.drawCircle(st[0]*w,st[1]*h,(.5f+st[2]*1.1f)*density,fill);}}
-        if(sun){float k=(clear?1:.55f)*(.55f+.45f*low);float[][] glow={{.9f,.10f},{.45f,.16f},{.2f,.28f},{.07f,.6f}};
-            for(float[] g:glow){add.setShader(new RadialGradient(sx,sy,Math.max(1,w*g[0]),AppUi.alpha(s[3],g[1]*k),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,add);}add.setShader(null);
-            if(clear&&low>.05f){c.save();c.translate(sx,sy);c.rotate(time*.0034f);fill.setShader(new LinearGradient(0,0,w*.7f,0,AppUi.alpha(s[3],.16f*low),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP));for(int k2=0;k2<12;k2++){c.rotate(30);Path ray=new Path();ray.moveTo(0,0);ray.lineTo(w*.7f,-w*.035f);ray.lineTo(w*.7f,w*.035f);ray.close();c.drawPath(ray,fill);}fill.setShader(null);c.restore();}
+        if(sun){for(Shader g:glowShaders){add.setShader(g);c.drawRect(0,0,w,h,add);}add.setShader(null);
+            if(clear&&low>.05f){c.save();c.translate(sx,sy);c.rotate(time*.0034f);fill.setShader(rayShader);c.drawPath(rays,fill);fill.setShader(null);c.restore();}
             fill.setColor(s[3]);c.drawCircle(sx,sy,(9+low*4)*density,fill);
-        }else{float mx=w*MOON_X,my=h*MOON_Y,mr=11*density;add.setShader(new RadialGradient(mx,my,66*density,0x47E1D7FF,0x00E1D7FF,Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,add);add.setShader(null);
-            fill.setShader(new RadialGradient(mx-mr*.35f,my-mr*.35f,mr*1.35f,0xFFFFFBF2,0xFFCFC4EE,Shader.TileMode.CLAMP));c.drawCircle(mx,my,mr,fill);fill.setShader(null);}
+        }else{add.setShader(moonGlow);c.drawRect(0,0,w,h,add);add.setShader(null);
+            fill.setShader(moonShader);c.drawCircle(w*MOON_X,h*MOON_Y,11*density,fill);fill.setShader(null);}
         clouds(c,w,h*.62f,1,sx/w,sy/(h*.62f));
         for(int li=0;li<4;li++){
             fill.setShader(ridgeShaders[li]);c.drawPath(ridgePaths[li],fill);fill.setShader(null);
@@ -115,11 +129,12 @@ final class MeridianBackdrop extends Drawable implements Runnable {
 
     private void paintStrip(Canvas c,int w,int h){
         int[] s=sky.sky;double e=sky.elevation;
-        if(stripShader==null||stripSky!=sky.sky||stripH!=h){stripSky=sky.sky;stripH=h;stripShader=new LinearGradient(0,0,0,h,new int[]{s[0],s[1],AppUi.alpha(MeridianSky.mix(s[2],ui.background,.55f),.55f),ui.background&0x00FFFFFF},new float[]{0,.38f,.66f,1},Shader.TileMode.CLAMP);}
+        if(stripShader==null||stripSky!=sky.sky||stripH!=h){stripSky=sky.sky;stripH=h;stripShader=new LinearGradient(0,0,0,h,new int[]{s[0],s[1],AppUi.alpha(MeridianSky.mix(s[2],ui.background,.55f),.55f),ui.background&0x00FFFFFF},new float[]{0,.38f,.66f,1},Shader.TileMode.CLAMP);
+            stripX=(sky.sun?sky.sunX:MOON_X)*w;stripY=Math.max(10*density,Math.min(h*.45f,(float)(h*.42f-e*.6*density)));stripGlow=new RadialGradient(stripX,stripY,22*density,AppUi.alpha(s[3],.45f),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP);}
         fill.setShader(stripShader);c.drawRect(0,0,w,h,fill);fill.setShader(null);
         if(!sky.sun){for(float[] st:stars){if(st[1]>.45f)continue;float a=(.35f+.3f*(float)Math.sin(time*.002+st[3]))*.6f*(sky.kind==MeridianSky.CLEAR?1:.4f);fill.setColor(AppUi.alpha(0xFFFFF8FF,Math.max(0,a)));c.drawCircle(st[0]*w,st[1]*h,.7f*density,fill);}}
-        float x=(sky.sun?sky.sunX:MOON_X)*w,y=Math.max(10*density,Math.min(h*.45f,(float)(h*.42f-e*.6*density)));
-        add.setShader(new RadialGradient(x,y,22*density,AppUi.alpha(s[3],.45f),s[3]&0x00FFFFFF,Shader.TileMode.CLAMP));c.drawCircle(x,y,22*density,add);add.setShader(null);
+        float x=stripX,y=stripY;
+        add.setShader(stripGlow);c.drawCircle(x,y,22*density,add);add.setShader(null);
         fill.setColor(AppUi.alpha(s[3],sky.kind==MeridianSky.CLEAR||sky.kind==MeridianSky.SNOW?1:.6f));c.drawCircle(x,y,4.5f*density,fill);
         clouds(c,w,h*.62f,.55f,x/w,y/(h*.62f));
         precipitation(c,w,h,.6f);
@@ -127,28 +142,45 @@ final class MeridianBackdrop extends Drawable implements Runnable {
 
     /** Volumetric clouds: a tileable domain-warped fBm field, two parallax layers, lit by marching towards the light. */
     private void clouds(Canvas c,float w,float h,float alpha,float lx,float ly){
-        if(field==null)return;long now=SystemClock.uptimeMillis();
-        if(!cloudsReady||now-cloudsAt>120&&AppUi.motion()||cloudsAt<0){cloudsAt=now;render(lx,ly);cloudsReady=true;}
-        image.setAlpha(Math.round(255*alpha));c.drawBitmap(clouds,new Rect(0,0,BW,BH),new RectF(0,0,w,h),image);
+        if(field==null)return;long now=SystemClock.uptimeMillis();Bitmap[] layers=tiles;
+        if(layers==null){tiles=layers=light(field,sky,time,lx,ly);litAt=now;litSky=sky.sky;}
+        else if(!lighting&&(litSky!=sky.sky||AppUi.motion()&&now-litAt>RELIGHT)){
+            lighting=true;litAt=now;litSky=sky.sky;final float[] f=field;final MeridianSky at=sky;final float t=time+RELIGHT/2f,x=lx,y=ly;
+            LIGHTING.execute(()->{try{tiles=light(f,at,t,x,y);}finally{lighting=false;}});
+        }
+        if(shaded!=layers){shaded=layers;tileShaders=new BitmapShader[layers.length];for(int i=0;i<layers.length;i++)tileShaders[i]=new BitmapShader(layers[i],Shader.TileMode.REPEAT,Shader.TileMode.CLAMP);}
+        tilePaint.setAlpha(Math.round(255*alpha));
+        for(int i=0;i<layers.length;i++){
+            // Tile column n shows field position n/width; the field drifts by time*speed, so the repeating tile slides left by that fraction.
+            float[] L=LAYERS[i];float span=w*L[0],shift=time*L[1]+L[2];shift-=(float)Math.floor(shift);
+            tileMatrix.setScale(span/layers[i].getWidth(),h/BH);tileMatrix.postTranslate(-shift*span,0);tileShaders[i].setLocalMatrix(tileMatrix);
+            tilePaint.setShader(tileShaders[i]);c.drawRect(0,0,w,h,tilePaint);
+        }
+        tilePaint.setShader(null);
     }
-    private void render(float lx,float ly){
-        float[] f=field;int[] s=sky.sky;boolean sun=sky.sun;float thr=sky.threshold,op=sky.opacity,dark=sky.darkness,t=time;
+    /** Lights each layer as a horizontally seamless tile that repeats with filtering across the wrap. Runs off the main thread. */
+    private static Bitmap[] light(float[] f,MeridianSky sky,float t,float lx,float ly){
+        int[] s=sky.sky;boolean sun=sky.sun;float thr=sky.threshold,op=sky.opacity,dark=sky.darkness;
         int lit=sun?MeridianSky.mix(s[3],0xFFFFFFFF,.35f):0xFFC9BCEB,shadow=MeridianSky.mix(MeridianSky.mix(s[1],0xFF24163F,.35f+dark*.4f),s[0],.2f),mid=MeridianSky.mix(s[2],0xFFFFFFFF,.25f);
         if(!sun){lx=MOON_X;ly=MOON_Y/.62f;}
-        float[][] layers={{1f,.0000045f,0f,.85f},{1.7f,.0000105f,.37f,1f}};
-        for(int y=0;y<BH;y++){float v=y/(float)BH,mask=ss(0,.18f,v)*(1-ss(.7f,1,v));
-            for(int x=0;x<BW;x++){float u=x/(float)BW,dens=0,light=0;
-                if(mask>0)for(float[] L:layers){float uu=u/L[0]+t*L[1]+L[2],vv=v*.9f/L[0]+L[2]*.5f;float d=ss(thr,thr+.22f,sample(f,uu,vv))*mask;if(d<=0)continue;
+        Bitmap[] out=new Bitmap[LAYERS.length];
+        for(int li=0;li<LAYERS.length;li++){
+            float[] L=LAYERS[li];int tw=Math.round(BW*L[0]),width=tw;int[] px=new int[width*BH];float shift=t*L[1]+L[2];
+            for(int y=0;y<BH;y++){float v=y/(float)BH,mask=ss(0,.18f,v)*(1-ss(.7f,1,v));if(mask<=0)continue;float vv=v*.9f/L[0]+L[2]*.5f;
+                for(int x=0;x<width;x++){float uu=x/(float)tw,d=ss(thr,thr+.22f,sample(f,uu,vv))*mask,dens=d*L[3];if(dens<=.002f)continue;
+                    // Where this column sits on screen at time t, for the light direction and the silver lining.
+                    float u=uu-shift;u=(u-(float)Math.floor(u))*L[0];
                     float dx=lx-u,dy=ly-v,len=(float)Math.hypot(dx,dy);if(len==0)len=1;float k=.035f/L[0],occ=0;
                     for(int s2=1;s2<=3;s2++)occ+=ss(thr,thr+.22f,sample(f,uu+dx/len*k*s2,vv+dy/len*k*s2*.9f));
-                    float l=(float)Math.exp(-occ*.55f*(1+dark*1.4f)),a=d*L[3];light=light*(1-a)+l*a;dens=dens+a*(1-dens);}
-                int i=y*BW+x;if(dens<=.002f){pixels[i]=0;continue;}
-                float near=Math.max(0,1-(float)Math.hypot((u-lx)*1.4f,v-ly)*1.6f),edge=(1-dens)*near*(sun?1:.4f),l2=Math.min(1,light*.85f+edge*.9f),boost=(float)Math.pow(l2,1.6)*(sun?1:.45f),m=Math.min(1,light*1.2f);
-                int r=channel(shadow>>16,mid>>16,lit>>16,m,boost),g=channel(shadow>>8,mid>>8,lit>>8,m,boost),b=channel(shadow,mid,lit,m,boost);
-                int a=Math.max(0,Math.min(255,Math.round(255*Math.min(1,dens*op*(1.05f-edge*.3f)))));
-                pixels[i]=a<<24|r<<16|g<<8|b;
-            }}
-        clouds.setPixels(pixels,0,BW,0,0,BW,BH);
+                    float light=(float)Math.exp(-occ*.55f*(1+dark*1.4f));
+                    float near=Math.max(0,1-(float)Math.hypot((u-lx)*1.4f,v-ly)*1.6f),edge=(1-dens)*near*(sun?1:.4f),l2=Math.min(1,light*.85f+edge*.9f),boost=(float)Math.pow(l2,1.6)*(sun?1:.45f),m=Math.min(1,light*1.2f);
+                    int r=channel(shadow>>16,mid>>16,lit>>16,m,boost),g=channel(shadow>>8,mid>>8,lit>>8,m,boost),b=channel(shadow,mid,lit,m,boost);
+                    int a=Math.max(0,Math.min(255,Math.round(255*Math.min(1,dens*op*(1.05f-edge*.3f)))));
+                    px[y*width+x]=a<<24|r<<16|g<<8|b;
+                }}
+            out[li]=Bitmap.createBitmap(px,width,BH,Bitmap.Config.ARGB_8888);
+        }
+        return out;
     }
     private static int channel(int shadow,int mid,int lit,float m,float boost){float s=shadow&255,base=s+((mid&255)-s)*m;return Math.max(0,Math.min(255,Math.round(base+((lit&255)-base)*boost)));}
     private static float sample(float[] f,float u,float v){
@@ -172,21 +204,26 @@ final class MeridianBackdrop extends Drawable implements Runnable {
 
     private void details(Canvas c,int w,int h){
         boolean dark=ui.dark;int ink=dark?0xFFFFFAFF:0xFF5B35D5;
+        if(w!=gapW||h!=gapH){gapW=w;gapH=h;int tone=dark?0xFFC8B9EB:0xFF9682BE;beadShaders=new Shader[beads.length];
+            for(int i=0;i<beads.length;i++){float r=beads[i][2]*density;beadShaders[i]=new RadialGradient(-r*.3f,-r*.35f,r*1.3f,new int[]{AppUi.alpha(0xFFFFFFFF,dark?.22f:.55f),AppUi.alpha(ink,dark?.06f:.05f),AppUi.alpha(ink,dark?.10f:.08f)},new float[]{0,.6f,1},Shader.TileMode.CLAMP);}
+            mistShader=new RadialGradient(0,0,w*.7f,AppUi.alpha(tone,dark?.06f:.07f),tone&0x00FFFFFF,Shader.TileMode.CLAMP);
+            frostShader=new LinearGradient(0,h*.78f,0,h,0x00FFFFFF,AppUi.alpha(dark?0xFFE6E1FF:0xFFFFFFFF,dark?.10f:.55f),Shader.TileMode.CLAMP);
+            warmShader=new RadialGradient(0,0,w*.6f,AppUi.alpha(0xFFFFD6AA,dark?.05f:.18f),0x00FFD6AA,Shader.TileMode.CLAMP);}
         if(sky.kind==MeridianSky.RAIN){
             for(int i=0;i<beads.length;i++){float[] b=beads[i];float r=b[2]*density,x=b[0]*w,y=b[1]*h;
-                if(trailLength[i]>2){line.setColor(AppUi.alpha(ink,dark?.05f:.045f));line.setStrokeWidth(r*.9f);Path p=new Path();float[] t=trails[i];p.moveTo(t[0]*w,t[1]*h);for(int k=2;k<trailLength[i];k+=2)p.lineTo(t[k]*w,t[k+1]*h);c.drawPath(p,line);}
-                fill.setShader(new RadialGradient(x-r*.3f,y-r*.35f,r*1.3f,new int[]{AppUi.alpha(0xFFFFFFFF,dark?.22f:.55f),AppUi.alpha(ink,dark?.06f:.05f),AppUi.alpha(ink,dark?.10f:.08f)},new float[]{0,.6f,1},Shader.TileMode.CLAMP));c.drawCircle(x,y,r,fill);fill.setShader(null);}
+                if(trailLength[i]>2){line.setColor(AppUi.alpha(ink,dark?.05f:.045f));line.setStrokeWidth(r*.9f);trail.rewind();float[] t=trails[i];trail.moveTo(t[0]*w,t[1]*h);for(int k=2;k<trailLength[i];k+=2)trail.lineTo(t[k]*w,t[k+1]*h);c.drawPath(trail,line);}
+                fill.setShader(beadShaders[i]);c.save();c.translate(x,y);c.drawCircle(0,0,r,fill);c.restore();fill.setShader(null);}
         }
         if(sky.kind==MeridianSky.SNOW){
             for(float[] f:flakes){fill.setColor(AppUi.alpha(dark?0xFFFFFFFF:ink,dark?.18f:.12f));c.drawCircle(f[0]*w,f[1]*h,(1+f[2])*density,fill);}
-            fill.setShader(new LinearGradient(0,h*.78f,0,h,0x00FFFFFF,AppUi.alpha(dark?0xFFE6E1FF:0xFFFFFFFF,dark?.10f:.55f),Shader.TileMode.CLAMP));c.drawRect(0,h*.78f,w,h,fill);fill.setShader(null);
+            fill.setShader(frostShader);c.drawRect(0,h*.78f,w,h,fill);fill.setShader(null);
         }
         if(sky.kind==MeridianSky.RAIN||sky.kind==MeridianSky.CLOUDY&&sky.cover>.6f){
-            int tone=dark?0xFFC8B9EB:0xFF9682BE;
-            for(float[] m:mist){float cx=m[0]*w,cy=m[1]*h,rx=w*.7f,ry=h*.08f;fill.setShader(new RadialGradient(cx,cy,rx,AppUi.alpha(tone,dark?.06f:.07f),tone&0x00FFFFFF,Shader.TileMode.CLAMP));c.save();c.scale(1,ry/rx,cx,cy);c.drawCircle(cx,cy,rx,fill);c.restore();fill.setShader(null);}
+            fill.setShader(mistShader);
+            for(float[] m:mist){float rx=w*.7f,ry=h*.08f;c.save();c.translate(m[0]*w,m[1]*h);c.scale(1,ry/rx);c.drawCircle(0,0,rx,fill);c.restore();}fill.setShader(null);
         }
         if(sky.kind==MeridianSky.CLEAR){
-            if(sky.sun){float px=w*(.85f+(float)Math.sin(time*.0002)*.05f),py=h*.42f;fill.setShader(new RadialGradient(px,py,w*.6f,AppUi.alpha(0xFFFFD6AA,dark?.05f:.18f),0x00FFD6AA,Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,fill);fill.setShader(null);}
+            if(sky.sun){float px=w*(.85f+(float)Math.sin(time*.0002)*.05f),py=h*.42f;fill.setShader(warmShader);c.save();c.translate(px,py);c.drawRect(-px,-py,w-px,h-py,fill);c.restore();fill.setShader(null);}
             else for(float[] st:stars){if(st[1]<.3f)continue;fill.setColor(AppUi.alpha(0xFFE6DCFF,Math.max(0,.12f+.1f*(float)Math.sin(time*.0015+st[3]))));c.drawCircle(st[0]*w,.2f*h+st[1]*h*.9f,.8f*density,fill);}
         }
     }
