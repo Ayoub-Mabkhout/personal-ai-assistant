@@ -76,6 +76,23 @@ class MoneyDeliveryTests(unittest.TestCase):
         self.client.put('/v1/banking/summary', json=renewed, headers=self.owner)
         self.assertIsNone(self.client.get('/v1/banking/reminders/status', headers=self.owner).json()['projected'][0]['native_event_queued_at'])
 
+    def test_merchant_logo_is_immutable_cloud_asset_not_inline_summary(self):
+        import base64,struct
+        png=b'\x89PNG\r\n\x1a\n'+struct.pack('>I',13)+b'IHDR'+struct.pack('>II',16,16)+b'\x08\x06\0\0\0'+b'\0'*4
+        body={'merchant_logos':{'Example shop':'data:image/png;base64,'+base64.b64encode(png).decode()}}
+        self.assertEqual(self.client.put('/v1/banking/summary',json=body,headers=self.owner).status_code,200)
+        summary=self.client.get('/v1/banking/summary',headers=self.owner).json()['summary']
+        metadata=summary['merchant_logos']['Example shop'];identity=hashlib.sha256(png).hexdigest()
+        self.assertEqual(metadata['cache_id'],identity)
+        path='/groceries/v1/mobile/money/logos/'+identity
+        self.assertEqual(self.client.get(path).status_code,401)
+        response=self.client.get(path,headers=self.phone)
+        self.assertEqual(response.content,png)
+        self.assertIn('immutable',response.headers['cache-control'])
+        self.assertEqual(self.client.get(path+'x',headers=self.phone).status_code,404)
+        self.client.put('/v1/banking/summary',json={},headers=self.owner)
+        self.assertEqual(self.client.get(path,headers=self.phone).content,png)
+
     def test_conversation_pairing_owner_auth_and_idempotent_receipts(self):
         url = '/groceries/v1/mobile/money/conversations'
         body = {'id': 'question-0001', 'text': 'Why was this counted as spending?'}

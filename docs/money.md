@@ -129,3 +129,25 @@ Free-to-spend per day, a proportional category strip, and the leading category.
 Default: regular monthly income minus recurring costs, both decided by the auditor from history
 (irregular top-ups that cover several months are spread over those months), recalculated each
 period. The owner can pin a fixed amount instead.
+
+
+## Live specialist tools and merchant logos
+
+The persistent auditor receives a lease-scoped, local stdio MCP server on every
+run. `transactions_search` pages/searches all imported months;
+`transaction_annotations_write` saves descriptive edits atomically while preserving
+owner annotations and bank/accounting facts; `merchant_logo_fetch` downloads and
+caches a merchant website icon; `enhancement_status` verifies saved coverage.
+A question can use these tools directly, without asking the owner for IDs or
+waiting for a separately prepared enrichment list. Tool changes and the final reply
+use the same Money conversation. Private CLI traces are retained next to the ledger.
+
+Logo fetches send only a known merchant website domain to Google's favicon endpoint,
+not transaction/account data. Unknown domains remain unknown. Valid bounded PNGs
+and their domain/evidence/source are stored in the private laptop ledger. Publishing
+projects them into immutable SHA-256-addressed cloud assets and replaces inline bytes
+with `{cache_id, url}` metadata. Downloads require the normal paired-phone token.
+The phone prefetches twelve common merchants, fetches other visible marks on demand,
+verifies SHA-256 and bounded dimensions, then reuses its disk cache offline. New logos
+and changed logo hashes are data updates; they require no new APK. Existing bundled
+marks and monograms remain fallbacks. Cache storage is reclaimable Android cache.

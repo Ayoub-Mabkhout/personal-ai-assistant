@@ -1,0 +1,96 @@
+"""Live specialist tool contracts with an isolated ledger and fake logo provider."""
+import io
+import json
+import struct
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import test_money_enrichment as fixtures
+from personal_assistant.banking.tools import MoneyTools, logo_catalog, serve
+
+
+class MoneyToolTests(unittest.TestCase):
+    annotation = fixtures.MoneyEnrichmentTests.annotation
+    tearDown = fixtures.MoneyEnrichmentTests.tearDown
+    def setUp(self):
+        fixtures.MoneyEnrichmentTests.setUp(self)
+        self.ledger.enqueue('question', 'display-edit', {'text': 'Enhance every imported transaction'})
+        self.token, self.jobs, self.session = self.ledger.claim_jobs(kind='question')
+        self.tools = MoneyTools(self.ledger, self.token)
+
+    def test_search_pagination_and_live_edits_preserve_bank_and_decisions(self):
+        page = self.tools.call('transactions_search', {'limit': 1, 'missing_only': True})
+        self.assertEqual((page['total'], page['next_offset']), (2, 1))
+        before = {r['id']:r for r in self.ledger.transactions()}
+        result = self.tools.call('transaction_annotations_write', {'items': [self.annotation()]})
+        self.assertEqual(result['saved'], 1)
+        self.assertEqual(self.tools.call('enhancement_status', {})['missing'], 1)
+        after = {r['id']:r for r in self.ledger.transactions()}
+        for key in ('raw', 'amount_cents', 'day', 'category', 'counts', 'by'):
+            self.assertEqual(before['test:dm'][key], after['test:dm'][key])
+
+    def test_failed_batch_is_atomic_and_owner_annotation_wins(self):
+        with self.assertRaises(ValueError):
+            self.tools.call('transaction_annotations_write', {'items': [self.annotation(), self.annotation('test:unknown')]})
+        self.assertEqual(self.tools.call('enhancement_status', {})['missing'], 2)
+        self.ledger.annotate('test:dm', self.annotation(), 'owner')
+        result = self.tools.call('transaction_annotations_write', {'items': [self.annotation() | {'display_title':'Replacement'}]})
+        self.assertEqual(result['owner_annotations_preserved'], 1)
+
+    def test_stale_lease_cannot_read_write_or_fetch(self):
+        self.ledger.release_claim(self.token)
+        for name,args in [('transactions_search',{}),('transaction_annotations_write',{'items':[self.annotation()]}),
+                          ('merchant_logo_fetch',{'merchant_name':'dm','domain':'dm.de','evidence':'Known brand'})]:
+            with self.assertRaisesRegex(ValueError,'lease'):
+                self.tools.call(name,args)
+
+    def test_logo_cached_with_provenance_and_bounded_image(self):
+        png = b'\x89PNG\r\n\x1a\n'+struct.pack('>I',13)+b'IHDR'+struct.pack('>II',16,16)+b'\x08\x06\0\0\0'+b'\0'*4
+        urls=[]
+        self.tools.fetch=lambda url: urls.append(url) or png
+        args={'merchant_name':'dm','domain':'dm.de','evidence':'Known merchant website'}
+        self.assertFalse(self.tools.call('merchant_logo_fetch',args)['cached'])
+        self.assertTrue(self.tools.call('merchant_logo_fetch',args)['cached'])
+        self.assertEqual(len(urls),1)
+        self.assertIn('dm',logo_catalog(self.ledger))
+        self.assertNotIn('test:',urls[0])
+        self.tools.fetch=lambda url: b'<html>not a logo</html>'
+        with self.assertRaises(ValueError):
+            self.tools.call('merchant_logo_fetch',{**args,'merchant_name':'Unknown','domain':'unknown.example'})
+        with self.assertRaises(ValueError):
+            self.tools.call('merchant_logo_fetch',{**args,'domain':'https://localhost/private'})
+
+    def test_stdio_initialization_and_tool_call(self):
+        source=io.StringIO('\n'.join(json.dumps(r) for r in [
+            {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2024-11-05'}},
+            {'jsonrpc':'2.0','method':'notifications/initialized'},
+            {'jsonrpc':'2.0','id':2,'method':'tools/list'},
+            {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'enhancement_status','arguments':{}}}]))
+        target=io.StringIO();serve(self.tools,source,target)
+        responses=[json.loads(line) for line in target.getvalue().splitlines()]
+        self.assertEqual([r['id'] for r in responses],[1,2,3])
+        self.assertEqual(len(responses[1]['result']['tools']),4)
+        self.assertFalse(responses[2]['result']['isError'])
+
+    def test_mcp_overrides_are_global_before_exec_resume(self):
+        from personal_assistant.banking.agent import _run
+        captured=[]
+        class Process:
+            pid=123;returncode=0
+            def __init__(self,args,**kwargs):
+                captured.append(args)
+                Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(
+                    {'decisions':[],'insights':[],'replies':[],'enrichments':[],'category_ops':[]}))
+            def communicate(self,*args,**kwargs):return b'',b''
+        with patch('personal_assistant.banking.agent.subprocess.Popen',Process):
+            _run('Offline',{'codex':'codex','_money_tool_ledger':str(self.path),'_money_tool_lease':self.token},'same-session')
+        args=captured[0]
+        positions=[i for i,value in enumerate(args) if value.startswith('mcp_servers.money.')]
+        self.assertTrue(positions)
+        self.assertTrue(all(i<args.index('exec') for i in positions))
+        self.assertNotIn('-c',args[args.index('exec')+1:])
+        self.assertEqual(args[args.index('resume')+1],'same-session')
+
+
+if __name__=='__main__':unittest.main()

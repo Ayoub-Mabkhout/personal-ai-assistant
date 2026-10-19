@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import sys
 
 from .ledger import KINDS, annotation_public, summarise
 from .merchants import BRAND_CATALOG
@@ -17,7 +18,19 @@ class SessionUnavailable(RuntimeError):
     pass
 
 
-INSTRUCTIONS = """You are the owner's personal financial auditor. You have no tools.
+INSTRUCTIONS = """You are the owner's personal financial auditor. Your Money MCP tools have live ledger access.
+Use transactions_search to find ANY imported transaction, not just the recent context below.
+Use transaction_annotations_write to actually SAVE requested display titles, merchant names, notes and tags.
+Use merchant_logo_fetch to fetch and cache real merchant icons using known brand website domains.
+Logos match the saved merchant_name independently of the small bundled brand catalog. Do not claim this
+interface lacks editing or logo support. Do not ask the owner to provide IDs: search them yourself.
+For an all-transactions enhancement request, page through ALL missing transactions, save in batches,
+fetch recognizable company logos once per merchant, then verify enhancement_status before reporting done.
+Use evidence from descriptions (e.g. generic card settlement headers) and owner-confirmed merchant aliases.
+For fuel stations with tobacco evidence, say tobacco, not petrol. Unknown purchases remain explicitly unknown.
+Never equate generic store purchases with specific items without evidence. Keep titles concise; notes add context.
+If you used the write tool, leave enrichments empty in the final JSON to avoid duplicate writes. Give requested
+question replies only after the corresponding requested work has completed; report exact saved counts and failures.
 Use dated evidence, provenance and owner corrections. Treat uncertainty explicitly.
 Never invent bank transactions or a cash repayment. Internal transfers and duplicates
 do not count as spending. Reimbursements and refunds offset linked spending.
@@ -146,14 +159,23 @@ def _run(prompt, config, session=None, on_start=None):
         (root / 'schema.json').write_text(json.dumps(SCHEMA), encoding='utf-8')
         executable = _codex(config)
         prefix = [config.get('node', 'node'), executable] if Path(executable).suffix == '.js' else [executable]
-        args = prefix + ['exec'] + (['resume', session] if session else []) + [
-            '--json', '--ignore-user-config', '--skip-git-repo-check', '--disable', 'shell_tool',
-            '--disable', 'apps', '--disable', 'multi_agent', '-c', 'sandbox_mode="read-only"',
-            '-c', 'approval_policy="never"', '-m', config.get('banking_model', MODEL),
-            '-c', 'developer_instructions=' + json.dumps(INSTRUCTIONS),
+        overrides = ['--disable', 'shell_tool', '--disable', 'apps', '--disable', 'multi_agent',
+                     '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"',
+                     '-c', 'developer_instructions=' + json.dumps(INSTRUCTIONS)]
+        if config.get('_money_tool_lease'):
+            settings = {'command': sys.executable,
+                        'env.PYTHONPATH': str(Path(__file__).resolve().parents[2]),
+                        'args': ['-m', 'personal_assistant.banking.tools', '--ledger', str(config['_money_tool_ledger'])],
+                        'required': True, 'startup_timeout_sec': 20, 'tool_timeout_sec': 90,
+                        'default_tools_approval_mode': 'approve'}
+            for key, value in settings.items():
+                overrides += ['-c', 'mcp_servers.money.' + key + '=' + json.dumps(value)]
+        args = prefix + overrides + ['exec'] + (['resume', session] if session else []) + [
+            '--json', '--ignore-user-config', '--skip-git-repo-check', '-m', config.get('banking_model', MODEL),
             '--output-schema', str(root / 'schema.json'), '--output-last-message', str(root / 'answer.json'), '-']
         env = {k: v for k, v in os.environ.items() if not k.startswith(('ASSISTANT_', 'OPENAI_', 'OCI_'))
                and k != 'CODEX_API_KEY'}
+        env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])
         process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    cwd=root, env=env,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
@@ -171,6 +193,12 @@ def _run(prompt, config, session=None, on_start=None):
                 except ProcessLookupError: pass
             process.wait(timeout=15)
             raise
+        if config.get('_money_tool_ledger'):
+            traces = Path(config['_money_tool_ledger']).parent / 'audit-traces'
+            traces.mkdir(parents=True, exist_ok=True)
+            stem = str(config['_money_tool_lease'])
+            (traces / (stem + '.jsonl')).write_bytes(stdout)
+            (traces / (stem + '.stderr.txt')).write_bytes(stderr)
         events = []
         for line in stdout.decode('utf-8', 'replace').splitlines():
             try: events.append(json.loads(line))
@@ -182,7 +210,7 @@ def _run(prompt, config, session=None, on_start=None):
             if session and 'session' in diagnostic and any(term in diagnostic for term in
                     ('not found', 'unknown', 'could not load', 'failed to load', 'does not exist')):
                 raise SessionUnavailable('Saved auditor session is unavailable')
-            raise RuntimeError('Codex auditor failed; no decisions applied. Exit code %s.' % process.returncode)
+            raise RuntimeError('Codex auditor failed; completed tool edits remain saved for retry. Exit code %s.' % process.returncode)
         answer = json.loads((root / 'answer.json').read_text(encoding='utf-8'))
         if not isinstance(answer, dict) or any(key not in answer for key in ('decisions', 'insights', 'replies')):
             raise ValueError('Auditor returned an incomplete response')
@@ -216,7 +244,8 @@ def audit(ledger, config, today=None, ask=ask, notes='', job_kind=None, max_batc
         thread.start()
         try:
             prompt = prompt_for(ledger, jobs, today, config, notes)
-            result = ask(prompt, config, session, lambda pid: ledger.set_claim_process(token, pid))
+            call_config = {**config, '_money_tool_ledger': str(ledger.path), '_money_tool_lease': token}
+            result = ask(prompt, call_config, session, lambda pid: ledger.set_claim_process(token, pid))
             answer, next_session = result if isinstance(result, tuple) else (result, session)
             decisions = []
             for item in answer['decisions']:

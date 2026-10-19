@@ -9,6 +9,8 @@ collect. No transaction history is kept here beyond what that summary shows.
 from contextlib import contextmanager
 from datetime import date, datetime, time as day_time, timedelta
 import hashlib
+import base64
+import struct
 import html
 import json
 import logging
@@ -19,7 +21,7 @@ import threading
 import time
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 STATE = r'^[A-Za-z0-9_-]{16,64}$'
@@ -78,7 +80,8 @@ class Banking:
                 due REAL NOT NULL,expires REAL NOT NULL,accepted REAL,attempts INTEGER NOT NULL DEFAULT 0,
                 retry_after REAL NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,text TEXT NOT NULL,created REAL NOT NULL,
-                collected REAL,answer TEXT,answered REAL);''')
+                collected REAL,answer TEXT,answered REAL);
+            CREATE TABLE IF NOT EXISTS merchant_logo_assets(id TEXT PRIMARY KEY,png BLOB NOT NULL);''')
         db.close()
 
     @contextmanager
@@ -93,6 +96,17 @@ class Banking:
             raise
         finally:
             db.close()
+
+    def logo(self, identity):
+        if not re.fullmatch(r'[a-f0-9]{64}', identity):
+            raise HTTPException(404, 'Logo not found')
+        with self.db() as db:
+            row = db.execute('SELECT png FROM merchant_logo_assets WHERE id=?', (identity,)).fetchone()
+        if not row:
+            raise HTTPException(404, 'Logo not found')
+        return Response(row[0], media_type='image/png', headers={
+            'Cache-Control': 'private, max-age=31536000, immutable', 'ETag': '"'+identity+'"',
+            'X-Content-Type-Options': 'nosniff'})
 
     def expect(self, state):
         now = self.clock()
@@ -122,6 +136,27 @@ class Banking:
         return {'status': 'error', 'error': row[1]} if row[1] or not row[0] else {'status': 'returned', 'code': row[0]}
 
     def publish(self, body):
+        body = dict(body)
+        assets = {}
+        logos = body.get('merchant_logos', {})
+        if not isinstance(logos, dict) or len(logos) > 256:
+            raise ValueError('Invalid merchant logo catalog')
+        descriptors = {}
+        for merchant, value in logos.items():
+            if not isinstance(merchant, str) or not 1 <= len(merchant) <= 120 or not isinstance(value, str) or not value.startswith('data:image/png;base64,') or len(value) > 44000:
+                raise ValueError('Invalid cached merchant logo')
+            try:
+                png = base64.b64decode(value[22:], validate=True)
+                if len(png) > 32768 or len(png) < 33 or png[:8] != b'\x89PNG\r\n\x1a\n' or png[12:16] != b'IHDR': raise ValueError()
+                width, height = struct.unpack('>II', png[16:24])
+                if not 8 <= width <= 256 or not 8 <= height <= 256: raise ValueError()
+            except (ValueError, struct.error):
+                raise ValueError('Invalid PNG merchant logo') from None
+            identity = hashlib.sha256(png).hexdigest()
+            assets[identity] = png
+            descriptors[merchant] = {'cache_id': identity, 'url': '/groceries/v1/mobile/money/logos/' + identity}
+        if 'merchant_logos' in body:
+            body['merchant_logos'] = descriptors
         text = json.dumps(body, separators=(',', ':'), ensure_ascii=False)
         if len(text.encode('utf-8')) > SUMMARY_LIMIT:
             raise ValueError('Summary is too large.')
@@ -149,6 +184,7 @@ class Banking:
                 projected[bank] = (expiry, due, end)
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO summary VALUES(1,?,?)', (text, self.clock()))
+            db.executemany('INSERT OR IGNORE INTO merchant_logo_assets VALUES(?,?)', assets.items())
             if projected is not None:
                 for bank, (expiry, due, end) in projected.items():
                     db.execute('''INSERT INTO consent_reminders(bank,valid_until,due,expires) VALUES(?,?,?,?)
@@ -366,6 +402,11 @@ def banking_router(banking, submit, device, owner_auth=None):
         authorize(request, authorization)
         return JSONResponse(banking.summary(), headers={'Cache-Control': 'private, no-store'})
 
+    @owner_view.get('/logos/{identity}')
+    def owner_logo(identity: str, request: Request, authorization: str | None = Header(default=None)):
+        authorize(request, authorization)
+        return banking.logo(identity)
+
     @owner_view.get('/reminders/status')
     def reminder_status(request: Request, authorization: str | None = Header(default=None)):
         authorize(request, authorization)
@@ -414,6 +455,10 @@ def banking_router(banking, submit, device, owner_auth=None):
     @phone.get('')
     def summary():
         return JSONResponse(banking.summary(), headers={'Cache-Control': 'private, no-store'})
+
+    @phone.get('/logos/{identity}')
+    def phone_logo(identity: str):
+        return banking.logo(identity)
 
     @phone.post('/answers')
     def answer(body: Answer):

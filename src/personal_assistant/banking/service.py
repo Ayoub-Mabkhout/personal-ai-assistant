@@ -221,6 +221,8 @@ def publish(relay, ledger, today=None, transaction_cursor=None, page_size=TRANSA
     summary['transactions_page'] = {'limit': page_size, 'returned': len(selected),
                                     'has_more': next_cursor is not None, 'next_cursor': next_cursor}
     summary['months'] = history(ledger, date.fromisoformat(start))
+    from .tools import logo_catalog
+    summary['merchant_logos'] = logo_catalog(ledger)
     summary['generated'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
     encoded_size = len(json.dumps(summary, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
     if encoded_size > SUMMARY_LIMIT:

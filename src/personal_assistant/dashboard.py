@@ -281,6 +281,7 @@ def create_app(config):
         try:
             from .banking.ledger import Ledger, summarise
             from .banking.service import history
+            from .banking.tools import logo_catalog
             ledger=Ledger(money_path)
             current=summarise(ledger)
             current_start=current['period']['start']
@@ -330,6 +331,7 @@ def create_app(config):
         regular_income=value.get('regular_income_cents',value.get('income_cents',0))
         free=value.get('free_to_spend_cents',value.get('free_cents',(value.get('allowance') or {}).get('amount_cents',0)))
         return {**value,'available':True,'months':months,'current_start':current_start,
+                'merchant_logos':logo_catalog(ledger),
                 'historical':historical,'total_spent_cents':total_spent_cents,'categories':sorted(({'name':k,'cents':v} for k,v in categories.items()),key=lambda x:-x['cents']),
                 'fixed_costs':[{'name':k,'cents':v} for k,v in fixed_costs.items()],
                 'fixed_cents':sum(fixed_costs.values()),'regular_income_cents':regular_income,'free_cents':free,

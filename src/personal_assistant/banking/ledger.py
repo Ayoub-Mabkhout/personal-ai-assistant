@@ -126,6 +126,8 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS transaction_annotations(id TEXT PRIMARY KEY,display_title TEXT NOT NULL,
                 merchant_name TEXT NOT NULL,merchant_brand_id TEXT,annotation_note TEXT NOT NULL,tags TEXT NOT NULL,
                 confidence REAL NOT NULL,evidence TEXT NOT NULL,by TEXT NOT NULL,at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS merchant_logos(merchant_name TEXT PRIMARY KEY,domain TEXT NOT NULL,
+                data_uri TEXT NOT NULL,evidence TEXT NOT NULL,source_url TEXT NOT NULL,at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS categories(name TEXT PRIMARY KEY,emoji TEXT,grp TEXT NOT NULL DEFAULT 'elective',
                 description TEXT NOT NULL DEFAULT '',budget_cents INTEGER,suggested_budget_cents INTEGER,
                 by TEXT NOT NULL DEFAULT 'ai',created REAL NOT NULL,updated REAL NOT NULL);
@@ -307,7 +309,9 @@ class Ledger:
             if jobs and all(j['kind'] == 'enrichment' for j in jobs) and (decisions or category_ops):
                 raise ValueError('Display enrichment cannot change accounting decisions')
             requested = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'enrichment'}
-            if requested - {item['id'] for item in enrichments}:
+            saved_by_tools = {r['id'] for r in db.execute(
+                'SELECT id FROM transaction_annotations WHERE at>=?', (min((j['created'] for j in jobs), default=self.clock()),))}
+            if requested - {item['id'] for item in enrichments} - saved_by_tools:
                 raise ValueError('Auditor response omitted a requested enrichment')
             allowed_annotations = requested | {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'transaction'}
             for item in enrichments:
