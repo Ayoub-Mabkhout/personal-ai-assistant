@@ -306,14 +306,18 @@ class Ledger:
             state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
             if state['lease_token'] != token or state['lease_until'] <= self.clock():
                 raise RuntimeError('Audit lease expired; response discarded')
+            # Automatic follow-ups ("authority": "auto") are best effort; owner-requested batches are strict.
+            explicit = [j for j in jobs if j['kind'] == 'enrichment' and json.loads(j['payload']).get('authority') != 'auto']
             if jobs and all(j['kind'] == 'enrichment' for j in jobs) and (decisions or category_ops):
-                raise ValueError('Display enrichment cannot change accounting decisions')
-            requested = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'enrichment'}
+                if explicit:
+                    raise ValueError('Display enrichment cannot change accounting decisions')
+                decisions, category_ops = [], []
+            requested = {json.loads(j['payload'])['id'] for j in explicit}
             saved_by_tools = {r['id'] for r in db.execute(
                 'SELECT id FROM transaction_annotations WHERE at>=?', (min((j['created'] for j in jobs), default=self.clock()),))}
             if requested - {item['id'] for item in enrichments} - saved_by_tools:
                 raise ValueError('Auditor response omitted a requested enrichment')
-            allowed_annotations = requested | {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'transaction'}
+            allowed_annotations = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] in ('enrichment', 'transaction')}
             for item in enrichments:
                 if item['id'] not in allowed_annotations:
                     raise ValueError('Unrequested transaction enrichment')
@@ -356,6 +360,14 @@ class Ledger:
                             item.get('reasoning'), item.get('confidence'), item.get('question'), by,
                             item.get('recurring'), item.get('monthly_cents'), item.get('coverage_months'),
                             item.get('series_key'), db, enqueue_owner=not bool(review))
+            # Every transaction is enhanced the moment the auditor first sees it. One automatic follow-up is
+            # queued for any it decided without an enhancement; the stable key means it is never queued twice.
+            for job in jobs:
+                identity = json.loads(job['payload']).get('id')
+                if job['kind'] == 'transaction' and identity and not db.execute(
+                        'SELECT 1 FROM transaction_annotations WHERE id=?', (identity,)).fetchone() and db.execute(
+                        'SELECT 1 FROM transactions WHERE id=? AND gone IS NULL', (identity,)).fetchone():
+                    self._enqueue(db, 'enrichment', 'auto:' + identity, {'id': identity, 'authority': 'auto'}, self.clock())
             for reply in replies:
                 seq = reply.get('job_seq')
                 if seq in {j['seq'] for j in jobs if j['kind'] in ('question', 'explanation')}:

@@ -74,6 +74,14 @@ confidence, evidence and author. Neither annotations nor logos alter the amount,
 date, bank wording or financial classification. Owner annotations take precedence
 over later auditor suggestions, independently of owner accounting decisions.
 
+Every transaction is enhanced the moment the auditor first sees it: the answer that
+decides a new transaction also carries its enhancement, and the auditor fetches the
+logo of any recognisable merchant missing from `cached_logo_merchants` in the prompt.
+If a transaction is decided without an enhancement, one automatic `enrichment` job
+(`authority: auto`, key `auto:ID`) is queued. It is best effort: an answer that
+still omits it completes without blocking accounting, accounting changes in it are
+ignored, and the stable key means it is never queued twice.
+
 The same persistent auditor can enrich a bounded selection without re-auditing it:
 
 ```sh

@@ -53,6 +53,10 @@ transaction into another category) or delete (only with into, or when unused) ca
 suggested_budget_cents for elective envelopes from the owner's actual pattern. Never touch categories marked
 by=owner, and never set a real budget; the owner does. Prefer renaming or merging over churn so envelopes
 stay comparable month to month. Every decision's category must exist in the catalogue after your ops.
+Enhance every transaction the moment you see it: for each transaction job, return its enrichment in the
+same answer as its decision (or save it with transaction_annotations_write), unless an owner annotation
+exists. When its merchant is a recognisable company missing from cached_logo_merchants, fetch that logo
+once with merchant_logo_fetch using the brand's official domain; never guess for people or unknown shops.
 Enrichment jobs are display-only: return an enrichment for every requested ID and no accounting
 or category changes for an enrichment-only batch. You may annotate an owner-decided row without
 changing its financial decision. Preserve bank counterparty, description, amount and date. Write
@@ -114,6 +118,11 @@ def totals(ledger, today):
             'categories': summary['categories'], 'fixed_costs': summary['fixed_costs']}
 
 
+def _logos(ledger):
+    from .tools import logo_catalog  # tools imports this module's schemas, so import it lazily
+    return sorted(logo_catalog(ledger))
+
+
 def prompt_for(ledger, jobs, today, config, notes):
     rows = ledger.transactions(include_gone=True)
     by_id = {row['id']: row for row in rows}
@@ -135,7 +144,7 @@ def prompt_for(ledger, jobs, today, config, notes):
              'category_catalog': [{k: c[k] for k in ('name', 'emoji', 'grp', 'description', 'suggested_budget_cents', 'budget_cents', 'by', 'uses')}
                                   for c in ledger.categories()],
              'owner_corrections': ledger.corrections(), 'recent_decided': recent,
-             'brand_catalog': BRAND_CATALOG,
+             'brand_catalog': BRAND_CATALOG, 'cached_logo_merchants': _logos(ledger),
              'transactions_for_enrichment': [compact(by_id[json.loads(j['payload'])['id']]) for j in jobs
                  if j['kind'] == 'enrichment' and json.loads(j['payload'])['id'] in by_id],
              'evidence_window': {'start': window_start.isoformat(), 'end': window_end.isoformat()},

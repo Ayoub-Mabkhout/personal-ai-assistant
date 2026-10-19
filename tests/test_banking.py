@@ -30,6 +30,11 @@ def raw(reference, amount, debit, day, name='', status='BOOK', text='', iban='')
 raw_tx = raw
 
 
+def enhanced(identity):
+    return {'id': identity, 'display_title': 'Card payment', 'merchant_name': 'Shop', 'merchant_brand_id': None,
+            'annotation_note': 'Card payment; items unknown.', 'tags': [], 'confidence': .8, 'evidence': 'Bank counterparty.'}
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -95,7 +100,7 @@ class LedgerTests(unittest.TestCase):
         claim, jobs, session = self.ledger.claim_jobs()
         decision = {'id': 'rv:review', 'kind': 'expense', 'category': 'Groceries', 'counts': True,
                     'linked': [], 'reasoning': 'Owner confirmed food', 'confidence': 1, 'question': ''}
-        self.ledger.finish_claim(claim, jobs, 'same-auditor', [decision], [], [])
+        self.ledger.finish_claim(claim, jobs, 'same-auditor', [decision], [], [], enrichments=[enhanced('rv:review')])
         row = self.ledger.transactions()[0]
         self.assertEqual((row['category'], row['by'], row['question']), ('Groceries', 'owner', None))
         self.assertEqual(self.ledger.jobs(), [])  # No model acknowledgement loop.
@@ -187,6 +192,28 @@ class LedgerTests(unittest.TestCase):
         self.ledger.set_setting('allowance', {'amount_cents': 120000, 'start_day': 1, 'period': 'month'})
         self.assertEqual(summarise(self.ledger, date(2026, 10, 18))['remaining_cents'], 116000)
 
+    def test_new_transactions_are_enhanced_when_first_seen_with_one_automatic_follow_up(self):
+        self.ledger.store('rv', [raw('one', '5', True, '2026-10-01', 'Cafe')], '2026-10-01')
+        token, jobs, _ = self.ledger.claim_jobs()
+        decision = {'id': 'rv:one', 'kind': 'expense', 'category': 'Eating out', 'counts': True,
+                    'linked': [], 'reasoning': 'Cafe', 'confidence': 0.9, 'question': ''}
+        # Decided without an enhancement: exactly one best-effort follow-up is queued.
+        self.ledger.finish_claim(token, jobs, 'session-1', [decision], [], [])
+        pending = self.ledger.jobs()
+        self.assertEqual([(j['kind'], json.loads(j['payload'])) for j in pending], [('enrichment', {'id': 'rv:one', 'authority': 'auto'})])
+        token, jobs, _ = self.ledger.claim_jobs()
+        # A follow-up that still returns nothing completes without blocking and is never queued again;
+        # any accounting change it carries is ignored.
+        self.ledger.finish_claim(token, jobs, 'session-1', [dict(decision, category='Groceries')], [], [])
+        self.assertEqual(self.ledger.jobs(), [])
+        self.assertEqual(self.ledger.transactions()[0]['category'], 'Eating out')
+        # An enhancement returned with the decision needs no follow-up.
+        self.ledger.store('rv', [raw('two', '7', True, '2026-10-02', 'Bakery')], '2026-10-01')
+        token, jobs, _ = self.ledger.claim_jobs()
+        self.ledger.finish_claim(token, jobs, 'session-1', [dict(decision, id='rv:two')], [], [], enrichments=[enhanced('rv:two')])
+        self.assertEqual(self.ledger.jobs(), [])
+        self.assertEqual({r['id']: r['display_title'] for r in self.ledger.transactions()}['rv:two'], 'Card payment')
+
     def test_queue_fence_replay_and_question_response(self):
         self.ledger.store('rv', [raw('one', '5', True, '2026-10-01', 'Cafe')], '2026-10-01')
         question = service.ask_question(self.ledger, 'request-1', 'Explain this month')
@@ -197,7 +224,8 @@ class LedgerTests(unittest.TestCase):
         decision = {'id': 'rv:one', 'kind': 'expense', 'category': 'Eating out', 'counts': True,
                     'linked': [], 'reasoning': 'Cafe', 'confidence': 0.9, 'question': '',
                     'recurring': False, 'monthly_cents': None, 'coverage_months': [], 'series_key': None}
-        self.ledger.finish_claim(token, jobs, 'session-1', [decision], [], [{'job_seq': question, 'text': 'One cafe payment.'}])
+        self.ledger.finish_claim(token, jobs, 'session-1', [decision], [], [{'job_seq': question, 'text': 'One cafe payment.'}],
+                                 enrichments=[enhanced('rv:one')])
         self.assertEqual(self.ledger.audit_output(question), 'One cafe payment.')
         self.assertIsNone(self.ledger.claim_jobs())
         self.ledger.decide('rv:one', 'expense', 'Eating out', True, [], 'Owner correction', 1, '', 'owner')

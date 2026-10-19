@@ -303,6 +303,11 @@ class MoneyDeliveryTests(unittest.TestCase):
                                     'confidence': 0.98, 'question': '', 'recurring': False,
                                     'monthly_cents': None, 'coverage_months': [], 'series_key': None}
                                    for row in payload['transactions_for_review']],
+                     # Each transaction is enhanced in the same answer that decides it.
+                     'enrichments': [{'id': row['id'], 'display_title': 'Groceries at Market', 'merchant_name': 'Market',
+                                      'merchant_brand_id': None, 'annotation_note': 'Grocery purchase; items unknown.',
+                                      'tags': ['groceries'], 'confidence': .9, 'evidence': 'Counterparty Market, remittance Groceries.'}
+                                     for row in payload['transactions_for_review']],
                      'insights': [], 'replies': [{'job_seq': job['seq'],
                                                  'text': 'It was a grocery purchase, so it counts as elective spending.'}]},
                     'synthetic-codex-session')
