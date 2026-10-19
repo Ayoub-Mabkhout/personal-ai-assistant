@@ -6,7 +6,7 @@ import secrets
 import time
 
 from .enablebanking import EnableBanking
-from .ledger import KINDS, Ledger, public, summarise
+from .ledger import KINDS, Ledger, decision_version, public, summarise
 
 BANKS = {'deutsche-bank': ('Deutsche Bank', 'DE'), 'revolut': ('Revolut', 'DE')}
 UNATTENDED_PER_DAY = 4  # PSD2 limit on fetches without the owner present
@@ -96,7 +96,26 @@ def settle(relay, ledger):
     rows = {r['id']: r for r in ledger.transactions(include_gone=True)}
     applied = 0
     for item in sorted(answers, key=lambda a: a['sequence']):
-        if item['transaction'] in rows and answer(ledger, rows[item['transaction']], item['choice'], item.get('note', ''),
+        if item['choice'] in ('correct', 'clarify'):
+            row = rows.get(item['transaction'])
+            key = 'relay:' + str(item.get('id') or item['sequence'])
+            with ledger.db() as db:
+                previous = db.execute("SELECT payload FROM audit_jobs WHERE kind='owner_answer' AND job_key=?", (key,)).fetchone()
+            if previous:
+                saved = json.loads(previous['payload'])
+                if any(saved.get(k) != v for k, v in {'id': item['transaction'], 'choice': item['choice'], 'note': item.get('note', '')}.items()):
+                    raise ValueError('Owner review ID already has different evidence')
+            else:
+                ledger.enqueue('owner_answer', key,
+                           {'id': item['transaction'], 'choice': item['choice'], 'note': item.get('note', ''),
+                            'authority': 'review_interpretation',
+                            'decision_at': row.get('decided') if row else None,
+                            'decision_version': decision_version(row) if row else None,
+                            'question': row.get('question') if row else None,
+                            'reasoning': row.get('reasoning') if row else None,
+                            'evidence': {key: row.get(key) for key in ('day', 'amount_cents', 'counterparty', 'description', 'kind', 'category')} if row else None})
+            applied += 1
+        elif item['transaction'] in rows and answer(ledger, rows[item['transaction']], item['choice'], item.get('note', ''),
                                                     event_key='relay:' + str(item.get('id') or item['sequence'])):
             applied += 1
         else:

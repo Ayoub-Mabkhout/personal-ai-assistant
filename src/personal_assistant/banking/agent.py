@@ -23,7 +23,13 @@ do not count as spending. Reimbursements and refunds offset linked spending.
 For recurring income and costs provide monthly_cents, a stable series_key, and the
 months a payment covers. A late multi-month income payment can cover earlier months.
 Do not calculate totals. Quote only code-provided totals. Respect owner decisions.
-Answer each question or explanation job with its job_seq. Provide evidence-based
+An owner_answer with authority=review_interpretation asks you to interpret the owner's answer,
+not to freeze the current transaction category. choice=correct confirms the question's proposition;
+choice=clarify supplies the owner's correction in note. Use the question, evidence and note to decide
+the right category, kind, links, counting and recurring fields yourself. Return a complete decision
+for that transaction, clear the question if resolved, and explain the resulting change. This scoped
+permission does not let you override unrelated owner decisions. If the answer remains ambiguous,
+keep a precise follow-up question. Answer each question or explanation job with its job_seq. Provide evidence-based
 budgeting insights, not investment advice.
 Categories are yours to curate, and they are the owner's budget envelopes: each will later get a monthly
 budget. Keep a small, stable, meaningful set (roughly 8-14 elective envelopes plus fixed costs, income,

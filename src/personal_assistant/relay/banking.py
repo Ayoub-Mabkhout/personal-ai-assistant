@@ -38,7 +38,7 @@ class Answer(BaseModel):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
     transaction: str = Field(min_length=1, max_length=200)
     choice: str = Field(min_length=1, max_length=60)
-    note: str = Field(default='', max_length=500)
+    note: str = Field(default='', max_length=4000)
 
 
 class Ack(BaseModel):
@@ -242,10 +242,15 @@ class Banking:
             raise HTTPException(404, 'Conversation not found.')
         return dict(zip(('id', 'text', 'created', 'answer', 'answered'), row))
 
-    def conversations(self, limit=50):
+    def conversations(self, limit=50, before=None):
         with self.db() as db:
-            rows = db.execute('SELECT id FROM conversations ORDER BY created DESC,id DESC LIMIT ?', (limit,)).fetchall()
-        return {'items': [self.conversation(row[0]) for row in rows]}
+            boundary = db.execute('SELECT created,id FROM conversations WHERE id=?', (before,)).fetchone() if before else None
+            if before and not boundary:
+                raise HTTPException(422, 'Invalid conversation cursor.')
+            rows = db.execute('SELECT id FROM conversations '+('WHERE (created,id)<(?,?) ' if boundary else '')+
+                              'ORDER BY created DESC,id DESC LIMIT ?', (*tuple(boundary), limit+1) if boundary else (limit+1,)).fetchall()
+        return {'items': [self.conversation(row[0]) for row in rows[:limit]],
+                'next_cursor': rows[limit-1][0] if len(rows)>limit else ''}
 
     def pending_conversations(self):
         with self.db() as db:
@@ -415,8 +420,8 @@ def banking_router(banking, submit, device, owner_auth=None):
         return banking.answer(body)
 
     @phone.get('/conversations')
-    def phone_conversations():
-        return banking.conversations()
+    def phone_conversations(before: str | None = Query(default=None, pattern=r'^[A-Za-z0-9_-]{8,64}$')):
+        return banking.conversations(before=before)
 
     @phone.post('/conversations')
     def phone_question(body: ConversationQuestion):

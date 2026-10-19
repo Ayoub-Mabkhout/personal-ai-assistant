@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from fastapi.testclient import TestClient
@@ -182,6 +182,30 @@ class MoneyDeliveryTests(unittest.TestCase):
     def test_watch_rejects_more_frequent_unattended_schedule(self):
         with self.assertRaisesRegex(ValueError, 'six hours'):
             money_cli.watch({}, None, 21599)
+
+    def test_persistent_chat_history_paginates_without_losing_equal_time_messages(self):
+        url = '/groceries/v1/mobile/money/conversations'
+        for index in range(53):
+            self.client.post(url, json={'id': 'chat-turn-%04d' % index, 'text': 'Message %d' % index}, headers=self.phone).raise_for_status()
+        first = self.client.get(url, headers=self.phone).json()
+        second = self.client.get(url, params={'before': first['next_cursor']}, headers=self.phone).json()
+        self.assertEqual(len(first['items']), 50)
+        self.assertEqual(len(second['items']), 3)
+        self.assertEqual(len({i['id'] for i in first['items'] + second['items']}), 53)
+        self.assertEqual(second['next_cursor'], '')
+
+    def test_interactive_run_does_not_fetch_banks_or_call_an_idle_model(self):
+        class Relay:
+            def call(inner, path, payload=None, method=None):
+                response = self.client.request(method or ('POST' if payload is not None else 'GET'), path.removeprefix('/relay'), json=payload, headers=self.owner)
+                response.raise_for_status()
+                return response.json()
+        ledger = Ledger(Path(self.temp.name) / 'interactive.sqlite3')
+        model = Mock(side_effect=AssertionError('No idle model call'))
+        with patch.object(money_cli.service, 'sync', side_effect=AssertionError('No bank fetch')), patch.object(
+                money_cli, 'audit', side_effect=lambda ledger, config: auditor_audit(ledger, config, ask=model)):
+            self.assertEqual(money_cli.run_once({}, ledger, Relay(), sync_banks=False)['decided'], 0)
+        model.assert_not_called()
 
     def test_unattended_run_without_linked_accounts_publishes_without_bank_or_model(self):
         class Relay:

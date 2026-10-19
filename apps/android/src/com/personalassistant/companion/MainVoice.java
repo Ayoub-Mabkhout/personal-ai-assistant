@@ -13,19 +13,26 @@ final class MainVoice {
     final AppUi.VoiceButton talk;final AppUi.Meter meter;final AppUi.StatusChip connection;final Switch background;final AppUi.Pill stop,conversation,testWake;final Button resume;final ChatTimeline chat;
     private final TextView status,detail,hint,words,answer,answerMeta,testCount,heard;private final Button answerTask;private final View liveCard,answerCard,testCard;private final LinearLayout actions;
     private long answerRevision=-1,answerTime;private String answerText="",answerKind="",answerId="";boolean changing;
+    /** Meridian hero: the weather pill over the sky and today's daylight under the orb; absent in the other appearance modes. */
+    final boolean meridian;private final TextView weather;private final LinearLayout hero;final MeridianTimeline timeline;
 
     MainVoice(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;
         LinearLayout top=ui.row();View mark=new View(a);mark.setBackground(ui.aurora(150,true));mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);top.addView(mark,new LinearLayout.LayoutParams(ui.dp(22),ui.dp(22)));
-        top.addView(ui.type("Companion",17,24,700,-.012f,ui.text),MainParts.weighted(ui,1,10,0,0,0));
+        meridian=AppUi.DAYLIGHT.equals(ui.mode);TextView brand=ui.type("Companion",17,24,700,-.012f,meridian?0xFFFFFFFF:ui.text);if(meridian)brand.setShadowLayer(ui.dpf(4),0,ui.dpf(1),0x66140828);
+        top.addView(brand,MainParts.weighted(ui,1,10,0,0,0));
         connection=ui.statusChip("Connect phone","neutral");FrameLayout hit=new FrameLayout(a);hit.setPadding(ui.dp(4),0,ui.dp(4),0);hit.setBackground(ui.pressable(null,24));hit.setClickable(true);hit.setFocusable(true);hit.setOnClickListener(v->a.openConnection());hit.addView(connection,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|Gravity.END));top.addView(hit,new LinearLayout.LayoutParams(-2,ui.dp(48)));page.addView(top);
+        weather=ui.type("",12.5f,16,600,0,0xFFFFFFFF);weather.setTag("weather_pill");weather.setShadowLayer(ui.dpf(6),0,0,0x40140828);weather.setCompoundDrawablePadding(ui.dp(6));weather.setPadding(ui.dp(10),ui.dp(5),ui.dp(12),ui.dp(5));
+        weather.setBackground(ui.outline(0x2E140828,99,0x40FFFFFF,1));weather.setVisibility(View.GONE);page.addView(weather,MainParts.params(ui,-2,-2,0,0,0,0));
 
-        LinearLayout hero=ui.column();hero.setGravity(Gravity.CENTER_HORIZONTAL);
+        hero=ui.column();hero.setGravity(Gravity.CENTER_HORIZONTAL);
         talk=ui.voiceButton(a::talkTapped);talk.setTag("talk");hero.addView(talk,MainParts.params(ui,ui.dp(252),ui.dp(252),0,2,0,0));
+        timeline=new MeridianTimeline(a,ui);timeline.setTag("daylight_timeline");timeline.setVisibility(meridian?View.VISIBLE:View.GONE);hero.addView(timeline,MainParts.params(ui,-1,-2,0,4,0,4));
         status=ui.title("Microphone off");status.setGravity(Gravity.CENTER);status.setTag("voice_status");status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);hero.addView(status,MainParts.params(ui,-1,-2,16,6,16,0));
         detail=ui.detail("Tap Talk to start.");detail.setGravity(Gravity.CENTER);hero.addView(detail,MainParts.params(ui,-1,-2,24,4,24,16));
         meter=new AppUi.Meter(a,ui);meter.setTag("voice_level");hero.addView(meter,MainParts.params(ui,ui.dp(150),ui.dp(26),0,0,0,20));page.addView(hero);
 
+        Button newTask=ui.primaryButton("New task",()->a.startActivity(new android.content.Intent(a,QuickTaskActivity.class)));newTask.setTag("home_new_task");page.addView(newTask,MainParts.params(ui,-1,ui.dp(52),0,0,0,16));
         LinearLayout live=ui.card();liveCard=live;LinearLayout liveHead=ui.row();View dot=new View(a);dot.setBackground(ui.outline(ui.aurora[2],4,0,0));liveHead.addView(dot,new LinearLayout.LayoutParams(ui.dp(8),ui.dp(8)));liveHead.addView(ui.label("Live transcript"),MainParts.params(ui,-2,-2,8,0,0,0));live.addView(liveHead);
         words=ui.type("",17,25,500,-.003f,ui.text);live.addView(words,MainParts.params(ui,-1,-2,0,6,0,0));page.addView(liveCard);
 
@@ -52,6 +59,15 @@ final class MainVoice {
         LinearLayout.LayoutParams tp=MainParts.params(ui,-1,-2,0,0,0,16);testCard=test;page.addView(test,tp);
 
         MainParts.conversationLabel(ui,page);chat=new ChatTimeline(ui);page.addView(chat.rows);
+    }
+
+    /** Where the painted sky ends, in page coordinates: just above today's daylight line. */
+    int heroBottom(){return meridian&&timeline.getHeight()>0?hero.getTop()+timeline.getTop()-ui.dp(2):-1;}
+    /** "Overcast · 11° · Munich"; hidden until there is a reading or a place name. */
+    void weather(MeridianSky sky){
+        if(!meridian)return;StringBuilder s=new StringBuilder(sky.condition);for(String part:new String[]{sky.temperature,sky.place})if(!part.isEmpty())s.append(s.length()>0?" · ":"").append(part);
+        String text=s.toString();weather.setVisibility(text.isEmpty()?View.GONE:View.VISIBLE);if(text.equals(weather.getText().toString()))return;weather.setText(text);
+        weather.setCompoundDrawablesRelativeWithIntrinsicBounds(sky.icon.isEmpty()?null:ui.glyph(sky.icon,0xFFFFFFFF,15),null,null,null);timeline.update(sky);
     }
 
     /** Whether the latest chat entry is a recent assistant answer; cached until the chat file changes. */

@@ -128,6 +128,40 @@ tab and the scroll position survive. Web pages share one controller,
 before first paint and rechecks on focus, page show and visibility. Android and
 web surfaces use the same runtime location, never a place baked into source.
 
+## Meridian (Android default)
+
+Meridian is the default appearance on Android. Pages keep the Dusk Aurora Light
+and Dark palettes above and switch between them as the sun's upper limb crosses
+the horizon (−0.833°); only the sky follows the sun continuously.
+
+- **Voice home hero.** `MeridianBackdrop` paints the Aurora sky for the sun's
+  elevation (night, dawn before solar noon or golden hour after it, day; blended
+  in linear light), a sun bloom with slow rays when it is clear and low, or a
+  shaded moon and twinkling stars, then drifting volumetric clouds (a tileable
+  domain-warped noise field in two parallax layers, lit by marching towards the
+  sun or moon, with a silver lining), four Alpine ridges with snow, rim light,
+  fog and a spruce treeline, rain with splashes or snow, and a fade into the
+  page. "Companion" sits in white over the sky with a weather pill (icon ·
+  condition · temperature · place) and today's daylight line under the orb.
+- **Other tabs** get a short sky strip with the sun or moon; every page shows
+  quiet weather in its gaps: beads of rain with an occasional running drop,
+  mist, drifting snow with frost above the navigation, a warm glow on clear
+  days or faint stars on clear nights.
+- **Weather** is on by default and can be turned off in Meridian options. While
+  the app is open, at most hourly, Open-Meteo is asked for the current weather
+  code, cloud cover and temperature at the Daylight place rounded to about
+  10 km; the place name comes from the phone's geocoder. Readings older than
+  three hours are not shown.
+- **Place.** The phone's cached coarse location when allowed, then a
+  deployment's configured place, then a rough estimate from the time zone (no
+  weather is requested for an estimate).
+- **Motion.** Rain and snow animate at 30 fps and calmer skies at 15 fps, only
+  while the page is visible; clouds re-light about eight times a second on a
+  180×104 buffer. With the animator scale at 0 the sky is drawn once.
+- **Previews.** Launching `MainActivity` with the integer extras
+  `meridian_minute` (minute of the day) and `meridian_weather` (WMO code, −1
+  for no reading) shows another hour or weather until the app process ends.
+
 ## App icon and notifications
 
 - **Launcher icon: the Aurora Orb.** A glass sphere carrying two aurora bands

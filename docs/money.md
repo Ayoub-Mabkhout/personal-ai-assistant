@@ -43,6 +43,16 @@ or shared-cost repayments.
   records a confirmed `cash_offset` or `shared_cost_offset`. It is idempotent by ID and appears
   in `adjustments` and `category_transactions` as an off-bank record. The caller supplies explicit
   provenance; no synthetic bank transaction is inserted.
+- Companion's **Confirm** accepts the auditor's answer, and **Correct** opens an
+  editable text/dictation clarification. Both enqueue evidence for the same auditor;
+  they do not freeze the old category. The auditor decides the resulting category,
+  links and recurring fields, with newer owner edits taking precedence. Ambiguous
+  answers keep a follow-up question visible.
+- **Ask the money specialist** opens one persistent chat with timestamped replies,
+  cached history and earlier-message pagination. A failed send retries its saved ID.
+  The laptop checks interactive requests every 15 seconds while its service is
+  running; unattended bank syncs retain their separate minimum six-hour interval.
+  No model is called when the audit queue is empty.
 - `summarise` exposes `regular_income_cents`, `recurring_costs_cents`,
   `free_to_spend_cents`, `payday_aware_net_cents`, `category_transactions`,
   `recurring_breakdown`, `fixed_costs`, `fixed_cost_transactions` and `adjustments`

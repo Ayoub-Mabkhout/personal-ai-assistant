@@ -16,6 +16,7 @@ from pathlib import Path
 import signal
 import sys
 import threading
+import time
 import webbrowser
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -66,22 +67,26 @@ def publish_full(relay, ledger):
     return summary
 
 
-def run_once(config, ledger, relay):
+def run_once(config, ledger, relay, sync_banks=True):
     with Singleton(ledger.path.with_name('money-delivery.lock')):
-        report = {'sync': service.sync(config, ledger) if ledger.accounts() else []}
+        report = {'sync': service.sync(config, ledger) if sync_banks and ledger.accounts() else []}
         delivery_errors = []
         for name, action in (('answers', lambda: service.settle(relay, ledger)),
                              ('questions', lambda: collect_questions(relay, ledger))):
             try: report[name] = action()
             except Exception as error: delivery_errors.append('%s: %s' % (name, type(error).__name__))
+        if sync_banks or report.get('answers') or report.get('questions') or ledger.jobs():
+            ledger.set_setting('money_summary_dirty', True)
         try:
             report['decided'] = audit(ledger, config)[0]
         finally:
             try: report['replies'] = publish_replies(relay, ledger)
             except Exception as error: delivery_errors.append('replies: %s' % type(error).__name__)
             try:
-                summary = publish_full(relay, ledger)
-                report.update(spent=summary['spent_cents'], remaining=summary['remaining_cents'], review=len(summary['review']))
+                if ledger.setting('money_summary_dirty') or report.get('replies'):
+                    summary = publish_full(relay, ledger)
+                    ledger.set_setting('money_summary_dirty', False)
+                    report.update(spent=summary['spent_cents'], remaining=summary['remaining_cents'], review=len(summary['review']))
             except Exception as error: delivery_errors.append('summary: %s' % type(error).__name__)
         if delivery_errors:
             raise RuntimeError('Money relay delivery needs retry (%s).' % ', '.join(delivery_errors))
@@ -94,14 +99,21 @@ def watch(config, ledger, interval):
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
+    next_sync = 0.0
     while not stop.is_set():
         try:
-            report = run_once(config, ledger, OwnerClient(config))
-            print(json.dumps({'status': 'ok', 'accounts': len(report['sync']), 'decided': report['decided'],
-                              'questions': report['questions'], 'replies': report['replies']}), flush=True)
+            sync_due = time.monotonic() >= next_sync
+            if sync_due:
+                next_sync = time.monotonic() + interval
+            report = run_once(config, ledger, OwnerClient(config), sync_banks=sync_due)
+            if sync_due or any(report.get(key) for key in ('answers', 'questions', 'replies')):
+                print(json.dumps({'status': 'ok', 'accounts': len(report['sync']), 'decided': report['decided'],
+                                  'questions': report['questions'], 'replies': report['replies']}), flush=True)
         except Exception as error:
             print('Money run failed: %s' % type(error).__name__, file=sys.stderr, flush=True)
-        stop.wait(interval)
+        # Interactive messages must not wait for the six-hour bank-fetch schedule.
+        # audit() makes no model call when the durable queue is empty.
+        stop.wait(15)
 
 
 def main():

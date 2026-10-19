@@ -669,8 +669,8 @@ function empty(icon,title,text,action,tone){
 const failure=(title,text,retry)=>empty('alert-circle',title,text,{label:'Try again',run:retry},'error');
 function busy(form,on){form.setAttribute('aria-busy',String(on));const submit=form.querySelector('button:not([type=button])');if(submit)submit.disabled=on}
 
-/* theme control cycles Sunrise & sunset, System, Light, Dark */
-const THEMES={sun:['Sunrise & sunset','sunrise'],system:['System','monitor'],light:['Light','sun'],dark:['Dark','moon']};
+/* theme control cycles Daylight, Sunrise & sunset, System, Light, Dark */
+const THEMES={daylight:['Meridian','sunrise'],sun:['Sunrise & sunset','sunrise'],system:['System','monitor'],light:['Light','sun'],dark:['Dark','moon']};
 const hhmm=ms=>new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 function themeLabel(){
   const s=personalTheme.state(),[name]=THEMES[s.mode];
@@ -678,7 +678,7 @@ function themeLabel(){
 }
 function renderTheme(){
   const s=personalTheme.state(),[name,icon]=THEMES[s.mode],label='Colour mode: '+themeLabel();
-  const detail=s.mode==='sun'?(s.next?(s.theme==='dark'?'Dark':'Light')+' until '+hhmm(s.next):'Follows this device until a place is configured'):{system:'Follows this device',light:'Always light',dark:'Always dark'}[s.mode];
+  const detail=s.mode==='daylight'?(s.palette?'Follows the sun through the day':'Follows System until a place is configured'):s.mode==='sun'?(s.next?(s.theme==='dark'?'Dark':'Light')+' until '+hhmm(s.next):'Follows this device until a place is configured'):{system:'Follows this device',light:'Always light',dark:'Always dark'}[s.mode];
   document.querySelectorAll('[data-theme-cycle]').forEach(button=>{
     button.setAttribute('aria-label',label);button.title='Select to change the colour mode';
     button.querySelector('use').setAttribute('href','#i-'+icon);

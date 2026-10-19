@@ -75,7 +75,7 @@ final class MainSettings {
 
     private static void value(AppUi.ActionRow row,String value){if(!row.value.equals(value))row.value(value);}
     /** Without privately configured coordinates the sun mode follows System; the dialog spells that out, the row value stays narrow enough for the title on 360 dp phones. */
-    static String themeName(Context c,String value,boolean full){return value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":AppUi.daylightConfigured(c)?"Sunrise & sunset":full?"Sunrise & sunset · System until configured":"Sun · System";}
+    static String themeName(Context c,String value,boolean full){return value.equals(AppUi.DAYLIGHT)?(full?(AppUi.daylightPlace(c)!=null?"Meridian · follows the sun through the day":"Meridian · follows the sun for your time zone"):"Meridian"):value.equals("light")?"Light":value.equals("dark")?"Dark":value.equals("system")?"System":AppUi.daylightConfigured(c)?"Sunrise & sunset":full?"Sunrise & sunset · System until configured":"Sun · System";}
 
     /** Prefs-derived state refreshes on every call; system queries only while the tab is open and at most every 1.5 s. */
     void refresh(boolean full,boolean paired){
@@ -93,7 +93,7 @@ final class MainSettings {
         String glyph=paired?"shield-check":expired?"alert":"link";if(!glyph.equals(accountGlyph.kind)){int[] c=ui.iconTone(glyph);accountGlyph.kind(glyph);accountGlyph.color(c[0]);accountTile.setBackground(ui.outline(c[1],12,0,0));}
         String access=granted?"Allowed":"Off";if(!access.equals(micChip.getText().toString())){micChip.setText(access);micChip.tone(granted?"success":"warning");}micChevron.setVisibility(granted?View.GONE:View.VISIBLE);
         value(assistant,role?"Selected":"Set up");value(battery,unrestricted?"Unrestricted":"Optimized");
-        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,p.getString("ui_theme","sun"),false));value(notifications,notifying?"On":"Off");value(batteryUse,batteryValue);
+        value(sensitivity,"sensitive".equals(p.getString("wake_sensitivity","balanced"))?"Sensitive":"Balanced");value(appearance,themeName(a,AppUi.mode(a),false));value(notifications,notifying?"On":"Off");value(batteryUse,batteryValue);
         String open="";try{java.util.List<FeatureBoard.Item> list=Features.board(a);int count=FeatureBoard.open(list);open=list.isEmpty()?"":count==0?"All done":count+" open";}catch(RuntimeException ignored){}value(features,open);
     }
     void refreshNow(boolean paired){checkedAt=0;refresh(true,paired);}

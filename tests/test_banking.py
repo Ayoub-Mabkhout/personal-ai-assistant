@@ -83,6 +83,64 @@ class LedgerTests(unittest.TestCase):
         self.assertFalse(self.ledger.decide('rv:v3', 'income', '', False, [], 'x', 0.5, '', 'ai'))
         self.assertEqual(summarise(self.ledger, date(2026, 10, 18))['review'], [])
 
+    def test_owner_review_allows_interpretation_without_freezing_the_wrong_category(self):
+        self.ledger.store('rv', [raw('review', '10', True, '2026-10-12', 'Shop')], '2026-10-01')
+        self.ledger.decide('rv:review', 'expense', 'Other', True, [], 'Could be groceries', .5, 'Was this food?', 'ai')
+        item = {'sequence': 1, 'id': 'owner-review-001', 'transaction': 'rv:review', 'choice': 'correct', 'note': ''}
+        class Relay:
+            def call(inner, path, body=None):
+                return {'items': [item]} if path.endswith('/answers') else {}
+        service.settle(Relay(), self.ledger)
+        self.assertEqual(self.ledger.transactions()[0]['by'], 'ai')
+        claim, jobs, session = self.ledger.claim_jobs()
+        decision = {'id': 'rv:review', 'kind': 'expense', 'category': 'Groceries', 'counts': True,
+                    'linked': [], 'reasoning': 'Owner confirmed food', 'confidence': 1, 'question': ''}
+        self.ledger.finish_claim(claim, jobs, 'same-auditor', [decision], [], [])
+        row = self.ledger.transactions()[0]
+        self.assertEqual((row['category'], row['by'], row['question']), ('Groceries', 'owner', None))
+        self.assertEqual(self.ledger.jobs(), [])  # No model acknowledgement loop.
+        service.settle(Relay(), self.ledger)  # Lost relay acknowledgement replays the same review safely.
+        self.assertEqual(self.ledger.jobs(), [])
+
+    def test_new_owner_edit_supersedes_review_even_at_same_timestamp(self):
+        self.ledger.clock = lambda: 1000.0
+        self.ledger.store('rv', [raw('review', '10', True, '2026-10-12', 'Shop')], '2026-10-01')
+        self.ledger.decide('rv:review', 'expense', 'Other', True, [], 'Unknown', .5, 'Food?', 'ai')
+        item = {'sequence': 1, 'id': 'owner-review-002', 'transaction': 'rv:review', 'choice': 'clarify', 'note': 'Food'}
+        class Relay:
+            def call(inner, path, body=None): return {'items': [item]} if path.endswith('/answers') else {}
+        service.settle(Relay(), self.ledger)
+        token, jobs, session = self.ledger.claim_jobs()
+        self.ledger.decide('rv:review', 'expense', 'Transport', True, [], 'Newer owner correction', 1, '', 'owner')
+        self.ledger.finish_claim(token, jobs, session, [{'id': 'rv:review', 'kind': 'expense', 'category': 'Groceries',
+                                'counts': True, 'linked': [], 'reasoning': 'Stale', 'confidence': 1, 'question': ''}], [], [])
+        self.assertEqual(self.ledger.transactions()[0]['category'], 'Transport')
+
+    def test_missing_specialist_reply_is_not_silently_marked_done(self):
+        sequence = service.ask_question(self.ledger, 'missing-reply', 'Why?')
+        token, jobs, session = self.ledger.claim_jobs()
+        with self.assertRaisesRegex(ValueError, 'omitted'):
+            self.ledger.finish_claim(token, jobs, session, [], [], [])
+        self.ledger.release_claim(token)
+        self.assertEqual(self.ledger.jobs()[0]['seq'], sequence)
+
+    def test_owner_review_requires_a_decision_and_keeps_ambiguous_follow_up_visible(self):
+        self.ledger.store('rv', [raw('review', '10', True, '2026-10-12', 'Shop')], '2026-10-01')
+        self.ledger.decide('rv:review', 'expense', 'Other', True, [], 'Unknown', .5, 'Food?', 'ai')
+        class Relay:
+            def call(inner, path, body=None):
+                return {'items': [{'sequence': 1, 'id': 'review-ambiguous', 'transaction': 'rv:review',
+                                   'choice': 'clarify', 'note': 'It was shared'}]} if path.endswith('/answers') else {}
+        service.settle(Relay(), self.ledger)
+        token, jobs, session = self.ledger.claim_jobs()
+        with self.assertRaisesRegex(ValueError, 'owner review decision'):
+            self.ledger.finish_claim(token, jobs, session, [], [], [])
+        decision = {'id': 'rv:review', 'kind': 'expense', 'category': 'Other', 'counts': True,
+                    'linked': [], 'reasoning': 'Shared, purpose still unclear', 'confidence': .5,
+                    'question': 'What did you share?'}
+        self.ledger.finish_claim(token, jobs, session, [decision], [], [])
+        self.assertEqual(summarise(self.ledger, date(2026, 10, 18))['review'][0]['question'], 'What did you share?')
+
     def test_audit_applies_model_decisions_and_never_overrides_the_owner(self):
         self.ledger.store('rv', [raw('v1', '10', True, '2026-10-05', 'Cafe'), raw('v2', '5', True, '2026-10-06', 'Cafe')], '2026-10-01')
         seen = []

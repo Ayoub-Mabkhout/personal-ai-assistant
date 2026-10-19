@@ -307,8 +307,8 @@ let searchTimer;
 $('history-search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadHistory('fresh'),250)};
 $('history-more').onclick=()=>loadHistory('more');
 
-// Colour mode button: Sunrise & sunset -> System -> Light -> Dark. The mode itself is applied by theme.js.
-const themeApi=window.tasksTheme,modeIcon={sun:'sunrise',system:'monitor',light:'sun',dark:'moon'};
+// Colour mode button: Meridian -> Sunrise & sunset -> System -> Light -> Dark. The mode itself is applied by theme.js.
+const themeApi=window.tasksTheme,modeIcon={daylight:'sunrise',sun:'sunrise',system:'monitor',light:'sun',dark:'moon'};
 function showMode(){
   const label='Colour mode: '+themeApi.describe()+'. Change.';
   $('theme').setAttribute('aria-label',label);$('theme').title=label;
