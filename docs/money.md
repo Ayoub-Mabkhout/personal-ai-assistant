@@ -53,10 +53,27 @@ or shared-cost repayments.
   The laptop checks interactive requests every 15 seconds while its service is
   running; unattended bank syncs retain their separate minimum six-hour interval.
   No model is called when the audit queue is empty.
-- Scheduled summary publication includes up to twelve previous periods within the
+- Scheduled summary publication includes up to 120 previous periods within the
   imported history, including empty periods between transactions. The phone's month
   heading opens a picker; past periods show their own total and elective spending,
   without applying the current month's allowance or days remaining.
+
+### Historical statement imports
+
+`banking.statement_import.import_rows` accepts reconciled extracted EUR rows with
+stable occurrence-aware source keys, PDF hashes/pages and original descriptions.
+It attaches provenance to overlapping live-feed payments, preserving their IDs,
+owner decisions and display edits. A repeated import is idempotent. Identical real
+payments retain their multiplicity; unmatched overlap rows need inspection before
+an import is accepted. Extraction and categorisation remain separate workflows.
+
+Normal bank synchronisation coalesces later provider records with imported rows
+and saves provider aliases, preventing a second copy when a recent statement
+payment first arrives through the API. Pending bank rows keep their normal lifecycle.
+Original statement evidence remains in the private laptop ledger. Historical phone
+cards carry concise notes and remittance excerpts, with every payment retained.
+The complete summary remains bounded below the installed phone's 2 MiB response
+limit; publication fails explicitly rather than discarding old payments.
 - `summarise` exposes `regular_income_cents`, `recurring_costs_cents`,
   `free_to_spend_cents`, `payday_aware_net_cents`, `category_transactions`,
   `recurring_breakdown`, `fixed_costs`, `fixed_cost_transactions` and `adjustments`

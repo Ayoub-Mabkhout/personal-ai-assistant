@@ -389,6 +389,18 @@ class RelayBankingTests(unittest.TestCase):
         self.client.close()
         self.temp.cleanup()
 
+    def test_full_history_over_one_mib_reaches_installed_phone_with_bounded_response(self):
+        # The older 1 MiB request/storage cap rejected legitimate multi-year
+        # history. Keep the new payload below Companion's existing 2 MiB cap.
+        body={'months':[{'period':{'start':'2024-04-01'},'notes':'x'*(1100*1024)}]}
+        response=self.client.put('/v1/banking/summary',json=body,headers=self.owner)
+        self.assertEqual(response.status_code,200)
+        response=self.client.get('/groceries/v1/mobile/money',headers=self.mobile)
+        self.assertEqual(response.json()['summary'],body)
+        self.assertLess(len(response.content),2*1024*1024)
+        oversized={'notes':'x'*(2*1024*1024)}
+        self.assertEqual(self.client.put('/v1/banking/summary',json=oversized,headers=self.owner).status_code,413)
+
     def test_callback_is_announced_single_use_and_owner_only(self):
         state = 'S' * 32
         self.assertIn('Link expired', self.client.get('/v1/banking/callback', params={'state': state, 'code': 'c'}).text)

@@ -12,7 +12,7 @@ BANKS = {'deutsche-bank': ('Deutsche Bank', 'DE'), 'revolut': ('Revolut', 'DE')}
 UNATTENDED_PER_DAY = 4  # PSD2 limit on fetches without the owner present
 HISTORY_DAYS = 90
 RELAY = '/relay/v1/banking'
-SUMMARY_LIMIT = 960 * 1024
+SUMMARY_LIMIT = 1900 * 1024  # leave room below installed Companion's 2 MiB response cap
 TRANSACTION_PAGE_SIZE = 200
 
 
@@ -62,6 +62,8 @@ def sync(config, ledger, client=None, today=None, attended=False):
         since = (today - timedelta(days=HISTORY_DAYS if not any(r['account'] == account['uid'] for r in known) else 14)).isoformat()
         try:
             raws = client.transactions(account['uid'], since)
+            from .statement_import import coalesce_provider_rows
+            raws = coalesce_provider_rows(ledger, account['uid'], raws)
             new = ledger.store(account['uid'], raws, since)
             ledger.record_sync(account['uid'], True, len(raws))
             report.append({'bank': account['bank'], 'fetched': len(raws), 'new': new})
@@ -169,7 +171,7 @@ def queue_enrichment(ledger, request_id='display-v1', identities=None, limit=12)
         return {'request_id': request_id, 'ids': selected, 'sequences': sequences}
 
 
-HISTORY_MONTHS = 12
+HISTORY_MONTHS = 120
 
 
 def history(ledger, current_start, months=HISTORY_MONTHS):
@@ -184,11 +186,16 @@ def history(ledger, current_start, months=HISTORY_MONTHS):
         past = summarise(ledger, day, insights=[])
         if past['period']['end'] <= earliest:
             break
-        compact = lambda r: {k: (r.get(k)[:160] if k == 'reasoning' and r.get(k) else r.get(k))
-                             for k in ('id', 'day', 'amount_cents', 'counterparty', 'description', 'kind', 'reasoning')} | {
-                                 k: r.get(k) for k in ('display_title', 'merchant_name', 'merchant_brand_id',
-                                                         'annotation_note', 'tags', 'annotation_confidence',
-                                                         'annotation_evidence', 'annotation_by')}
+        def compact(row):
+            # Historical cards need the complete payment list, not repeated null
+            # metadata and long remittance/account strings on every row. The
+            # original statement evidence stays intact in the laptop ledger.
+            fields=('id','day','amount_cents','counterparty','description','kind','reasoning',
+                    'display_title','merchant_name','merchant_brand_id','annotation_note','tags',
+                    'annotation_confidence','annotation_by')
+            limits={'description':200,'reasoning':160,'annotation_note':160}
+            return {k: (row[k][:limits[k]] if k in limits and isinstance(row[k],str) else row[k])
+                    for k in fields if row.get(k) is not None and row.get(k)!='' and row.get(k)!=[]}
         out.append({'period': past['period'], 'spent_cents': past['spent_cents'], 'categories': past['categories'],
                     'fixed_costs': past['fixed_costs'],
                     'category_transactions': {k: [compact(r) for r in v] for k, v in past['category_transactions'].items()}})

@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 STATE = r'^[A-Za-z0-9_-]{16,64}$'
 PENDING_SECONDS = 1800
-SUMMARY_LIMIT = 1024 * 1024
+SUMMARY_LIMIT = 2 * 1024 * 1024
 REMINDER_ZONE = ZoneInfo('Europe/Berlin')
 
 
