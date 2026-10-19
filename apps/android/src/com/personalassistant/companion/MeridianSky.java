@@ -48,7 +48,7 @@ final class MeridianSky {
         SharedPreferences p=Cloud.prefs(c);
         if(previewCode>=-1){double[] place=AppUi.meridianPlace(c);int code=previewCode;return new MeridianSky(at,place,code,Float.NaN,code>=71&&code<=86?-1:code>=51?9:14,code>=0,p.getString("daylight_locality",""));}long when=p.getLong("daylight_weather_at",0);boolean fresh=DaylightWeather.enabled(c)&&when>0&&at>=when&&at-when<=DaylightWeather.STALE;
         double[] place=AppUi.meridianPlace(c);
-        return new MeridianSky(at,place,fresh?p.getInt("daylight_weather_code",-1):-1,p.getFloat("daylight_weather_cover",Float.NaN),p.getFloat("daylight_weather_temp",Float.NaN),fresh,AppUi.daylightPlace(c)==null?"":p.getString("daylight_locality",""));
+        return new MeridianSky(at,place,fresh?p.getInt("daylight_weather_code",-1):-1,p.getFloat("daylight_weather_cover",Float.NaN),p.getFloat("daylight_weather_temp_c",Float.NaN),fresh,AppUi.daylightPlace(c)==null?"":p.getString("daylight_locality",""));
     }
     /** For previews and tests: a fixed place, weather code, cloud cover and temperature. */
     static MeridianSky of(long at,double latitude,double longitude,int code,float cloud,float temp,String locality){return new MeridianSky(at,new double[]{latitude,longitude},code,cloud,temp,code>=0,locality);}

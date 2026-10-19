@@ -149,7 +149,7 @@ the horizon (−0.833°); only the sky follows the sun continuously.
   days or faint stars on clear nights.
 - **Weather** is on by default and can be turned off in Meridian options. While
   the app is open, at most hourly, Open-Meteo is asked for the current weather
-  code, cloud cover and temperature at the Daylight place rounded to about
+  code, cloud cover and temperature (always Celsius) at the Daylight place rounded to about
   10 km; the place name comes from the phone's geocoder. Readings older than
   three hours are not shown.
 - **Place.** The phone's cached coarse location when allowed, then a

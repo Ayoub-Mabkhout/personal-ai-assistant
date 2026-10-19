@@ -29,13 +29,13 @@ final class DaylightWeather {
 
     static synchronized void refresh(Context c,long now){
         SharedPreferences p=Cloud.prefs(c);long last=p.getLong("daylight_weather_checked",0);
-        if(running||!enabled(c)||(last>0&&now>=last&&now-last<INTERVAL)||!VoiceOutbox.networkReady(c))return;
+        if(running||!enabled(c)||(last>0&&now>=last&&now-last<(p.contains("daylight_weather_temp_c")?INTERVAL:300000L))||!VoiceOutbox.networkReady(c))return;
         final Context app=c.getApplicationContext();final double[] place=AppUi.daylightPlace(app);if(place==null)return;
         running=true;p.edit().putLong("daylight_weather_checked",now).apply();
         new Thread(()->{
             HttpURLConnection connection=null;boolean received=false;
             try{
-                connection=(HttpURLConnection)new URL(String.format(Locale.ROOT,"https://api.open-meteo.com/v1/forecast?latitude=%.1f&longitude=%.1f&current=weather_code,cloud_cover,temperature_2m%s",place[0],place[1],"US".equals(Locale.getDefault().getCountry())?"&temperature_unit=fahrenheit":"")).openConnection();
+                connection=(HttpURLConnection)new URL(String.format(Locale.ROOT,"https://api.open-meteo.com/v1/forecast?latitude=%.1f&longitude=%.1f&current=weather_code,cloud_cover,temperature_2m&temperature_unit=celsius",place[0],place[1])).openConnection();
                 connection.setConnectTimeout(8000);connection.setReadTimeout(8000);connection.setUseCaches(false);
                 if(connection.getResponseCode()!=200)return;
                 ByteArrayOutputStream body=new ByteArrayOutputStream();
@@ -43,7 +43,7 @@ final class DaylightWeather {
                 JSONObject current=new JSONObject(body.toString("UTF-8")).getJSONObject("current");
                 double level=DaylightPalette.weatherLevel(current.optInt("weather_code",-1),current.optDouble("cloud_cover",Double.NaN));
                 Cloud.prefs(app).edit().putFloat("daylight_weather_level",(float)level).putInt("daylight_weather_code",current.optInt("weather_code",-1))
-                    .putFloat("daylight_weather_cover",(float)current.optDouble("cloud_cover",Double.NaN)).putFloat("daylight_weather_temp",(float)current.optDouble("temperature_2m",Double.NaN))
+                    .putFloat("daylight_weather_cover",(float)current.optDouble("cloud_cover",Double.NaN)).putFloat("daylight_weather_temp_c",(float)current.optDouble("temperature_2m",Double.NaN))
                     .putLong("daylight_weather_at",System.currentTimeMillis()).apply();received=true;
                 locality(app,place);
             }catch(Exception ignored){
