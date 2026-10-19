@@ -8,7 +8,8 @@ import subprocess
 import tempfile
 import threading
 
-from .ledger import KINDS, summarise
+from .ledger import KINDS, annotation_public, summarise
+from .merchants import BRAND_CATALOG
 
 MODEL = 'gpt-6-sol'
 BATCH = 80
@@ -39,6 +40,14 @@ transaction into another category) or delete (only with into, or when unused) ca
 suggested_budget_cents for elective envelopes from the owner's actual pattern. Never touch categories marked
 by=owner, and never set a real budget; the owner does. Prefer renaming or merging over churn so envelopes
 stay comparable month to month. Every decision's category must exist in the catalogue after your ops.
+Enrichment jobs are display-only: return an enrichment for every requested ID and no accounting
+or category changes for an enrichment-only batch. You may annotate an owner-decided row without
+changing its financial decision. Preserve bank counterparty, description, amount and date. Write
+short useful display titles and descriptive notes from bank evidence and owner context; be explicit
+about uncertainty and never invent purchases or personal relationships. Keep owner annotations.
+merchant_brand_id must be null unless a catalog alias appears as a whole phrase in ORIGINAL bank
+counterparty/description and confidence is at least .85. Generated names and reasoning are not proof.
+Use only supplied brand_catalog keys; never produce URLs or fetch logos. Tags describe the payment.
 Return only JSON matching the schema."""
 
 DECISION = {'type': 'object', 'additionalProperties': False,
@@ -58,8 +67,17 @@ CATEGORY_OP = {'type': 'object', 'additionalProperties': False,
   'group': {'type': ['string', 'null'], 'enum': ['fixed', 'elective', 'income', 'savings', 'transfer', None]},
   'description': {'type': ['string', 'null']}, 'into': {'type': ['string', 'null']},
   'suggested_budget_cents': {'type': ['integer', 'null']}, 'reasoning': {'type': 'string'}}}
-SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions', 'insights', 'replies', 'category_ops'],
- 'properties': {'decisions': {'type': 'array', 'items': DECISION}, 'category_ops': {'type': 'array', 'items': CATEGORY_OP},
+ENRICHMENT = {'type': 'object', 'additionalProperties': False,
+ 'required': ['id', 'display_title', 'merchant_name', 'merchant_brand_id', 'annotation_note', 'tags', 'confidence', 'evidence'],
+ 'properties': {'id': {'type': 'string'}, 'display_title': {'type': 'string', 'maxLength': 140},
+  'merchant_name': {'type': 'string', 'maxLength': 120},
+  'merchant_brand_id': {'type': ['string', 'null'], 'enum': [*BRAND_CATALOG, None]},
+  'annotation_note': {'type': 'string', 'maxLength': 1000},
+  'tags': {'type': 'array', 'maxItems': 12, 'items': {'type': 'string', 'maxLength': 40}},
+  'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
+  'evidence': {'type': 'string', 'maxLength': 1000}}}
+SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions', 'insights', 'replies', 'category_ops', 'enrichments'],
+ 'properties': {'enrichments': {'type': 'array', 'items': ENRICHMENT}, 'decisions': {'type': 'array', 'items': DECISION}, 'category_ops': {'type': 'array', 'items': CATEGORY_OP},
   'insights': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
    'required': ['kind', 'text'], 'properties': {'kind': {'type': 'string'}, 'text': {'type': 'string'}}}},
   'replies': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
@@ -72,7 +90,7 @@ def compact(row):
                                 'recurring', 'monthly_cents', 'series_key', 'confidence', 'question')}
     item['coverage_months'] = json.loads(row['coverage_months'] or '[]')
     item['linked'] = json.loads(row['linked'] or '[]')
-    return item
+    return item | annotation_public(row)
 
 
 def totals(ledger, today):
@@ -104,6 +122,9 @@ def prompt_for(ledger, jobs, today, config, notes):
              'category_catalog': [{k: c[k] for k in ('name', 'emoji', 'grp', 'description', 'suggested_budget_cents', 'budget_cents', 'by', 'uses')}
                                   for c in ledger.categories()],
              'owner_corrections': ledger.corrections(), 'recent_decided': recent,
+             'brand_catalog': BRAND_CATALOG,
+             'transactions_for_enrichment': [compact(by_id[json.loads(j['payload'])['id']]) for j in jobs
+                 if j['kind'] == 'enrichment' and json.loads(j['payload'])['id'] in by_id],
              'evidence_window': {'start': window_start.isoformat(), 'end': window_end.isoformat()},
              'jobs': [{'seq': j['seq'], 'kind': j['kind'], 'created': j['created'],
              'payload': json.loads(j['payload'])} for j in jobs], 'transactions_for_review': pending,
@@ -176,13 +197,14 @@ def ask(prompt, config, session=None, on_start=None):
         return _run(prompt, config, None, on_start)
 
 
-def audit(ledger, config, today=None, ask=ask, notes=''):
+def audit(ledger, config, today=None, ask=ask, notes='', job_kind=None, max_batches=None, batch_size=BATCH):
     """Process queued work in sequence. A durable lease fences every response write."""
     today = today or date.today()
-    ledger.bootstrap_jobs()
-    decided, insights = 0, None
-    while True:
-        claim = ledger.claim_jobs(BATCH)
+    if job_kind != 'enrichment':
+        ledger.bootstrap_jobs()
+    decided, insights, batches = 0, None, 0
+    while max_batches is None or batches < max_batches:
+        claim = ledger.claim_jobs(batch_size, kind=job_kind)
         if claim is None:
             break
         token, jobs, session = claim
@@ -202,10 +224,11 @@ def audit(ledger, config, today=None, ask=ask, notes=''):
                 item['confidence'] = max(0.0, min(1.0, float(item['confidence'])))
                 decisions.append(item)
             ledger.finish_claim(token, jobs, next_session, decisions, answer.get('insights'), answer.get('replies', []),
-                                answer.get('category_ops', []))
+                                answer.get('category_ops', []), answer.get('enrichments', []))
             transaction_ids = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'transaction'}
             decided += len(transaction_ids & {d['id'] for d in decisions})
             insights = answer.get('insights')
+            batches += 1
         except BaseException:
             ledger.release_claim(token)
             raise

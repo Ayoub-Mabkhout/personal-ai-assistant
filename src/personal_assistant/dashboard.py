@@ -1,5 +1,5 @@
 """A private local control surface; never bind to a public interface."""
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -263,16 +263,43 @@ def create_app(config):
         return CalendarExecutor(config).execute(job,threading.Event())
 
     @app.get('/api/money')
-    def money():
+    def money(period_start:str|None=Query(default=None)):
         # Read only the already configured local ledger. Loading this page never opens a bank
         # connection or invokes the auditor; an absent ledger remains an honest empty state.
+        if period_start is not None:
+            try:
+                if date.fromisoformat(period_start).isoformat()!=period_start:
+                    raise ValueError()
+            except ValueError:
+                raise HTTPException(422,'Choose an available money period start date.') from None
         if not money_path.is_file():
-            return {'available':False,'period':None,'allowance':None,'spent_cents':0,'remaining_cents':0,
+            if period_start is not None:
+                raise HTTPException(422,'That money period is not available.')
+            return {'months':[],'current_start':None,'historical':False,'total_spent_cents':0,'available':False,'period':None,'allowance':None,'spent_cents':0,'remaining_cents':0,
                     'income_cents':0,'fixed_cents':0,'free_cents':0,'categories':[],'fixed_costs':[],
                     'review':[],'transactions':[],'insights':[]}
         try:
             from .banking.ledger import Ledger, summarise
-            value=summarise(Ledger(money_path))
+            from .banking.service import history
+            ledger=Ledger(money_path)
+            current=summarise(ledger)
+            current_start=current['period']['start']
+            previous=history(ledger,date.fromisoformat(current_start))
+            boards=[current,*previous]
+            months=[{'start':board['period']['start'],'end':board['period']['end'],
+                     'spent_cents':board['spent_cents'],
+                     'total_spent_cents':sum(int(c.get('cents') or 0) for c in board.get('categories',[])),
+                     'historical':index>0} for index,board in enumerate(boards)]
+            value=next((board for board in boards if board['period']['start']==period_start),None) if period_start else current
+            if value is None:
+                raise HTTPException(422,'That money period is not available.')
+            historical=value['period']['start']!=current_start
+            if historical:
+                rows={row['id']:{**row,'category':name} for name,items in value['category_transactions'].items() for row in items}
+                value={**value,'transactions':list(rows.values()),'allowance':None,'remaining_cents':0,
+                       'free_cents':0,'review':[],'insights':[],
+                       'fixed_cost_transactions':[row for row in rows.values() if row.get('kind')=='fixed_cost']}
+            total_spent_cents=sum(int(c.get('cents') or 0) for c in value.get('categories',[]))
         except (OSError,sqlite3.Error,KeyError,ValueError):
             raise HTTPException(503,'The local money ledger is temporarily unavailable.') from None
         transactions=value.get('transactions') or []
@@ -301,8 +328,9 @@ def create_app(config):
                     name=row.get('category') or 'Other'
                     categories[name]=categories.get(name,0)-int(row.get('amount_cents') or 0)
         regular_income=value.get('regular_income_cents',value.get('income_cents',0))
-        free=value.get('free_to_spend_cents',value.get('free_cents',value.get('allowance',{}).get('amount_cents',0)))
-        return {**value,'available':True,'categories':sorted(({'name':k,'cents':v} for k,v in categories.items()),key=lambda x:-x['cents']),
+        free=value.get('free_to_spend_cents',value.get('free_cents',(value.get('allowance') or {}).get('amount_cents',0)))
+        return {**value,'available':True,'months':months,'current_start':current_start,
+                'historical':historical,'total_spent_cents':total_spent_cents,'categories':sorted(({'name':k,'cents':v} for k,v in categories.items()),key=lambda x:-x['cents']),
                 'fixed_costs':[{'name':k,'cents':v} for k,v in fixed_costs.items()],
                 'fixed_cents':sum(fixed_costs.values()),'regular_income_cents':regular_income,'free_cents':free,
                 'category_transactions':value.get('category_transactions') or {},

@@ -1,0 +1,1 @@
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/merchant_dm,@drawable/merchant_rewe,@drawable/merchant_lidl,@drawable/merchant_uber,@drawable/merchant_deutsche_bahn,@drawable/merchant_paypal,@drawable/merchant_rossmann" />

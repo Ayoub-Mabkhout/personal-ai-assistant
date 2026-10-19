@@ -139,6 +139,36 @@ def record_offset(ledger, identity, day, kind, amount_cents, category, linked, r
     return ledger.add_adjustment(identity, day, kind, amount_cents, category, linked, reason, source)
 
 
+def queue_enrichment(ledger, request_id='display-v1', identities=None, limit=12):
+    """Queue a stable, explicitly bounded display-only batch; no bank fetch or model call."""
+    if not isinstance(limit, int) or not 1 <= limit <= 12:
+        raise ValueError('Enrichment limit must be between 1 and 12')
+    if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 100:
+        raise ValueError('Enrichment needs a short stable request ID')
+    rows = ledger.transactions()
+    known = {r['id']: r for r in rows}
+    explicit = list(dict.fromkeys(identities)) if identities is not None else None
+    if explicit is not None and (not explicit or len(explicit) > limit or any(i not in known for i in explicit)):
+        raise ValueError('Choose between 1 and limit existing transactions')
+    with ledger.db() as db:
+        key = 'enrichment_request:' + request_id
+        saved = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        selected = json.loads(saved['value']) if saved else explicit if explicit is not None else [
+            r['id'] for r in rows if not r.get('annotation_by')][:limit]
+        if explicit is not None and selected != explicit:
+            raise ValueError('Enrichment request ID already selects different transactions')
+        if len(selected) > limit:
+            raise ValueError('Saved enrichment batch exceeds the requested limit')
+        if not saved:
+            db.execute('INSERT INTO settings VALUES(?,?)', (key, json.dumps(selected)))
+        sequences = []
+        for identity in selected:
+            job_key = request_id + ':' + identity
+            ledger._enqueue(db, 'enrichment', job_key, {'id': identity, 'authority': 'display_only'}, ledger.clock())
+            sequences.append(db.execute("SELECT seq FROM audit_jobs WHERE kind='enrichment' AND job_key=?", (job_key,)).fetchone()[0])
+        return {'request_id': request_id, 'ids': selected, 'sequences': sequences}
+
+
 HISTORY_MONTHS = 12
 
 
@@ -155,7 +185,10 @@ def history(ledger, current_start, months=HISTORY_MONTHS):
         if past['period']['end'] <= earliest:
             break
         compact = lambda r: {k: (r.get(k)[:160] if k == 'reasoning' and r.get(k) else r.get(k))
-                             for k in ('id', 'day', 'amount_cents', 'counterparty', 'description', 'kind', 'reasoning')}
+                             for k in ('id', 'day', 'amount_cents', 'counterparty', 'description', 'kind', 'reasoning')} | {
+                                 k: r.get(k) for k in ('display_title', 'merchant_name', 'merchant_brand_id',
+                                                         'annotation_note', 'tags', 'annotation_confidence',
+                                                         'annotation_evidence', 'annotation_by')}
         out.append({'period': past['period'], 'spent_cents': past['spent_cents'], 'categories': past['categories'],
                     'fixed_costs': past['fixed_costs'],
                     'category_transactions': {k: [compact(r) for r in v] for k, v in past['category_transactions'].items()}})

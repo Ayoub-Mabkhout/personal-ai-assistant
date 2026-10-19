@@ -66,6 +66,28 @@ or shared-cost repayments.
 
 ## Design
 
+### Transaction display enrichment
+
+Bank fields remain the source of record. Separate `transaction_annotations` rows
+hold `display_title`, `merchant_name`, `merchant_brand_id`, `annotation_note`, tags,
+confidence, evidence and author. Neither annotations nor logos alter the amount,
+date, bank wording or financial classification. Owner annotations take precedence
+over later auditor suggestions, independently of owner accounting decisions.
+
+The same persistent auditor can enrich a bounded selection without re-auditing it:
+
+```sh
+python scripts/banking.py --config PRIVATE_CONFIG enrich --request-id display-batch-1 --id TRANSACTION_ID --limit 12
+```
+
+This only enqueues work. Repeating the request ID reuses the same selected IDs and
+jobs. Add `--run` to process one enrichment-only batch of at most twelve rows, with
+no bank fetch. Other accounting jobs remain queued. Unknown merchants keep a null
+brand ID; logos use only curated catalog keys supported by original bank wording,
+with confidence at least 0.85. The auditor never supplies a logo URL. Current and
+historical public transaction views include the annotations alongside unchanged
+`counterparty` and `description` source fields.
+
 Style: geometric discipline (4/8/12/16/24/32 spacing, filled shapes instead of cards and rules)
 in the assistant's Dusk Aurora palette (`docs/design-system.md`) and system sans. Figures use
 tabular numerals. Dark theme first; the light theme maps the same roles.

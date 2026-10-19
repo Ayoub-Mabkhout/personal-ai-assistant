@@ -121,6 +121,11 @@ def main():
     linking = commands.add_parser('link'); linking.add_argument('bank', choices=sorted(service.BANKS))
     linking.add_argument('--no-browser', action='store_true')
     syncing = commands.add_parser('sync'); syncing.add_argument('--attended', action='store_true')
+    enriching = commands.add_parser('enrich', help='bounded display-only annotation batch; enqueue unless --run')
+    enriching.add_argument('--id', action='append', dest='identities')
+    enriching.add_argument('--limit', type=int, default=12)
+    enriching.add_argument('--request-id', default='display-v1')
+    enriching.add_argument('--run', action='store_true')
     commands.add_parser('audit'); commands.add_parser('run'); commands.add_parser('summary')
     watching = commands.add_parser('watch'); watching.add_argument('--interval', type=int, default=21600)
     category = commands.add_parser('category', help='your own category edits; the auditor never overrides them')
@@ -152,6 +157,12 @@ def main():
     elif args.command == 'sync':
         with Singleton(ledger.path.with_name('money-delivery.lock')):
             out(service.sync(config, ledger, attended=args.attended))
+    elif args.command == 'enrich':
+        result = service.queue_enrichment(ledger, args.request_id, args.identities, args.limit)
+        if args.run and result['ids']:
+            audit(ledger, config, job_kind='enrichment', max_batches=1, batch_size=args.limit)
+            ledger.set_setting('money_summary_dirty', True)
+        out(result)
     elif args.command == 'audit':
         relay = OwnerClient(config) if config.get('relay_url') else None
         delivery_error = None

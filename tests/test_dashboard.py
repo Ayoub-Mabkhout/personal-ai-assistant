@@ -72,6 +72,40 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('recurring_breakdown',value)
         self.assertEqual(value['free_cents'],value['allowance']['amount_cents'])
 
+    def test_money_period_selection_preserves_history_details_and_rejects_unavailable_dates(self):
+        from datetime import date,timedelta
+        from personal_assistant.banking.ledger import Ledger
+        current=date.today().replace(day=1)
+        gap=(current-timedelta(days=1)).replace(day=1)
+        older=(gap-timedelta(days=1)).replace(day=1)
+        path=self.root/'banking/ledger.sqlite3';ledger=Ledger(path)
+        ledger.link('Test Bank','DE',{'session_id':'synthetic','accounts':[{'uid':'a','currency':'EUR'}]})
+        ledger.store('a',[{'entry_reference':key,'status':'BOOK','credit_debit_indicator':'DBIT',
+            'booking_date':older.isoformat(),'transaction_amount':{'amount':amount,'currency':'EUR'},
+            'creditor':{'name':name}} for key,amount,name in [('food','20','REWE original'),('rent','500','Original landlord')]],older.isoformat())
+        ledger.decide('a:food','expense','Groceries',True,[],'Food',1,'','owner')
+        ledger.decide('a:rent','fixed_cost','Housing',False,[],'Rent',1,'','owner')
+        ledger.annotate('a:food',{'display_title':'Weekly groceries','merchant_name':'REWE','merchant_brand_id':'rewe',
+            'annotation_note':'Food shopping','tags':['groceries'],'confidence':1,'evidence':'REWE original'},'owner')
+        client,headers=self.second_client(banking_ledger=str(path))
+        now=client.get('/api/money',headers=headers).json()
+        self.assertFalse(now['historical'])
+        self.assertEqual(now['current_start'],current.isoformat())
+        self.assertEqual([m['start'] for m in now['months']],[current.isoformat(),gap.isoformat(),older.isoformat()])
+        response=client.get('/api/money',params={'period_start':older.isoformat()},headers=headers)
+        self.assertEqual(response.status_code,200)
+        past=response.json()
+        self.assertTrue(past['historical'])
+        self.assertTrue(past['available'])
+        self.assertEqual((past['spent_cents'],past['fixed_cents'],past['total_spent_cents']),(2000,50000,52000))
+        self.assertEqual(past['categories'],[{'name':'Groceries','cents':2000}])
+        row=past['category_transactions']['Groceries'][0]
+        self.assertEqual((row['display_title'],row['counterparty'],row['merchant_brand_id']),('Weekly groceries','REWE original','rewe'))
+        self.assertIsNone(past['allowance'])
+        self.assertEqual(client.get('/api/money',params={'period_start':gap.isoformat()},headers=headers).json()['total_spent_cents'],0)
+        for invalid in ('not-a-date','2026-02-30',(current+timedelta(days=62)).isoformat(),(older-timedelta(days=32)).isoformat()):
+            self.assertEqual(client.get('/api/money',params={'period_start':invalid},headers=headers).status_code,422)
+
     def test_money_question_uses_authenticated_durable_ledger_queue(self):
         from personal_assistant.banking.ledger import Ledger
         path=self.root/'banking/ledger.sqlite3'
@@ -124,7 +158,8 @@ class DashboardTests(unittest.TestCase):
     def test_shipped_money_page_uses_dashboard_route_and_supported_navigation(self):
         source=(Path(__file__).resolve().parents[1]/'apps/dashboard/index.html').read_text(encoding='utf-8')
         self.assertIn("data-page=\"money\"",source)
-        self.assertIn("shared('money')",source)
+        self.assertIn("api('money'+",source)
+        self.assertIn("?period_start=",source)
         self.assertIn("const PAGES=['today','money'",source)
         self.assertIn("const LOADERS={money:loadMoney",source)
         for selector in ('.money-map','.money-block.fixed','.money-ring','.money-question-card','.money-category-hero','.chart-area','.money-monogram'):

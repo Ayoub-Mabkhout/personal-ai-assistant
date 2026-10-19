@@ -16,6 +16,8 @@ import sqlite3
 import time
 import uuid
 
+from .merchants import BRAND_CATALOG, supported_brand
+
 KINDS = ('expense', 'fixed_cost', 'cash_withdrawal', 'fee', 'income', 'salary', 'internal_transfer', 'reimbursement',
          'refund', 'duplicate', 'lent', 'repaid_to_me', 'savings', 'other')
 RECURRING_COST_KINDS = ('expense', 'fixed_cost', 'fee')
@@ -121,6 +123,9 @@ class Ledger:
                 lease_token TEXT,lease_until REAL,updated REAL NOT NULL,process_pid INTEGER);
             INSERT OR IGNORE INTO audit_state(id,updated) VALUES(1,0);
             CREATE TABLE IF NOT EXISTS audit_outputs(job_seq INTEGER PRIMARY KEY,answer TEXT NOT NULL,at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS transaction_annotations(id TEXT PRIMARY KEY,display_title TEXT NOT NULL,
+                merchant_name TEXT NOT NULL,merchant_brand_id TEXT,annotation_note TEXT NOT NULL,tags TEXT NOT NULL,
+                confidence REAL NOT NULL,evidence TEXT NOT NULL,by TEXT NOT NULL,at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS categories(name TEXT PRIMARY KEY,emoji TEXT,grp TEXT NOT NULL DEFAULT 'elective',
                 description TEXT NOT NULL DEFAULT '',budget_cents INTEGER,suggested_budget_cents INTEGER,
                 by TEXT NOT NULL DEFAULT 'ai',created REAL NOT NULL,updated REAL NOT NULL);
@@ -217,7 +222,10 @@ class Ledger:
     def transactions(self, since=None, until=None, undecided=False, include_gone=False):
         query = ('SELECT t.*,a.bank,d.kind,d.category,d.counts,d.linked,d.reasoning,d.confidence,d.question,d.by,d.at decided '
                  ',d.recurring,d.monthly_cents,d.coverage_months,d.series_key '
-                 'FROM transactions t JOIN accounts a ON a.uid=t.account LEFT JOIN decisions d ON d.id=t.id WHERE 1=1')
+                 ',n.display_title,n.merchant_name,n.merchant_brand_id,n.annotation_note,n.tags annotation_tags '
+                 ',n.confidence annotation_confidence,n.evidence annotation_evidence,n.by annotation_by '
+                 'FROM transactions t JOIN accounts a ON a.uid=t.account LEFT JOIN decisions d ON d.id=t.id '
+                 'LEFT JOIN transaction_annotations n ON n.id=t.id WHERE 1=1')
         args = []
         if since: query += ' AND t.day>=?'; args.append(since)
         if until: query += ' AND t.day<?'; args.append(until)
@@ -238,7 +246,7 @@ class Ledger:
                    (kind, str(key), encoded, now, now))
 
     def enqueue(self, kind, key, payload):
-        if kind not in ('transaction', 'owner_answer', 'question', 'explanation'):
+        if kind not in ('transaction', 'owner_answer', 'question', 'explanation', 'enrichment'):
             raise ValueError('Unknown audit job kind')
         with self.db() as db:
             self._enqueue(db, kind, key, payload, self.clock())
@@ -257,7 +265,7 @@ class Ledger:
         with self.db() as db:
             return [dict(r) for r in db.execute('SELECT * FROM audit_jobs WHERE state=? ORDER BY seq LIMIT ?', (state, limit))]
 
-    def claim_jobs(self, limit=80, lease_seconds=1200):
+    def claim_jobs(self, limit=80, lease_seconds=1200, kind=None):
         """Fence one auditor call; a second caller cannot claim while its lease is live."""
         now, token = self.clock(), uuid.uuid4().hex
         with self.db() as db:
@@ -267,7 +275,8 @@ class Ledger:
             if state['lease_token'] and state['process_pid'] and _process_alive(state['process_pid']):
                 return None
             db.execute("UPDATE audit_jobs SET state='pending',token=NULL WHERE state='running'")
-            jobs = [dict(r) for r in db.execute("SELECT * FROM audit_jobs WHERE state='pending' ORDER BY seq LIMIT ?", (limit,))]
+            jobs = [dict(r) for r in db.execute("SELECT * FROM audit_jobs WHERE state='pending' " +
+                    ("AND kind=? " if kind else "") + "ORDER BY seq LIMIT ?", (kind, limit) if kind else (limit,))]
             if not jobs:
                 return None
             db.execute('UPDATE audit_state SET lease_token=?,lease_until=?,updated=?,process_pid=NULL WHERE id=1',
@@ -290,11 +299,21 @@ class Ledger:
             if not db.execute('SELECT changes()').fetchone()[0]:
                 raise RuntimeError('Audit lease expired before process start')
 
-    def finish_claim(self, token, jobs, session_id, decisions, insights, replies, category_ops=()):
+    def finish_claim(self, token, jobs, session_id, decisions, insights, replies, category_ops=(), enrichments=()):
         with self.db() as db:
             state = db.execute('SELECT * FROM audit_state WHERE id=1').fetchone()
             if state['lease_token'] != token or state['lease_until'] <= self.clock():
                 raise RuntimeError('Audit lease expired; response discarded')
+            if jobs and all(j['kind'] == 'enrichment' for j in jobs) and (decisions or category_ops):
+                raise ValueError('Display enrichment cannot change accounting decisions')
+            requested = {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'enrichment'}
+            if requested - {item['id'] for item in enrichments}:
+                raise ValueError('Auditor response omitted a requested enrichment')
+            allowed_annotations = requested | {json.loads(j['payload'])['id'] for j in jobs if j['kind'] == 'transaction'}
+            for item in enrichments:
+                if item['id'] not in allowed_annotations:
+                    raise ValueError('Unrequested transaction enrichment')
+                self.annotate(item['id'], item, 'ai', db)
             answered = {r.get('job_seq') for r in replies if str(r.get('text') or '').strip()}
             if any(j['kind'] in ('question', 'explanation') and j['seq'] not in answered for j in jobs):
                 raise ValueError('Auditor response omitted a requested reply')
@@ -341,7 +360,7 @@ class Ledger:
             for job in jobs:
                 db.execute("UPDATE audit_jobs SET state='done',token=NULL,updated=? WHERE seq=? AND token=?",
                            (self.clock(), job['seq'], token))
-            if insights is not None:
+            if insights is not None and not all(j['kind'] == 'enrichment' for j in jobs):
                 db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', ('insights', json.dumps(insights)))
             db.execute('UPDATE audit_state SET session_id=?,lease_token=NULL,lease_until=NULL,process_pid=NULL,updated=? WHERE id=1',
                        (session_id, self.clock()))
@@ -353,6 +372,43 @@ class Ledger:
             db.execute("UPDATE audit_jobs SET state='pending',token=NULL,updated=? WHERE token=?", (self.clock(), token))
             db.execute('UPDATE audit_state SET lease_token=NULL,lease_until=NULL,process_pid=NULL,session_id=?,updated=? WHERE id=1',
                        (session_id if session_id is not None else state['session_id'], self.clock()))
+
+    def annotate(self, identity, item, by='owner', db=None):
+        """Separate display metadata; bank records and accounting decisions are immutable here."""
+        if db is None:
+            with self.db() as connection:
+                return self.annotate(identity, item, by, connection)
+        if by not in ('owner', 'ai'):
+            raise ValueError('Unknown annotation author')
+        source = db.execute('SELECT counterparty,description FROM transactions WHERE id=?', (identity,)).fetchone()
+        if not source:
+            raise KeyError(identity)
+        existing = db.execute('SELECT by FROM transaction_annotations WHERE id=?', (identity,)).fetchone()
+        if existing and existing['by'] == 'owner' and by != 'owner':
+            return False
+        fields = {}
+        for key, maximum in (('display_title', 140), ('merchant_name', 120), ('annotation_note', 1000), ('evidence', 1000)):
+            value = item.get(key, '')
+            if not isinstance(value, str) or len(value) > maximum:
+                raise ValueError('Invalid annotation ' + key)
+            fields[key] = value.strip()
+        if not fields['display_title'] or not fields['evidence']:
+            raise ValueError('Annotation needs a title and supporting evidence')
+        tags = item.get('tags', [])
+        confidence = item.get('confidence')
+        if not isinstance(tags, list) or len(tags) > 12 or any(not isinstance(t, str) or not t.strip() or len(t) > 40 for t in tags):
+            raise ValueError('Invalid annotation tags')
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError('Invalid annotation confidence')
+        brand = item.get('merchant_brand_id') or None
+        if brand and (not isinstance(brand, str) or brand not in BRAND_CATALOG or by == 'ai' and
+                      (confidence < .85 or not supported_brand(brand, ' '.join(value or '' for value in source)))):
+            raise ValueError('Brand identity lacks matching bank evidence')
+        db.execute('INSERT OR REPLACE INTO transaction_annotations VALUES(?,?,?,?,?,?,?,?,?,?)',
+                   (identity, fields['display_title'], fields['merchant_name'], brand, fields['annotation_note'],
+                    json.dumps(list(dict.fromkeys(t.strip() for t in tags)), ensure_ascii=False), confidence,
+                    fields['evidence'], by, self.clock()))
+        return True
 
     def audit_output(self, job_seq):
         with self.db() as db:
@@ -620,7 +676,17 @@ def summarise(ledger, today=None, insights=None):
 
 
 def public(row):
+    row = dict(row)
     return {k: row[k] for k in ('id', 'bank', 'status', 'day', 'amount_cents', 'currency', 'counterparty', 'description', 'kind',
                                 'category', 'counts', 'reasoning', 'confidence', 'question', 'by', 'recurring',
                                 'monthly_cents', 'series_key')} | {'linked': json.loads(row['linked'] or '[]'),
-                                                                  'coverage_months': json.loads(row['coverage_months'] or '[]')}
+                                                                  'coverage_months': json.loads(row['coverage_months'] or '[]')} | annotation_public(row)
+
+
+def annotation_public(row):
+    row = dict(row)
+    return {'display_title': row.get('display_title') or row.get('counterparty') or row.get('description') or 'Transaction',
+            'merchant_name': row.get('merchant_name') or '', 'merchant_brand_id': row.get('merchant_brand_id'),
+            'annotation_note': row.get('annotation_note') or '', 'tags': json.loads(row.get('annotation_tags') or '[]'),
+            'annotation_confidence': row.get('annotation_confidence'),
+            'annotation_evidence': row.get('annotation_evidence') or '', 'annotation_by': row.get('annotation_by')}
