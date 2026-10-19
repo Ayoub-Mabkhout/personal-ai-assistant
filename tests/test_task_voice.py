@@ -62,7 +62,7 @@ class TaskVoiceSourceTests(unittest.TestCase):
         # Typed follow-ups still use the durable stable-ID outbox.
         self.assertIn('NativeTasks.enqueueFollowup(a,id,text)', screens)
 
-    def test_microphone_permission_is_requested_only_by_the_existing_flow(self):
+    def test_microphone_permission_is_requested_only_by_the_app_and_new_task(self):
         requests = []
         for path in sorted(APP.glob('*.java')):
             text = path.read_text(encoding='utf-8')
@@ -70,7 +70,8 @@ class TaskVoiceSourceTests(unittest.TestCase):
             if path.name in ('NativeTaskScreens.java', 'TaskVoice.java', 'TaskTurns.java'):
                 self.assertNotIn('requestPermissions', text, path.name)
                 self.assertNotIn('SpeechRecognizer', text, path.name)
-        self.assertEqual(requests, ['MainActivity.java'])
+        # The app and the New task screen (which also opens over the lock screen) ask for the microphone themselves.
+        self.assertEqual(requests, ['MainActivity.java', 'QuickTaskActivity.java'])
         main = source('MainActivity.java')
         self.assertIn('requestMic(true,target)', main)
         self.assertIn('else taskVoice(task);', main)

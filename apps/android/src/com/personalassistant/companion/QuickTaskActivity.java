@@ -54,12 +54,12 @@ public final class QuickTaskActivity extends Activity {
         if("dictate".equals(TaskVoice.mode(this,VOICE))){stopDictation();status.setText("Finishing dictation…");return;}
         if(Cloud.prefs(this).getString("token","").isEmpty()){status.setText("Pair Companion first, while unlocked.");return;}
         if(TaskVoice.busy(this,VOICE)){status.setText("End the other voice conversation first.");return;}
-        // Microphone permission is only requested from the app itself, like every other voice entry point.
-        if(checkSelfPermission("android.permission.RECORD_AUDIO")!=android.content.pm.PackageManager.PERMISSION_GRANTED){status.setText("Allow the microphone in Companion first, then dictate here.");return;}
+        if(checkSelfPermission("android.permission.RECORD_AUDIO")!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{"android.permission.RECORD_AUDIO"},304);return;}
         try{startForegroundService(TaskVoice.intent(this,"dictate:"+VOICE));status.setText("Dictating · tap the microphone again to finish.");}
         catch(Exception error){status.setText("The microphone could not start. Try again.");}
     }
     private void stopDictation(){if("dictate".equals(TaskVoice.mode(this,VOICE))){Intent finish=TaskVoice.finish(this,VOICE);if(finish!=null)startService(finish);}}
+    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==304){if(grants.length>0&&grants[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)dictate();else status.setText("Allow the microphone to dictate.");}}
     @Override public void onResume(){super.onResume();input.postDelayed(()->{input.requestFocus();InputMethodManager keyboard=getSystemService(InputMethodManager.class);if(keyboard!=null)keyboard.showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);},150);}
     @Override public void onPause(){if(!sending)Cloud.prefs(this).edit().putString("quick_task_draft",input.getText().toString()).apply();super.onPause();}
     @Override public void onBackPressed(){back();}
