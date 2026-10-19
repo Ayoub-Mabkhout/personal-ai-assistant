@@ -18,6 +18,15 @@ public final class AndroidLogicProbe {
                 long at=Long.parseLong(f[1]);double latitude=Double.parseDouble(f[2]),longitude=Double.parseDouble(f[3]);
                 long[] times=DaylightTheme.sunTimes(at,latitude,longitude);
                 out.println((times==null?"null":times[0]+","+times[1])+"\t"+DaylightTheme.dark(at,latitude,longitude)+"\t"+DaylightTheme.nextChange(at,latitude,longitude));
+            }else if(f[0].equals("palette")){
+                long at=Long.parseLong(f[1]);double latitude=Double.parseDouble(f[2]),longitude=Double.parseDouble(f[3]),weather=Double.parseDouble(f[4]);
+                int[] p=DaylightPalette.at(at,latitude,longitude,weather);double[] s=DaylightPalette.sun(at,latitude,longitude);StringBuilder row=new StringBuilder();
+                for(int color:p)row.append(row.length()==0?"":",").append(String.format("%06X",color&0xFFFFFF));
+                out.println(row+"\t"+DaylightPalette.dark(p)+"\t"+s[0]+"\t"+s[1]);
+            }else if(f[0].equals("weather")){
+                out.println(DaylightPalette.weatherLevel(Integer.parseInt(f[1]),f[2].isEmpty()?Double.NaN:Double.parseDouble(f[2])));
+            }else if(f[0].equals("keys")){
+                for(int[] key:new int[][]{DaylightPalette.DAY_KEY,DaylightPalette.DAWN_KEY,DaylightPalette.GOLDEN_KEY,DaylightPalette.NIGHT_KEY,DaylightPalette.BLUE_HOUR_KEY,DaylightPalette.EMBER_KEY}){StringBuilder row=new StringBuilder();for(int color:key)row.append(row.length()==0?"":",").append(String.format("%06X",color&0xFFFFFF));out.println(row);}
             }else if(f[0].equals("split")){
                 out.println(String.join("\u001f",ItemSplitter.split(f.length>1?f[1]:null)));
             }else if(f[0].equals("status")){

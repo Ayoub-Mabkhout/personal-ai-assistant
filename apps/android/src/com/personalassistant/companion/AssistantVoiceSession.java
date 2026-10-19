@@ -32,7 +32,7 @@ public class AssistantVoiceSession extends VoiceInteractionSession {
     }
     private void talk(){try{if(getContext().checkSelfPermission("android.permission.RECORD_AUDIO")==android.content.pm.PackageManager.PERMISSION_GRANTED)getContext().startForegroundService(new Intent(getContext(),VoiceService.class).setAction(VoiceService.TALK));else getContext().startActivity(new Intent(getContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception error){Cloud.prefs(getContext()).edit().putString("voice_status","Open voice controls to start microphone").commit();}}
     @Override public void onShow(Bundle args,int flags){
-        super.onShow(args,flags);if(ui!=null&&AppUi.dark(getContext())!=ui.dark)setContentView(onCreateContentView());
+        super.onShow(args,flags);if(ui!=null&&AppUi.stale(getContext(),ui,System.currentTimeMillis()))setContentView(onCreateContentView());
         styleWindow();
         if(!watching){Cloud.prefs(getContext()).registerOnSharedPreferenceChangeListener(prefs);watching=true;}refresh();talk();
     }

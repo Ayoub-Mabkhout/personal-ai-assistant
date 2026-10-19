@@ -40,6 +40,17 @@ public final class DaylightThemeHarness {
         DaylightTheme.Refresh released=DaylightTheme.refresh(false,true,true,day[1]+1000,DaylightTheme.nextChange(day[1]+1000,0,0));
         check(released.apply,"Deferred transition applies when host becomes idle");
         check(DaylightTheme.refresh(false,false,true,equinox,Long.MAX_VALUE).delay==Long.MAX_VALUE,"System fallback needs no solar polling timer");
+        int[] dayPalette=DaylightPalette.blend(40,.5,0),nightPalette=DaylightPalette.blend(-30,.5,0),dusk=DaylightPalette.blend(2,0,0);
+        check(java.util.Arrays.equals(dayPalette,DaylightPalette.fixed(false))&&java.util.Arrays.equals(nightPalette,DaylightPalette.fixed(true)),"Daylight plateaus are the Light and Dark palettes");
+        check(!DaylightPalette.dark(dayPalette)&&DaylightPalette.dark(nightPalette)&&!DaylightPalette.dark(dayPalette)&&DaylightPalette.dark(nightPalette),"Foreground polarity follows the palette");
+        check(!DaylightPalette.differs(dusk,DaylightPalette.blend(2.05,0,0)),"A minute of drift does not repaint");
+        check(DaylightPalette.differs(dusk,dayPalette)&&DaylightPalette.differs(dusk,DaylightPalette.blend(-1,0,0)),"Perceptible drift or a polarity flip repaints");
+        DaylightTheme.Refresh drift=DaylightPalette.refresh(dusk,dayPalette,false);
+        check(!drift.apply&&drift.delay==1000L,"Capture defers a Daylight repaint without dropping it");
+        check(DaylightPalette.refresh(dusk,dayPalette,true).apply,"Idle host repaints the drifted palette");
+        DaylightTheme.Refresh steady=DaylightPalette.refresh(dusk,dusk,true);
+        check(!steady.apply&&steady.delay==DaylightPalette.TICK,"Daylight rechecks every minute while foreground");
+        boolean invalidPlace=false;try{DaylightPalette.at(equinox,Double.NaN,0,0);}catch(IllegalArgumentException expected){invalidPlace=true;}check(invalidPlace,"Unknown places require a runtime System fallback, never a baked-in home");
         System.out.println("{\"checks\":"+checks+",\"passed\":true}");
     }
 }

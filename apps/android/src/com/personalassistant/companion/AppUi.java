@@ -28,46 +28,73 @@ final class AppUi {
     private static final java.util.HashMap<Integer,Typeface> FACES=new java.util.HashMap<>();private static java.io.File fontFile;
 
     /** Null when built for a non-Activity host such as the assistant overlay; window() and sheets need an Activity. */
-    final Activity activity;final Context context;final boolean dark;final float density;
+    final Activity activity;final Context context;final boolean dark;final float density;final String mode;
     final int background,surface,surfaceAlt,text,muted,accent,onAccent,accentSoft,stroke,strokeStrong;
     final int success,successSoft,warning,warningSoft,danger,dangerSoft,info,infoSoft,glow;
     final int[] aurora;
+    /** Every token as shown, in DaylightPalette order; the theme watcher compares it with the palette now due. */
+    final int[] palette;
 
     AppUi(Activity activity){this(activity,activity);}
     AppUi(Context context){this(context,context instanceof Activity?(Activity)context:null);}
     private AppUi(Context context,Activity activity){font(context);
-        this.context=context;this.activity=activity;dark=dark(context);density=context.getResources().getDisplayMetrics().density;
-        background=pick(0xFFFAF5EC,0xFF130E1C);surface=pick(0xFFFFFEFB,0xFF1D1729);surfaceAlt=pick(0xFFF3ECE4,0xFF281F38);
-        text=pick(0xFF231A2E,0xFFF5F0FB);muted=pick(0xFF675C73,0xFFADA3BF);
-        accent=pick(0xFF5B35D5,0xFFB39CFF);onAccent=pick(0xFFFFFFFF,0xFF1B1230);accentSoft=pick(0xFFECE5FF,0xFF2E2357);
-        stroke=pick(0xFFE7DDD3,0xFF322849);strokeStrong=pick(0xFF8E829E,0xFF8479A3);
-        success=pick(0xFF17784A,0xFF74DFA5);successSoft=pick(0xFFE0F2E7,0xFF173A2A);
-        warning=pick(0xFF965800,0xFFFFC766);warningSoft=pick(0xFFFFEFCF,0xFF3E2D10);
-        danger=pick(0xFFB3263E,0xFFFF8FA0);dangerSoft=pick(0xFFFCE3E7,0xFF44192A);
-        info=pick(0xFF3D52CC,0xFFA4B5FF);infoSoft=pick(0xFFE3E8FF,0xFF232B5C);
-        aurora=dark?new int[]{0xFF8E6BFF,0xFFC46CF0,0xFFF08FC4}:new int[]{0xFF5B35D5,0xFFA23BC6,0xFFCC3F78};glow=pick(0xFF8EA2FF,0xFF8FA8FF);
+        this.context=context;this.activity=activity;density=context.getResources().getDisplayMetrics().density;long at=System.currentTimeMillis();
+        mode=mode(context);int[] p=palette(context,at);palette=p;dark=DAYLIGHT.equals(mode)?DaylightPalette.dark(p):dark(context,at);
+        background=p[DaylightPalette.BACKGROUND];surface=p[DaylightPalette.SURFACE];surfaceAlt=p[DaylightPalette.SURFACE_ALT];text=p[DaylightPalette.TEXT];muted=p[DaylightPalette.MUTED];
+        accent=p[DaylightPalette.ACCENT];onAccent=p[DaylightPalette.ON_ACCENT];accentSoft=p[DaylightPalette.ACCENT_SOFT];stroke=p[DaylightPalette.STROKE];strokeStrong=p[DaylightPalette.STROKE_STRONG];
+        success=p[DaylightPalette.SUCCESS];successSoft=p[DaylightPalette.SUCCESS_SOFT];warning=p[DaylightPalette.WARNING];warningSoft=p[DaylightPalette.WARNING_SOFT];
+        danger=p[DaylightPalette.DANGER];dangerSoft=p[DaylightPalette.DANGER_SOFT];info=p[DaylightPalette.INFO];infoSoft=p[DaylightPalette.INFO_SOFT];
+        glow=p[DaylightPalette.GLOW];aurora=new int[]{p[DaylightPalette.AURORA],p[DaylightPalette.AURORA+1],p[DaylightPalette.AURORA+2]};
     }
-    private int pick(int light,int night){return dark?night:light;}
+    /** Daylight is the default for anyone who never picked a mode; an explicit Sunrise & sunset choice stays as it is. */
+    static final String DAYLIGHT="daylight";
+    static String mode(Context c){return Cloud.prefs(c).getString("ui_theme",DAYLIGHT);}
     /** Sun follows System until this deployment explicitly configures private coordinates. */
     private static Double coordinate(Context c,String key){try{return Double.valueOf(Cloud.prefs(c).getString(key,""));}catch(RuntimeException error){return null;}}
     static boolean daylightConfigured(Context c){Double latitude=coordinate(c,"daylight_latitude"),longitude=coordinate(c,"daylight_longitude");return latitude!=null&&longitude!=null&&DaylightTheme.valid(latitude,longitude);}
+    /** Daylight place: this phone's last known coarse location, then privately configured coordinates, then System when no runtime location is available. */
+    static double[] daylightPlace(Context c){
+        Double latitude=coordinate(c,"daylight_device_latitude"),longitude=coordinate(c,"daylight_device_longitude");
+        if(Cloud.prefs(c).getBoolean("daylight_use_location",true)&&latitude!=null&&longitude!=null&&DaylightTheme.valid(latitude,longitude))return new double[]{latitude,longitude};
+        if(daylightConfigured(c))return new double[]{coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude")};
+        return null;
+    }
+    /** Meridian pages keep the Dusk Aurora Light and Dark palettes and switch as the sun crosses the horizon; the sky itself is painted by MeridianBackdrop. */
+    static int[] palette(Context c,long at){if(!DAYLIGHT.equals(mode(c)))return DaylightPalette.fixed(dark(c,at));double[] place=meridianPlace(c);return DaylightPalette.fixed(DaylightPalette.sun(MeridianSky.clock(at),place[0],place[1])[0]<DaylightPalette.HANDOFF);}
+    /** The Daylight place, or else a rough one from the time zone (its UTC offset and region) so the sky still follows the sun. */
+    static double[] meridianPlace(Context c){double[] place=daylightPlace(c);return place!=null?place:zonePlace(TimeZone.getDefault());}
+    static double[] zonePlace(TimeZone zone){
+        String id=zone.getID();double longitude=Math.max(-180,Math.min(180,zone.getRawOffset()/3600000d*15)),latitude=id.startsWith("Europe/")?48:id.startsWith("America/")?(id.contains("Argentina")||id.contains("Sao_Paulo")||id.contains("Santiago")||id.contains("Lima")?-20:38):id.startsWith("Asia/")?30:id.startsWith("Africa/")?5:id.startsWith("Australia/")?-30:id.startsWith("Pacific/")?-15:id.startsWith("Antarctica/")?-75:45;
+        return new double[]{latitude,longitude};
+    }
+    private static boolean systemDark(Context c){return (c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;}
     static boolean dark(Context c){return dark(c,System.currentTimeMillis());}
-    static boolean dark(Context c,long at){boolean system=(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;return DaylightTheme.resolve(Cloud.prefs(c).getString("ui_theme","sun"),system,at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
-    static long nextThemeChange(Context c,long at){if(!"sun".equals(Cloud.prefs(c).getString("ui_theme","sun"))||!daylightConfigured(c))return Long.MAX_VALUE;return DaylightTheme.nextChange(at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
+    static boolean dark(Context c,long at){
+        String mode=mode(c);if(DAYLIGHT.equals(mode))return DaylightPalette.dark(palette(c,at));
+        boolean system=(c.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;return DaylightTheme.resolve(mode,system,at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));
+    }
+    static long nextThemeChange(Context c,long at){String mode=mode(c);if(DAYLIGHT.equals(mode))return at+DaylightPalette.TICK;if(!"sun".equals(mode)||!daylightConfigured(c))return Long.MAX_VALUE;return DaylightTheme.nextChange(at,coordinate(c,"daylight_latitude"),coordinate(c,"daylight_longitude"));}
+    /** True when the shown tokens no longer match: another mode, a polarity flip, or a perceptible Daylight drift. */
+    static boolean stale(Context c,AppUi shown,long at){int[] wanted=palette(c,at);if(java.util.Arrays.equals(shown.palette,wanted))return false;return !shown.mode.equals(mode(c))||DaylightPalette.differs(shown.palette,wanted);}
     static void theme(Activity activity){activity.setTheme(dark(activity)?R.style.AssistantDarkTheme:R.style.AssistantLightTheme);}
-    /** Foreground-only scheduling; the host decides when recreation is safe. */
+    /** Foreground-only scheduling; the host decides when recreation is safe. Daylight rechecks each minute and repaints only on a perceptible drift. */
     static final class ThemeWatcher {
-        final Activity activity;final BooleanSupplier displayedDark,ready;final Runnable apply;
+        final Activity activity;final java.util.function.Supplier<AppUi> shown;final BooleanSupplier ready;final Runnable apply;
         final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
         boolean active,refreshPending;
         final Runnable evaluate=()->evaluate();
         final BroadcastReceiver clock=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){check();}};
-        final SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if("ui_theme".equals(key)||"daylight_latitude".equals(key)||"daylight_longitude".equals(key))check();};
-        ThemeWatcher(Activity activity,BooleanSupplier displayedDark,BooleanSupplier ready,Runnable apply){this.activity=activity;this.displayedDark=displayedDark;this.ready=ready;this.apply=apply;}
+        final SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if(key!=null&&(key.equals("ui_theme")||key.startsWith("daylight_")))check();};
+        ThemeWatcher(Activity activity,java.util.function.Supplier<AppUi> shown,BooleanSupplier ready,Runnable apply){this.activity=activity;this.shown=shown;this.ready=ready;this.apply=apply;}
         void resume(){if(active)return;active=true;refreshPending=false;IntentFilter filter=new IntentFilter(Intent.ACTION_TIME_CHANGED);filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);filter.addAction(Intent.ACTION_DATE_CHANGED);filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);if(Build.VERSION.SDK_INT>=33)activity.registerReceiver(clock,filter,Context.RECEIVER_NOT_EXPORTED);else activity.registerReceiver(clock,filter);Cloud.prefs(activity).registerOnSharedPreferenceChangeListener(preferences);check();}
         void stop(){if(!active)return;active=false;main.removeCallbacks(evaluate);Cloud.prefs(activity).unregisterOnSharedPreferenceChangeListener(preferences);activity.unregisterReceiver(clock);}
         void check(){main.removeCallbacks(evaluate);if(active&&!refreshPending)main.post(evaluate);}
-        private void evaluate(){if(!active||refreshPending||activity.isFinishing()||activity.isDestroyed())return;long at=System.currentTimeMillis();DaylightTheme.Refresh plan=DaylightTheme.refresh(displayedDark.getAsBoolean(),dark(activity,at),ready.getAsBoolean(),at,nextThemeChange(activity,at));if(plan.apply){refreshPending=true;apply.run();}else if(plan.delay!=Long.MAX_VALUE)main.postDelayed(evaluate,plan.delay);}
+        private void evaluate(){
+            main.removeCallbacks(evaluate);if(!active||refreshPending||activity.isFinishing()||activity.isDestroyed())return;long at=System.currentTimeMillis();
+            if(DAYLIGHT.equals(mode(activity))){DaylightLocation.refresh(activity,at);DaylightWeather.refresh(activity,at);}
+            DaylightTheme.Refresh plan=DaylightTheme.refresh(false,stale(activity,shown.get(),at),ready.getAsBoolean(),at,nextThemeChange(activity,at));
+            if(plan.apply){refreshPending=true;apply.run();}else if(plan.delay!=Long.MAX_VALUE)main.postDelayed(evaluate,plan.delay);
+        }
     }
     int dp(float n){return Math.round(n*density);}
     float dpf(float n){return n*density;}
@@ -134,7 +161,7 @@ final class AppUi {
     /** Ripple that follows a rounded outline; face may be null for transparent rows. */
     RippleDrawable pressable(Drawable face,float radiusDp){GradientDrawable mask=new GradientDrawable();mask.setColor(Color.WHITE);mask.setCornerRadius(dpf(radiusDp));return new RippleDrawable(ColorStateList.valueOf(alpha(accent,.16f)),face,mask);}
     Drawable aurora(float angle,boolean threeStops){return new Aurora(threeStops?aurora:new int[]{aurora[0],aurora[1]},angle,-1,dpf(1));}
-    Drawable pageBackground(){return new Wash(this);}
+    Drawable pageBackground(){return DAYLIGHT.equals(mode)?new MeridianBackdrop(this):new Wash(this);}
     /** Card face: hairline everywhere, plus a faint lavender top highlight in dark mode. */
     Drawable cardFace(float radiusDp){GradientDrawable base=outline(surface,radiusDp,stroke,1);return dark?new LayerDrawable(new Drawable[]{base,new TopLight(0x33B39CFF,dpf(radiusDp)*.6f,dpf(1))}):base;}
     Drawable sheetFace(){float r=dpf(28);GradientDrawable d=new GradientDrawable();d.setColor(surface);d.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});d.setStroke(Math.max(1,dp(1)),stroke);return d;}
@@ -307,6 +334,12 @@ final class AppUi {
             "back","M19 12 H5|M11 6 L5 12 L11 18",
             "down","M6 9.5 L12 15.5 L18 9.5",
             "up","M6 14.5 L12 8.5 L18 14.5",
+            "weather-sun","O12 12 4|M12 2.5 V4.5|M12 19.5 V21.5|M2.5 12 H4.5|M19.5 12 H21.5|M5.3 5.3 L6.7 6.7|M17.3 17.3 L18.7 18.7|M5.3 18.7 L6.7 17.3|M17.3 6.7 L18.7 5.3",
+            "weather-moon","M20 14.5 A8 8 0 1 1 9.5 4 A6.5 6.5 0 0 0 20 14.5 Z",
+            "weather-cloud","M7 18.5 H17 A4 4 0 0 0 17.4 10.5 A5.5 5.5 0 0 0 6.8 11.6 A3.5 3.5 0 0 0 7 18.5 Z",
+            "weather-rain","M7 15 H17 A3.6 3.6 0 0 0 17.3 7.8 A5 5 0 0 0 7.2 8.8 A3.1 3.1 0 0 0 7 15 Z|M8.5 18 L7.5 20.5|M12.5 18 L11.5 20.5|M16.5 18 L15.5 20.5",
+            "weather-snow","M7 15 H17 A3.6 3.6 0 0 0 17.3 7.8 A5 5 0 0 0 7.2 8.8 A3.1 3.1 0 0 0 7 15 Z|FO8 19 1|FO12 21 1|FO16 19 1",
+            "weather-fog","M4 8 H20|M6 12 H18|M4 16 H20|M8 20 H16",
             "plus","M12 5 V19|M5 12 H19",
             "refresh","M20 12 A8 8 0 1 1 17.7 6.3 L20 8.5|M20 4 V8.5 H15.5",
             "recipe","M12 7 C10.5 5.7 8.2 5 4.5 5.2 V18.2 C8.2 18 10.5 18.7 12 20 C13.5 18.7 15.8 18 19.5 18.2 V5.2 C15.8 5 13.5 5.7 12 7 Z|M12 7 V20",

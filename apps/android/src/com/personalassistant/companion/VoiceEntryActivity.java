@@ -15,7 +15,7 @@ public final class VoiceEntryActivity extends Activity {
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener preferences=(p,key)->{if("voice_level".equals(key)&&meter!=null){boolean mic=AppUi.micActive(this);float level=AppUi.level(this);meter.value(level,mic);if(talk!=null)talk.level(level,mic&&orbLive);}else refresh();};
     private final BroadcastReceiver voiceState=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){refresh();}};
     @Override public void onCreate(Bundle state){
-        AppUi.theme(this);super.onCreate(state);startPending=state==null||state.getBoolean("startPending",false);if(state!=null)themeBusyUntil=SystemClock.elapsedRealtime()+Math.min(2000,Math.max(0,state.getLong("themeBusyRemaining",0)));ui=new AppUi(this);themeWatcher=new AppUi.ThemeWatcher(this,()->ui.dark,this::themeReady,this::recreate);ui.window();
+        AppUi.theme(this);super.onCreate(state);startPending=state==null||state.getBoolean("startPending",false);if(state!=null)themeBusyUntil=SystemClock.elapsedRealtime()+Math.min(2000,Math.max(0,state.getLong("themeBusyRemaining",0)));ui=new AppUi(this);themeWatcher=new AppUi.ThemeWatcher(this,()->ui,this::themeReady,this::recreate);ui.window();
         if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(true);setTurnScreenOn(true);}
         else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         boolean locked=getSystemService(KeyguardManager.class).isDeviceLocked();

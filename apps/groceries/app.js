@@ -55,13 +55,13 @@ function dismissToast(){
   toasts.exit=setTimeout(()=>{box.hidden=true;box.classList.remove('out')},reduced()?0:150);
 }
 
-const themeApi=window.groceriesTheme||{state:()=>({mode:'sun',resolved:'light',next:0}),set(){},subscribe(){}};
-const MODES=['sun','system','light','dark'],MODE_NAME={sun:'Sunrise & sunset',system:'System',light:'Light',dark:'Dark'},MODE_ICON={sun:'i-sunrise',system:'i-monitor',light:'i-sun',dark:'i-moon'};
+const themeApi=window.groceriesTheme||{state:()=>({mode:'daylight',resolved:'light',next:0}),set(){},subscribe(){}};
+const MODES=['daylight','sun','system','light','dark'],MODE_NAME={daylight:'Meridian',sun:'Sunrise & sunset',system:'System',light:'Light',dark:'Dark'},MODE_ICON={daylight:'i-sunrise',sun:'i-sunrise',system:'i-monitor',light:'i-sun',dark:'i-moon'};
 const clock=new Intl.DateTimeFormat([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 // Rounded up so the named minute never precedes the actual switch.
 function modeText(){
   const state=themeApi.state(),name=MODE_NAME[state.mode];
-  return state.mode!=='sun'?name:state.next?name+' · '+state.resolved+' until '+clock.format(Math.ceil(state.next/60000)*60000):name+' · follows System';
+  return state.mode==='daylight'?name+(state.palette?' · follows the sun':' · follows System until configured'):state.mode!=='sun'?name:state.next?name+' · '+state.resolved+' until '+clock.format(Math.ceil(state.next/60000)*60000):name+' · follows System';
 }
 function showMode(){
   $('theme').setAttribute('aria-label','Colour mode: '+modeText()+'. Change.');

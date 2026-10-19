@@ -24,7 +24,7 @@ function environment(now=Date.parse('2026-03-20T12:00:00Z'),dark=false){
   class Event {constructor(type){this.type=type}}
   const context={Date:Clock,Intl,Event,Math,Number,JSON,module:{exports:{}},
     localStorage:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)},
-    document:{hidden:false,documentElement:{dataset:{}},querySelectorAll:()=>[],addEventListener:(name,fn)=>documentEvents.set(name,fn)},
+    document:{hidden:false,documentElement:{dataset:{},style:{props:{},setProperty(name,value){this.props[name]=value},removeProperty(name){delete this.props[name]}}},querySelectorAll:()=>[],addEventListener:(name,fn)=>documentEvents.set(name,fn)},
     matchMedia:()=>query,addEventListener:(name,fn)=>{const list=events.get(name)||[];list.push(fn);events.set(name,list)},
     dispatchEvent:event=>(events.get(event.type)||[]).forEach(fn=>fn(event)),
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,at:now+delay});return id},clearTimeout:id=>timers.delete(id)};
@@ -59,7 +59,8 @@ for(const p of [null,{}, {latitude:true,longitude:0},{latitude:'0',longitude:0},
     def test_missing_preferences_follow_system_and_explicit_modes_persist(self):
         self.run_js(r'''
 const e=environment(undefined,true),controller=e.api.create('isolated-theme','themechange');
-assert.equal(controller.state().mode,'sun');assert.equal(controller.resolved(),'dark');assert.equal(controller.state().next,null);
+assert.equal(controller.state().mode,'daylight');assert.equal(controller.resolved(),'dark');
+controller.set('sun');assert.equal(controller.resolved(),'dark');assert.equal(controller.state().next,null);
 assert.match(controller.describe(),/follows System/);e.system(false);assert.equal(controller.resolved(),'light');
 controller.set('dark');assert.equal(e.values.get('isolated-theme'),'dark');e.system(false);assert.equal(controller.resolved(),'dark');
 controller.set('light');assert.equal(controller.resolved(),'light');controller.set('unsupported');assert.equal(controller.mode(),'light');
@@ -78,7 +79,7 @@ e.api.configure(null);assert.equal(e.values.has('assistant-daylight'),false);
 
     def test_next_boundary_timer_and_foreground_refresh(self):
         self.run_js(r'''
-const e=environment(),controller=e.api.create('isolated-theme','themechange');let notifications=0;
+const e=environment(),controller=e.api.create('isolated-theme','themechange');controller.set('sun');let notifications=0;
 controller.subscribe(()=>notifications++);e.api.configure({latitude:0,longitude:0});
 assert.equal(controller.resolved(),'light');const boundary=controller.state().next;
 assert.equal(e.timers.size,1);e.advance(Math.ceil(boundary)+2);assert.equal(controller.resolved(),'dark');
@@ -93,6 +94,20 @@ const controller=e.api.create('isolated-theme','themechange');assert.equal(contr
 controller.set('light');assert.equal(controller.resolved(),'light');e.event('focus');assert.equal(controller.resolved(),'light');
 ''')
 
+    def test_daylight_is_the_default_and_paints_the_continuous_palette(self):
+        self.run_js(r'''
+const noon=Date.parse('2026-03-20T11:00:00Z'),e=environment(noon,true),style=e.context.document.documentElement.style.props;e.api.configure({latitude:45,longitude:10});const controller=e.api.create('isolated-theme','themechange');
+assert.equal(controller.mode(),'daylight');assert.equal(controller.resolved(),'light');assert.equal(e.context.document.documentElement.dataset.theme,'light');
+assert.equal(style['--bg'],'#FAF5EC');assert.equal(style['--background'],'#FAF5EC');assert.equal(style['--g1-rgb'],'91,53,213');
+assert.match(controller.describe(),/Meridian/);assert.equal(e.timers.size,1);
+e.advance(Date.parse('2026-03-20T17:10:00Z'));assert.notEqual(style['--bg'],'#FAF5EC');
+e.advance(Date.parse('2026-03-20T19:40:00Z'));assert.equal(controller.resolved(),'dark');assert.equal(e.context.document.documentElement.dataset.theme,'dark');
+e.advance(Date.parse('2026-03-20T23:00:00Z'));assert.equal(style['--bg'],'#130E1C');assert.equal(style['--text'],'#F5F0FB');
+e.system(false);assert.equal(controller.resolved(),'dark');
+controller.set('light');assert.equal(style['--bg'],undefined);assert.equal(controller.resolved(),'light');
+e.values.set('isolated-theme','unknown');e.event('storage',{key:'isolated-theme'});assert.equal(controller.mode(),'daylight');
+const p=e.api.palette(noon,{latitude:0,longitude:0},0);assert.equal(p.length,22);assert.equal(e.api.dark(p),false);
+''')
 
 class TaskWebPreferenceTests(unittest.TestCase):
     def test_owner_preferences_are_read_only_scoped_and_not_in_public_assets(self):

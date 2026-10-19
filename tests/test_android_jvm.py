@@ -1,7 +1,7 @@
 """Companion classes that need no Android framework, compiled with javac and driven through tests/jvm/AndroidLogicProbe.java.
 
 Covers the sunrise and sunset maths behind the Sunrise & sunset theme (synthetic coordinates only; deployments configure
-the real place privately), quick-add splitting, the voice status wording shared by the Voice tab, the locked entry
+the real place privately), the continuous Daylight palette (WCAG AA through the whole day, polarity flips, weather), quick-add splitting, the voice status wording shared by the Voice tab, the locked entry
 and the assistant overlay, the features checklist rules (offline replay, ordering, folding, retry outcomes) and the task
 voice rules (including Stop dictation), and runs tests/jvm/DaylightThemeHarness.java. Skipped where no JDK is installed."""
 import json
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPANION = ROOT / 'apps/android/src/com/personalassistant/companion'
 PROBE = ROOT / 'tests/jvm/AndroidLogicProbe.java'
 HARNESS = ROOT / 'tests/jvm/DaylightThemeHarness.java'
-SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java', 'TaskTurns.java', 'CaptureTurnPolicy.java')] + [PROBE, HARNESS]
+SOURCES = [COMPANION / name for name in ('DaylightTheme.java', 'DaylightPalette.java', 'ItemSplitter.java', 'VoiceStatus.java', 'FeatureBoard.java', 'TaskTurns.java', 'CaptureTurnPolicy.java')] + [PROBE, HARNESS]
 MAIN = 'com.personalassistant.companion.AndroidLogicProbe'
 # Synthetic round values; none of them stands for a real person's location.
 PLACES = ((0.0, 0.0), (35.0, 120.0), (-33.0, -75.0))
@@ -122,6 +122,157 @@ class DaylightThemeTests(unittest.TestCase):
         result = json.loads(run.stdout.strip().splitlines()[-1])
         self.assertTrue(result['passed'])
         self.assertGreater(result['checks'], 20)
+
+
+TOKENS = ('background surface surfaceAlt text muted accent onAccent accentSoft stroke strokeStrong success successSoft warning '
+          'warningSoft danger dangerSoft info infoSoft glow aurora0 aurora1 aurora2').split()
+# Text and accent pairs that carry words or icons; each must stay WCAG AA (4.5:1) through the whole cycle.
+AA_PAIRS = [('text', 'background'), ('muted', 'background'), ('accent', 'background'), ('text', 'surface'), ('muted', 'surface'),
+            ('accent', 'surface'), ('text', 'surfaceAlt'), ('muted', 'surfaceAlt'), ('onAccent', 'accent'), ('onAccent', 'aurora0'),
+            ('onAccent', 'aurora1'), ('accent', 'accentSoft'), ('success', 'background'), ('warning', 'background'), ('danger', 'background'),
+            ('info', 'background'), ('success', 'successSoft'), ('warning', 'warningSoft'), ('danger', 'dangerSoft'), ('info', 'infoSoft')]
+# Neutral synthetic places, from the tropics to beyond the polar circle.
+DAYLIGHT_PLACES = ((45.0, 10.0), (0.0, 0.0), (-33.0, -75.0), (35.0, 120.0), (66.0, 25.0), (78.0, 15.0))
+DAYLIGHT_DAYS = (datetime(2026, 3, 20, tzinfo=timezone.utc), datetime(2026, 6, 21, tzinfo=timezone.utc),
+                 datetime(2026, 9, 23, tzinfo=timezone.utc), datetime(2026, 12, 21, tzinfo=timezone.utc))
+
+
+def channel(value):
+    value /= 255
+    return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+
+def luminance(color):
+    return 0.2126 * channel(color >> 16 & 255) + 0.7152 * channel(color >> 8 & 255) + 0.0722 * channel(color & 255)
+
+
+def contrast(a, b):
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def oklab(color):
+    r, g, b = (channel(color >> shift & 255) for shift in (16, 8, 0))
+    l, m, s = (math.copysign(abs(v) ** (1 / 3), v) for v in (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b,
+                                                            0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b,
+                                                            0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b))
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+
+def elevation(moment, latitude, longitude):
+    """Solar elevation in degrees from the NOAA general solar position (fractional year) equations, independent of the app."""
+    gamma = 2 * math.pi / 365 * (moment.timetuple().tm_yday - 1 + (moment.hour - 12) / 24)
+    equation = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma) - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma))
+    declination = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma) - 0.006758 * math.cos(2 * gamma)
+                   + 0.000907 * math.sin(2 * gamma) - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
+    solar = moment.hour * 60 + moment.minute + moment.second / 60 + equation + 4 * longitude
+    hour = math.radians(solar / 4 - 180)
+    phi = math.radians(latitude)
+    return 90 - math.degrees(math.acos(math.sin(phi) * math.sin(declination) + math.cos(phi) * math.cos(declination) * math.cos(hour)))
+
+
+@unittest.skipUnless(JAVAC and JAVA, 'A JDK is needed to compile the companion classes')
+class DaylightPaletteTests(unittest.TestCase):
+    def palettes(self, instants, place, weather=0.0):
+        rows = ask(['palette\t%d\t%s\t%s\t%s' % (at, place[0], place[1], weather) for at in instants])
+        self.assertEqual(len(rows), len(instants))
+        result = []
+        for row in rows:
+            colors, dark, height, hour = row.split('\t')
+            result.append(([int(c, 16) for c in colors.split(',')], dark == 'true', float(height), float(hour)))
+        return result
+
+    def day(self, start, step_minutes):
+        return [ms(start) + n * step_minutes * 60000 for n in range(24 * 60 // step_minutes)]
+
+    def test_every_moment_of_the_day_keeps_text_and_accent_contrast_wcag_aa(self):
+        worst = {}
+        for place in DAYLIGHT_PLACES:
+            for start in DAYLIGHT_DAYS:
+                for weather in (0.0, 0.5, 1.0):
+                    for palette, _, height, _ in self.palettes(self.day(start, 6), place, weather):
+                        values = dict(zip(TOKENS, palette))
+                        for front, back in AA_PAIRS:
+                            ratio = contrast(values[front], values[back])
+                            if ratio < worst.get((front, back), (99,))[0]:
+                                worst[(front, back)] = (ratio, place, str(start.date()), weather, round(height, 2))
+        failing = {pair: value for pair, value in worst.items() if value[0] < 4.5}
+        self.assertEqual(failing, {})
+        self.assertEqual(set(worst), set(AA_PAIRS))
+
+    def test_bar_icons_follow_background_luminance_and_text_polarity(self):
+        for place in DAYLIGHT_PLACES[:3]:
+            for palette, dark, _, _ in self.palettes(self.day(DAYLIGHT_DAYS[0], 4), place):
+                background, text = palette[0], palette[3]
+                self.assertEqual(dark, luminance(background) < 0.179)
+                self.assertEqual(dark, luminance(text) > luminance(background))
+
+    def test_surface_colours_remain_continuous_across_foreground_flips(self):
+        for place in DAYLIGHT_PLACES[:4]:
+            rows = self.palettes(self.day(DAYLIGHT_DAYS[0], 1), place)
+            flips = [i for i in range(1, len(rows)) if rows[i][1] != rows[i-1][1]]
+            self.assertEqual(len(flips), 2)
+            for i in flips:
+                for token in [0, 1, 2, 7]:
+                    self.assertLess(math.dist(oklab(rows[i-1][0][token]), oklab(rows[i][0][token])), .025)
+
+    def test_colours_move_smoothly_between_the_two_polarity_flips(self):
+        for place in ((45.0, 10.0), (66.0, 25.0)):
+            for start in DAYLIGHT_DAYS:
+                rows = self.palettes(self.day(start, 1), place)
+                for before, after in zip(rows, rows[1:]):
+                    if before[1] != after[1]:
+                        continue
+                    step = max(math.dist(oklab(before[0][i]), oklab(after[0][i])) for i in [0, 1, 2, 7, 8, 11, 13, 15, 17, 18])
+                    self.assertLess(step, 0.02, (place, str(start.date())))
+
+    def test_day_and_night_plateaus_are_the_light_and_dark_palettes(self):
+        keys = [[int(c, 16) for c in row.split(',')] for row in ask(['keys'])]
+        light, night = keys[0], keys[3]
+        self.assertEqual((light[0], light[3], light[5]), (0xFAF5EC, 0x231A2E, 0x5B35D5))
+        self.assertEqual((night[0], night[3], night[5]), (0x130E1C, 0xF5F0FB, 0xB39CFF))
+        noon, midnight = self.palettes([ms(datetime(2026, 6, 21, 11, tzinfo=timezone.utc)), ms(datetime(2026, 6, 21, 23, tzinfo=timezone.utc))], (45.0, 10.0))
+        self.assertEqual(noon[0], light)
+        self.assertEqual(midnight[0], night)
+        self.assertTrue(all(len(row) == len(TOKENS) for row in keys))
+
+    def test_solar_elevation_agrees_with_an_independent_solar_model(self):
+        moments = [datetime(2026, month, 10, hour, 30, tzinfo=timezone.utc) for month in range(1, 13) for hour in range(0, 24, 3)]
+        for place in DAYLIGHT_PLACES:
+            for moment, (_, _, height, _) in zip(moments, self.palettes([ms(m) for m in moments], place)):
+                self.assertLess(abs(height - elevation(moment, *place)), 0.6, (place, moment))
+
+    def test_weather_only_mutes_and_dims_a_little(self):
+        rows = [float(x) for x in ask(['weather\t0\t', 'weather\t1\t', 'weather\t3\t', 'weather\t45\t', 'weather\t63\t', 'weather\t73\t',
+                                        'weather\t95\t', 'weather\t-1\t', 'weather\t0\t100', 'weather\t500\t'])]
+        clear, mainly, overcast, fog, rain, snow, storm, unknown, cloudy, invalid = rows
+        self.assertEqual((clear, unknown, invalid), (0, 0, 0))
+        self.assertTrue(0 < mainly < overcast < rain <= storm == 1)
+        self.assertTrue(fog > overcast and snow > overcast)
+        self.assertAlmostEqual(cloudy, 0.6)
+        afternoon = ms(datetime(2026, 3, 20, 14, tzinfo=timezone.utc))
+        (sunny, _, _, _), = self.palettes([afternoon], (45.0, 10.0), 0)
+        (grey, _, _, _), = self.palettes([afternoon], (45.0, 10.0), 1)
+        chroma = lambda color: math.hypot(*oklab(color)[1:])
+        self.assertLess(chroma(grey[5]), chroma(sunny[5]))
+        self.assertLess(oklab(grey[0])[0], oklab(sunny[0])[0])
+        self.assertLess(oklab(sunny[0])[0] - oklab(grey[0])[0], 0.05)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node runs the shared web palette')
+    def test_web_dashboard_palette_matches_the_companion(self):
+        instants = [ms(datetime(2026, 3, 20, tzinfo=timezone.utc)) + n * 7 * 60000 for n in range(210)]
+        script = ("const d=require(%s);const at=%s;for(const w of [0,0.6])for(const p of [{latitude:45,longitude:10},{latitude:-33,longitude:-75}])"
+                  "for(const t of at)console.log(d.palette(t,p,w).map(c=>c.slice(1)).join(','));") % (json.dumps(str(ROOT / 'apps/shared/daylight.js')), json.dumps(instants))
+        web = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True, check=True).stdout.split()
+        android = []
+        for weather in (0, 0.6):
+            for place in ((45.0, 10.0), (-33.0, -75.0)):
+                android += [','.join('%06X' % c for c in row[0]) for row in self.palettes(instants, place, weather)]
+        self.assertEqual(len(web), len(android))
+        for a, b in zip(web, android):
+            for x, y in zip(a.split(','), b.split(',')):
+                self.assertLessEqual(max(abs((int(x, 16) >> s & 255) - (int(y, 16) >> s & 255)) for s in (0, 8, 16)), 1)
 
 
 class ItemSplitterTests(unittest.TestCase):
