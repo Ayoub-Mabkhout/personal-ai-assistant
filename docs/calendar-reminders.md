@@ -32,12 +32,24 @@ Service endpoints:
 | `POST /v1/calendar/reminders/snapshot` | Worker | Complete versioned projection |
 | `GET /v1/calendar/reminders/receipts` | Worker | Transport-accepted current occurrence IDs |
 | `GET /v1/calendar/reminders/status` | Owner | Last sync revision/time and counts |
+| `PUT /v1/calendar/agenda` | Worker | Upcoming entries for the phone's Calendar tab |
+| `GET /v1/calendar/requests` | Worker | Entries added on the phone, waiting for the laptop |
+| `POST /v1/calendar/requests/{id}` | Worker | Whether the laptop added one |
+| `GET /groceries/v1/mobile/calendar` | Phone | Agenda, reminder states and its own requests |
+| `POST /groceries/v1/mobile/calendar/requests` | Phone | Queue one entry for a day |
 
 These are relay paths. Public deployment mounts them under `/relay` as it does
 other queue endpoints. No anonymous calendar read or calendar write endpoint is
 provided. A snapshot request needs a larger bounded request allowance than an
 individual task prompt. The record count is limited to 5,000 and field lengths
 are bounded; the relay's byte limit may reject a particularly large snapshot.
+
+The same sync applies entries queued on the phone first (source key
+`companion:<request id>`, so a repeated request is added once), then publishes
+the reminder snapshot and the phone agenda. A relay without the calendar feed
+still receives reminders. Reminder cards are phrased from when they fire:
+"Tomorrow 13:30–14:15" for appointments, "Sam's birthday is in a week" or "is
+tomorrow" for birthdays, which carry a cake medallion on the phone.
 
 For an already initialized calendar and configured relay, one-shot sync is:
 

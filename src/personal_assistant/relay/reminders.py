@@ -12,6 +12,25 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 
+def wording(reminder):
+    """Headline and detail lines for a reminder, phrased from when it fires: today, tomorrow, in a week."""
+    tz = ZoneInfo(reminder['timezone'])
+    start = datetime.fromisoformat(reminder['start_utc']).astimezone(tz)
+    due = datetime.fromisoformat(reminder['due_at']).astimezone(tz)
+    days = (start.date() - due.date()).days
+    when = {0: 'Today', 1: 'Tomorrow', 7: 'In a week'}.get(days, 'In %d days' % days if days > 1 else '')
+    day = start.strftime('%A %d %B').replace(' 0', ' ')
+    if reminder.get('kind') == 'birthday':
+        relative = {0: 'is today', 1: 'is tomorrow', 7: 'is in a week'}.get(days, 'is in %d days' % days)
+        return [reminder['title'] + ' ' + relative, day]
+    end = datetime.fromisoformat(reminder['end_utc']).astimezone(tz)
+    if reminder['all_day']:
+        detail = (when + ' · ' if when else '') + day
+    else:
+        detail = (when + ' ' if when else day + ' ') + start.strftime('%H:%M') + '–' + end.strftime('%H:%M')
+    return [reminder['title'], detail] + ([reminder['location']] if reminder.get('location') else [])
+
+
 def epoch(value):
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
@@ -152,6 +171,11 @@ class ReminderStore:
         with self.connection() as db:
             return [dict(row) for row in db.execute("SELECT id,accepted FROM reminders WHERE state='accepted' ORDER BY id")]
 
+    def states(self):
+        """Delivery state of every projected occurrence: pending (scheduled in the cloud) or accepted (sent)."""
+        with self.connection() as db:
+            return {row['id']: row['state'] for row in db.execute('SELECT id,state FROM reminders')}
+
     def status(self):
         with self.connection() as db:
             projection = db.execute('SELECT source_id,revision,updated FROM projection').fetchone()
@@ -170,16 +194,14 @@ class ReminderPump:
             if not self.store.claim(row['id'], row['payload']) or not self.store.current(row['id'], row['payload']):
                 continue
             reminder = json.loads(row['payload'])
-            local = datetime.fromisoformat(reminder['start_utc']).astimezone(ZoneInfo(reminder['timezone']))
-            when = local.strftime('%a %d %b, %H:%M') if not reminder['all_day'] else local.strftime('%a %d %b')
-            message = reminder['title'] + '\n' + when
-            if reminder.get('location'):
-                message += '\n' + reminder['location']
+            message = '\n'.join(wording(reminder))
             remaining = max(1, int(row['expires'] - self.store.clock()))
-            payload = {'title': 'Calendar reminder', 'message': message,
+            birthday = reminder.get('kind') == 'birthday'
+            payload = {'title': 'Birthday reminder' if birthday else 'Calendar reminder', 'message': message,
                        'data': {'tag': 'assistant-calendar-' + row['id'], 'group': 'assistant-calendar',
+                                'kind': 'birthday' if birthday else 'event',
                                 'channel': 'Calendar reminders', 'priority': 'high',
-                                'color': '#7B58E8', 'notification_icon': 'mdi:calendar-clock',
+                                'color': '#7B58E8', 'notification_icon': 'mdi:cake-variant' if birthday else 'mdi:calendar-clock',
                                 'ttl': min(86400, remaining), 'visibility': self.visibility}}
             try:
                 self.sender(payload)
@@ -225,6 +247,7 @@ def reminder_router(store, submit_auth, worker_auth):
         timezone: str
         all_day: int | bool
         location: str = Field(max_length=4000)
+        kind: str = Field(default='event', pattern='^(event|birthday)$')
 
     class Snapshot(BaseModel):
         model_config = ConfigDict(extra='forbid', strict=True)

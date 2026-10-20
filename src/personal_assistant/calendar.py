@@ -13,6 +13,9 @@ from .paths import STATE_DIR
 
 UTC = timezone.utc
 DEFAULT_DB = STATE_DIR / 'calendar.sqlite3'
+KINDS = ('event', 'birthday')
+# Reminder rules are owner preferences stored in the calendar, keyed by the kind of entry they apply to.
+RULES = ('timed', 'all_day', 'birthday')
 
 
 def utc_text(value):
@@ -73,6 +76,14 @@ def period(start, end, timezone_name, all_day):
     return utc_text(starts), utc_text(ends), *dates
 
 
+def yearly(anchor, year):
+    """The anniversary of a date in a given year; 29 February falls on the 28th in common years."""
+    try:
+        return anchor.replace(year=year)
+    except ValueError:
+        return anchor.replace(year=year, day=28)
+
+
 def leads(values):
     result = sorted(set(values))
     if any(v < 0 for v in result):
@@ -92,7 +103,7 @@ class Calendar:
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA foreign_keys = ON')
         version = self.db.execute('PRAGMA user_version').fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             self.close()
             raise ValueError('Unsupported calendar schema version.')
         self.db.executescript('''
@@ -119,8 +130,15 @@ class Calendar:
                 id INTEGER PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
                 action TEXT NOT NULL, at TEXT NOT NULL, details TEXT NOT NULL
             );
-            PRAGMA user_version = 1;
         ''')
+        columns = {row['name'] for row in self.db.execute('PRAGMA table_info(events)')}
+        with self.db:
+            # Version 2: birthdays recur yearly from their anchor date (the original month and day).
+            if 'kind' not in columns:
+                self.db.execute("ALTER TABLE events ADD COLUMN kind TEXT NOT NULL DEFAULT 'event'")
+            if 'anchor' not in columns:
+                self.db.execute('ALTER TABLE events ADD COLUMN anchor TEXT')
+            self.db.execute('PRAGMA user_version = 2')
         existing = self.db.execute("SELECT value FROM settings WHERE key='timezone'").fetchone()
         if existing and timezone_name and existing['value'] != timezone_name:
             self.close()
@@ -152,23 +170,53 @@ class Calendar:
         self.db.execute('INSERT INTO audit(event_id,action,at,details) VALUES (?,?,?,?)',
                         (event_id, action, now_text(), json.dumps(details, ensure_ascii=False)))
 
-    def _reminders(self, event_id, start, minutes):
+    def _reminders(self, event_id, start, minutes, timezone_name):
         self.db.execute('DELETE FROM reminders WHERE event_id=?', (event_id,))
+        local = datetime.fromisoformat(start).astimezone(zone(timezone_name))
         for lead in minutes:
-            due = utc_text(datetime.fromisoformat(start) - timedelta(minutes=lead))
+            # Local wall-clock arithmetic: "a day before" keeps the same time across daylight-saving changes.
+            due = utc_text(local - timedelta(minutes=lead))
             self.db.execute('INSERT INTO reminders VALUES (?,?,?,?,NULL)',
                             (str(uuid4()), event_id, lead, due))
 
+    def rules(self, **changes):
+        """Default reminder lead minutes per kind of entry: timed, all_day and birthday. None leaves one as is."""
+        row = self.db.execute("SELECT value FROM settings WHERE key='reminder_rules'").fetchone()
+        current = json.loads(row['value']) if row else {}
+        updates = {key: leads(value) for key, value in changes.items() if value is not None}
+        if set(updates) - set(RULES):
+            raise ValueError('Reminder rules apply to timed, all_day or birthday entries.')
+        if updates:
+            current.update(updates)
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO settings VALUES ('reminder_rules', ?)", (json.dumps(current),))
+        return current
+
+    def _default(self, kind, all_day):
+        return self.rules().get('birthday' if kind == 'birthday' else 'all_day' if all_day else 'timed', [])
+
     def add(self, title, start, end=None, timezone_name=None, all_day=False,
-            description='', location='', source_ref='', source_key=None, reminder_minutes=()):
+            description='', location='', source_ref='', source_key=None, reminder_minutes=None, kind='event'):
+        """Reminders follow the configured rules unless reminder_minutes is given ([] for none)."""
         if not title.strip():
             raise ValueError('Title cannot be empty.')
+        if kind not in KINDS:
+            raise ValueError('Kind must be event or birthday.')
         tz = timezone_name or self.timezone
+        anchor = None
+        if kind == 'birthday':
+            if not all_day or 'T' in start or ' ' in start:
+                raise ValueError('A birthday is an all-day date, such as 1990-03-04.')
+            anchor = date.fromisoformat(start)
+            start, end = self._next(anchor, tz, datetime.now(UTC)), None
         starts, ends, first, last = period(start, end, tz, all_day)
-        minutes = leads(reminder_minutes)
+        if kind == 'birthday' and date.fromisoformat(last) - date.fromisoformat(first) != timedelta(days=1):
+            raise ValueError('A birthday lasts one day.')
+        minutes = leads(self._default(kind, all_day) if reminder_minutes is None else reminder_minutes)
         fields = dict(title=title.strip(), start_utc=starts, end_utc=ends, timezone=tz,
                       all_day=int(all_day), start_date=first, end_date=last,
-                      description=description, location=location, source_ref=source_ref)
+                      description=description, location=location, source_ref=source_ref,
+                      kind=kind, anchor=anchor.isoformat() if anchor else None)
         event_id, at = str(uuid4()), now_text()
         # Serialize source-key check + insertion, including concurrent ingestion.
         self.db.execute('BEGIN IMMEDIATE')
@@ -182,7 +230,7 @@ class Calendar:
                 return {'created': False, 'event': self.event(existing['id'])}
             values = dict(id=event_id, **fields, source_key=source_key, status='active', created_at=at, updated_at=at)
             self.db.execute(f"INSERT INTO events ({','.join(values)}) VALUES ({','.join('?' for _ in values)})", tuple(values.values()))
-            self._reminders(event_id, starts, minutes)
+            self._reminders(event_id, starts, minutes, tz)
             self._audit(event_id, 'created', values)
             self.db.commit()
         except Exception:
@@ -214,7 +262,7 @@ class Calendar:
             old_minutes = [r['lead_minutes'] for r in previous['reminders']]
             minutes = leads(changes.get('reminder_minutes', old_minutes))
             if starts != previous['start_utc'] or minutes != sorted(old_minutes):
-                self._reminders(event_id, starts, minutes)
+                self._reminders(event_id, starts, minutes, fields['timezone'])
             self._audit(event_id, 'updated', {'before': previous, 'changes': changes})
         return self.event(event_id)
 
@@ -228,15 +276,72 @@ class Calendar:
                 self._audit(event_id, 'cancelled', previous)
         return self.event(event_id)
 
+    @staticmethod
+    def _next(anchor, timezone_name, after):
+        """The first anniversary of anchor whose day has not ended by the given instant."""
+        local = after.astimezone(zone(timezone_name)).date()
+        day = yearly(anchor, local.year)
+        return (day if day >= local else yearly(anchor, local.year + 1)).isoformat()
+
+    def roll(self, as_of=None):
+        """Move each birthday whose day has passed to its next anniversary, with fresh reminders."""
+        moment = instant(as_of, self.timezone) if as_of else datetime.now(UTC)
+        rows = self.db.execute("SELECT id FROM events WHERE status='active' AND kind='birthday' AND end_utc<=?",
+                               (utc_text(moment),)).fetchall()
+        for row in rows:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                event = self.event(row['id'])
+                if event['status'] != 'active' or event['end_utc'] > utc_text(moment):
+                    continue
+                first = self._next(date.fromisoformat(event['anchor'] or event['start_date']), event['timezone'], moment)
+                starts, ends, first, last = period(first, None, event['timezone'], True)
+                self.db.execute('UPDATE events SET start_utc=?,end_utc=?,start_date=?,end_date=?,updated_at=? WHERE id=?',
+                                (starts, ends, first, last, now_text(), row['id']))
+                self._reminders(row['id'], starts, sorted(r['lead_minutes'] for r in event['reminders']), event['timezone'])
+                self._audit(row['id'], 'rolled', {'from': event['start_date'], 'to': first})
+        return len(rows)
+
     def agenda(self, start, end):
+        """Entries overlapping [start, end); birthdays also appear in later years as occurrences."""
         starts, ends = utc_text(bound(start, self.timezone)), utc_text(bound(end, self.timezone))
         if ends <= starts:
             raise ValueError('Agenda end must be after start.')
-        return [self.event(r['id']) for r in self.db.execute(
+        self.roll()
+        result = [self.event(r['id']) for r in self.db.execute(
             "SELECT id FROM events WHERE status='active' AND start_utc<? AND end_utc>? ORDER BY start_utc,id",
             (ends, starts))]
+        for row in self.db.execute("SELECT id FROM events WHERE status='active' AND kind='birthday' AND start_utc<?", (ends,)).fetchall():
+            event = self.event(row['id'])
+            anchor = date.fromisoformat(event['anchor'] or event['start_date'])
+            for year in range(date.fromisoformat(event['start_date']).year + 1, datetime.fromisoformat(ends).year + 2):
+                day = yearly(anchor, year).isoformat()
+                first, last, *_ = period(day, None, event['timezone'], True)
+                if first < ends and last > starts:
+                    tz = zone(event['timezone'])
+                    result.append(dict(event, start_utc=first, end_utc=last, start_date=day,
+                                       end_date=period(day, None, event['timezone'], True)[3], reminders=[], occurrence=True,
+                                       start=datetime.fromisoformat(first).astimezone(tz).isoformat(),
+                                       end=datetime.fromisoformat(last).astimezone(tz).isoformat()))
+        return sorted(result, key=lambda e: (e['start_utc'], e['id']))
+
+    def phone_agenda(self, days_back=7, days_ahead=400):
+        """What the phone shows: upcoming entries with their reminder occurrences, without source links or keys."""
+        today = datetime.now(UTC).astimezone(zone(self.timezone)).date()
+        entries = []
+        for event in self.agenda((today - timedelta(days=days_back)).isoformat(), (today + timedelta(days=days_ahead)).isoformat()):
+            origin = (event['source_key'] or '').split(':', 1)[0] if event['source_key'] else ''
+            entries.append({'id': event['id'], 'title': event['title'], 'kind': event['kind'], 'all_day': event['all_day'],
+                            'start': event['start'], 'end': event['end'], 'start_date': event['start_date'],
+                            'end_date': event['end_date'], 'timezone': event['timezone'], 'location': event['location'],
+                            'notes': event['description'][:600], 'origin': origin,
+                            'occurrence': bool(event.get('occurrence')), 'updated_at': event['updated_at'],
+                            'reminders': [{'id': r['id'], 'due_at': r['due_at'], 'lead_minutes': r['lead_minutes'],
+                                           'delivered_at': r['delivered_at']} for r in event['reminders']]})
+        return {'timezone': self.timezone, 'generated': now_text(), 'rules': self.rules(), 'events': entries}
 
     def due(self, as_of=None):
+        self.roll(as_of)
         cutoff = utc_text(instant(as_of, self.timezone)) if as_of else now_text()
         # Expired events are not sent as stale notifications after a long offline period.
         return [dict(r) for r in self.db.execute('''
@@ -264,6 +369,7 @@ class Calendar:
 
     def reminder_snapshot(self):
         """Complete reminder projection; the cloud never becomes the calendar writer."""
+        self.roll()
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self.db.execute("INSERT OR IGNORE INTO settings VALUES ('reminder_source_id', ?)", (str(uuid4()),))
@@ -271,7 +377,7 @@ class Calendar:
             revision = self.db.execute('SELECT COALESCE(MAX(id),0) FROM audit').fetchone()[0]
             rows = [dict(row) for row in self.db.execute('''
                 SELECT r.id,r.event_id,r.lead_minutes,r.due_at,r.delivered_at,
-                    e.title,e.start_utc,e.end_utc,e.timezone,e.all_day,e.location
+                    e.title,e.start_utc,e.end_utc,e.timezone,e.all_day,e.location,e.kind
                 FROM reminders r JOIN events e ON e.id=r.event_id
                 WHERE e.status='active' ORDER BY r.id
             ''')]
@@ -296,7 +402,15 @@ def main(argv=None):
     for field in ('description', 'location', 'source-ref'):
         add.add_argument('--'+field, default='')
     add.add_argument('--source-key')
-    add.add_argument('--remind-minutes', type=int, nargs='+', default=[], dest='reminder_minutes')
+    add.add_argument('--birthday', action='store_true', help='A yearly birthday; --start is the date of birth or any anniversary.')
+    reminders = add.add_mutually_exclusive_group()
+    reminders.add_argument('--remind-minutes', type=int, nargs='+', dest='reminder_minutes',
+                           help='Lead minutes instead of the configured reminder rules.')
+    reminders.add_argument('--no-reminders', action='store_true')
+    rules = sub.add_parser('rules', help='Show or set default reminder lead minutes.')
+    for field in RULES:
+        rules.add_argument('--' + field.replace('_', '-'), type=int, nargs='*', dest=field)
+    sub.add_parser('phone-agenda')
     update = sub.add_parser('update')
     update.add_argument('id')
     for field in ('title', 'start', 'end', 'timezone', 'description', 'location', 'source-ref'):
@@ -332,6 +446,14 @@ def main(argv=None):
             result = method(args['id'])
         elif command == 'ack-reminder':
             result = calendar.acknowledge(args['id'])
+        elif command == 'add':
+            if args.pop('no_reminders'):
+                args['reminder_minutes'] = []
+            if args.pop('birthday'):
+                args.update(kind='birthday', all_day=True)
+            result = calendar.add(**args)
+        elif command == 'phone-agenda':
+            result = calendar.phone_agenda()
         else:
             result = getattr(calendar, command)(**args)
         print(json.dumps(result, ensure_ascii=False, indent=2))

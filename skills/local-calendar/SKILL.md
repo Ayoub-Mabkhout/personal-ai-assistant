@@ -19,6 +19,14 @@ For source ingestion use stable account-qualified source keys. A conflicting
 duplicate needs an explicit update, not a new key. Local cancellation changes
 the assistant store; it does not cancel an external booking or contact anyone.
 
+Reminders follow the owner's rules stored in the calendar (`rules` shows them):
+do not pass `--remind-minutes` unless the user asks for a specific reminder for
+that entry, and use `--no-reminders` only when they ask for none. Add a birthday
+with `--birthday --start <date>`, using the date of birth when known; it recurs
+every year and its title should read naturally before "is tomorrow" (for example
+"Sam's birthday"). Entries the user adds on the phone arrive with source keys
+starting `companion:`.
+
 Reminder records are pending work, not delivered notifications. Acknowledge one
 only after confirmed transport success. Consult current implementation status
 before promising a phone notification. The supervised cloud projection/delivery

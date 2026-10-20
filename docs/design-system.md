@@ -73,7 +73,17 @@ Text sizes use `sp` on Android so they follow the user's font scale.
   state-bound indicator only while that work is actually happening.
 - **Navigation.** Floating pill bar on `surface` with an aurora-gradient pill
   behind the selected item, which slides between tabs. Selected icon and label
-  use `on-accent`; others use `muted`.
+  use `on-accent`; others use `muted`. Android tabs: Voice, Calendar, Shop,
+  Money, Activity, Settings.
+- **Calendar.** For checking, not editing: a six-week month card (today in the
+  aurora pill, an `accent` dot per entry and an `aurora` rose dot per birthday),
+  then "Coming up" grouped by day. Each entry card has a coloured edge, its time
+  and place, and a reminder line: `success` with a bell when every reminder is on
+  the server or sent, `warning` with an alert when one hasn't reached it. A day
+  opens a full-height sheet with its entries, daylight and a small add form
+  (title; timed, all day or birthday) that previews when the rules will remind.
+  Birthdays use the cake glyph; reminder notifications use the calendar glyph in
+  the progress tone, birthdays the cake in the attention tone.
 - **Buttons.** Primary: aurora fill, `on-accent` text. Tonal: `accent-soft`
   fill, `accent` text. Ghost: text only, still 48 dp tall. Destructive actions
   use `danger`. The Stop microphone action is always a strong, filled control.

@@ -44,8 +44,17 @@ when needed. Do not infer a real appointment from examples or test data.
   ranges include overlapping multi-day events; the upper boundary is exclusive.
 - Update or cancel on the user's direction. Calendar cancellation changes the
   local entry only; it does not contact an organizer or cancel an external booking.
-- Add reminder lead times based on the user's instructions. There is no automatic
-  reminder schedule until preferences are chosen. Zero minutes means at event start.
+- Reminders follow rules the owner chooses, stored in the calendar per kind of
+  entry: timed appointments, all-day entries and birthdays. A clone starts with
+  no rules, so entries get no reminders until they are set. `--remind-minutes`
+  replaces the rules for one entry and `--no-reminders` gives it none. Lead times
+  are counted on the local wall clock, so "a day before" keeps its time across a
+  daylight-saving change. Zero minutes means at event start.
+- Birthdays (`--birthday`) are one-day entries that recur every year from their
+  anchor date; 29 February falls on the 28th in common years. The stored entry is
+  always the next anniversary: once its day has passed it moves on a year with
+  fresh reminders (recorded as `rolled` in its history), and agenda queries also
+  list later years as occurrences.
 - Keep uncertain extracted commitments as proposals in chat until calendar
   ingestion rules have been agreed. External accounts are not connected yet.
 
@@ -57,6 +66,8 @@ isolated tests or another store.
 ```powershell
 .venv/Scripts/python.exe assistant_calendar.py add --title 'Example appointment' --start '2030-01-15T10:00' --end '2030-01-15T11:00' --remind-minutes 60 --source-key 'example:appointment:1'
 .venv/Scripts/python.exe assistant_calendar.py add --title 'Example day' --start '2030-01-16' --all-day
+.venv/Scripts/python.exe assistant_calendar.py add --title "Example's birthday" --start '1990-03-04' --birthday
+.venv/Scripts/python.exe assistant_calendar.py rules --timed 1440 --all-day 240 --birthday 9540 15
 .venv/Scripts/python.exe assistant_calendar.py agenda --from '2030-01-15' --to '2030-01-22'
 .venv/Scripts/python.exe assistant_calendar.py get EVENT_ID
 .venv/Scripts/python.exe assistant_calendar.py update EVENT_ID --start '2030-01-17T10:00' --end '2030-01-17T11:00'
@@ -93,8 +104,13 @@ No default lead times are added; appointments need explicit reminder settings.
 
 ## Current limits and verification
 
-This first version handles one-off timed and all-day entries. Recurring series,
-external calendar sync, invitations and calendar UI are not implemented. Cloud
+This version handles one-off timed and all-day entries and yearly birthdays.
+Other recurring series, external calendar sync and invitations are not
+implemented. The Companion app's Calendar tab is a read-mostly view: the laptop
+publishes `phone-agenda` (upcoming entries with their reminder occurrences, no
+source links or keys) to the relay, which adds each reminder's cloud delivery
+state, and a day can queue one entry that the laptop adds with the owner's rules
+(see [calendar reminders](calendar-reminders.md)). Cloud
 phone reminder code is implemented; private runtime status records whether it is
 enabled and synced. Do not create appointments from examples or uncertain sources.
 

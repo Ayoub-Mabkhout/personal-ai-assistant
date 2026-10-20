@@ -155,7 +155,9 @@ class CalendarReminderTests(unittest.TestCase):
         spec.loader.exec_module(script)
         store = self.store
         class FakeClient:
-            def call(self, path, payload=None):
+            def call(self, path, payload=None, method=None):
+                if path.endswith('/requests'):
+                    raise script.TransportError(404)  # A relay without the phone calendar feed.
                 return store.project(payload) if payload else {'receipts': store.receipts()}
         self.assertEqual(script.synchronize(self.path/'local.db', FakeClient())['acknowledged'], 1)
         self.assertEqual(script.synchronize(self.path/'local.db', FakeClient())['acknowledged'], 0)

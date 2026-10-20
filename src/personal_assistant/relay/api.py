@@ -212,6 +212,11 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))
+    from .calendar_feed import CalendarFeed,calendar_router
+    calendar_feed=CalendarFeed(Path(path).with_name('calendar-feed.sqlite3'),reminder_store if reminder_pump else None,**({'clock':clock} if clock else {}))
+    app.state.calendar_feed=calendar_feed
+    for calendar_routes in calendar_router(calendar_feed,worker,device_auth(groceries_api.devices) if groceries else None):
+        app.include_router(calendar_routes)
 
     @app.exception_handler(Conflict)
     async def conflict(request, exc):

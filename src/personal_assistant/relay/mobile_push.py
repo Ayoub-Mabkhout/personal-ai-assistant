@@ -228,6 +228,7 @@ class CompanionSender:
         elif tag.startswith('assistant-calendar-'):
             body['type'] = 'reminder'
             body['reminder_id'] = tag.removeprefix('assistant-calendar-')
+            body['kind'] = 'birthday' if data.get('kind') == 'birthday' else 'event'
         elif tag.startswith('assistant-alarm-'):
             body['type'] = 'alarm'
             body['action_id'] = data.get('action_id', tag.removeprefix('assistant-alarm-'))

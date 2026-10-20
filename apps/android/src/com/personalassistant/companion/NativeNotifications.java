@@ -95,7 +95,7 @@ final class NativeNotifications {
             // Reminder messages are the event title, then its time and optional location.
             String[] lines=message.split("\n");
             if(lines.length>1&&!lines[0].trim().isEmpty()){headline=lines[0].trim();StringBuilder rest=new StringBuilder();for(int i=1;i<lines.length;i++)if(!lines[i].trim().isEmpty())rest.append(rest.length()==0?"":" · ").append(lines[i].trim());text=expanded=rest.toString();}
-            label="Calendar";glyph="bell";tone=NotificationStyle.ATTENTION;
+            boolean birthday="birthday".equals(body.optString("kind"));label=birthday?"Birthday":"Calendar";glyph=birthday?"cake":"calendar";tone=birthday?NotificationStyle.ATTENTION:NotificationStyle.PROGRESS;
         }else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
         boolean hidden=!body.optString("visibility").equals("public");
         Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(headline)
