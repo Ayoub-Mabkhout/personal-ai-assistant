@@ -192,7 +192,7 @@ def _run(prompt, config, session=None, on_start=None):
         try:
             if on_start: on_start(process.pid)
             stdout, stderr = process.communicate(prompt.encode('utf-8'), timeout=config.get('banking_audit_timeout', 900))
-        except BaseException:
+        except BaseException as error:
             if os.name == 'nt':
                 subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True,
                                creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
@@ -201,6 +201,9 @@ def _run(prompt, config, session=None, on_start=None):
                 try: os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError: pass
             process.wait(timeout=15)
+            if session and isinstance(error, subprocess.TimeoutExpired):
+                # A resumed conversation that hangs is usually one too large to compact; rebuild it.
+                raise SessionUnavailable('Saved auditor session timed out') from error
             raise
         if config.get('_money_tool_ledger'):
             traces = Path(config['_money_tool_ledger']).parent / 'audit-traces'
@@ -219,6 +222,9 @@ def _run(prompt, config, session=None, on_start=None):
             if session and 'session' in diagnostic and any(term in diagnostic for term in
                     ('not found', 'unknown', 'could not load', 'failed to load', 'does not exist')):
                 raise SessionUnavailable('Saved auditor session is unavailable')
+            if session and any(term in diagnostic for term in
+                    ('compact task', 'pre-sampling compact', 'context window', 'context_length', 'maximum context')):
+                raise SessionUnavailable('Saved auditor session is too large to continue')
             raise RuntimeError('Codex auditor failed; completed tool edits remain saved for retry. Exit code %s.' % process.returncode)
         answer = json.loads((root / 'answer.json').read_text(encoding='utf-8'))
         if not isinstance(answer, dict) or any(key not in answer for key in ('decisions', 'insights', 'replies')):

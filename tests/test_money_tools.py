@@ -92,5 +92,29 @@ class MoneyToolTests(unittest.TestCase):
         self.assertNotIn('-c',args[args.index('exec')+1:])
         self.assertEqual(args[args.index('resume')+1],'same-session')
 
+    def test_an_overgrown_or_hanging_session_is_rebuilt_from_the_ledger(self):
+        import subprocess
+        from personal_assistant.banking.agent import ask
+        answer={'decisions':[],'insights':[],'replies':[],'enrichments':[],'category_ops':[]}
+        for failure in ('compact','timeout'):
+            sessions=[]
+            class Process:
+                pid=123
+                def __init__(self,args,**kwargs):
+                    self.resumed='resume' in args;sessions.append(args[args.index('resume')+1] if self.resumed else None)
+                    self.out=Path(args[args.index('--output-last-message')+1]);self.returncode=0
+                def communicate(self,*args,**kwargs):
+                    if self.resumed and failure=='timeout':raise subprocess.TimeoutExpired('codex',1)
+                    if self.resumed:
+                        self.returncode=1
+                        return b'{"type":"turn.failed","error":{"message":"Error running remote compact task: Bad Request"}}',b''
+                    self.out.write_text(json.dumps(answer))
+                    return b'{"type":"thread.started","thread_id":"fresh-session"}',b''
+                def wait(self,timeout=None):return 0
+            with patch('personal_assistant.banking.agent.subprocess.Popen',Process),patch('personal_assistant.banking.agent.subprocess.run'):
+                result=ask('Offline',{'codex':'codex','_money_tool_ledger':str(self.path),'_money_tool_lease':self.token},'old-session')
+            self.assertEqual(sessions,['old-session',None],failure)
+            self.assertEqual(result,(answer,'fresh-session'),failure)
+
 
 if __name__=='__main__':unittest.main()
