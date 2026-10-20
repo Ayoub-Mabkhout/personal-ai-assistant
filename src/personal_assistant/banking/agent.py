@@ -14,6 +14,18 @@ from .merchants import BRAND_CATALOG
 
 MODEL = 'gpt-6-sol'
 BATCH = 80
+# A session whose last turn read more than this many input tokens is retired; the next batch starts fresh.
+ROTATE_TOKENS = 120000
+
+
+class Prompt(str):
+    """A resumed-session prompt that also carries the full prompt used if the session must be rebuilt."""
+    def __new__(cls, text, fresh):
+        value = super().__new__(cls, text)
+        value.fresh = fresh
+        return value
+
+
 class SessionUnavailable(RuntimeError):
     pass
 
@@ -110,6 +122,14 @@ def compact(row):
     return item | annotation_public(row)
 
 
+def brief(row):
+    """A decided transaction as precedent: what it was and how it was booked, without the long reasoning."""
+    item = {k: row[k] for k in ('id', 'day', 'amount_cents', 'counterparty', 'kind', 'category', 'counts', 'by', 'series_key')
+            if row[k] not in (None, '')}
+    if row['recurring']: item['recurring'] = True
+    return item
+
+
 def totals(ledger, today):
     summary = summarise(ledger, today, insights=[])
     keys = ('spent_cents', 'remaining_cents', 'regular_income_cents', 'recurring_costs_cents',
@@ -123,7 +143,10 @@ def _logos(ledger):
     return sorted(logo_catalog(ledger))
 
 
-def prompt_for(ledger, jobs, today, config, notes):
+def prompt_for(ledger, jobs, today, config, notes, resumed=False):
+    """The batch prompt. A fresh session gets the full context once; a resumed one already holds the
+    catalogs and earlier precedent, so it gets the new work plus a small refresher. Older rows are one
+    transactions_search call away, so neither repeats the whole decided history."""
     rows = ledger.transactions(include_gone=True)
     by_id = {row['id']: row for row in rows}
     pending = []
@@ -136,21 +159,29 @@ def prompt_for(ledger, jobs, today, config, notes):
     window_end = max(dates) + timedelta(days=45) if dates else today + timedelta(days=1)
     recent = [compact(r) for r in sorted(rows, key=lambda r: (r['day'] or '', r['id']), reverse=True)
               if r['kind'] and r['gone'] is None and r['day']
-              and window_start <= date.fromisoformat(r['day']) <= window_end][:300]
+              and window_start <= date.fromisoformat(r['day']) <= window_end][:20 if resumed else 60]
+    recent = [brief(r) for r in recent]
     payload = {'today': today.isoformat(), 'accounts': [{k: a[k] for k in ('bank', 'name', 'iban', 'currency')}
              for a in ledger.accounts()], 'notes': notes or config.get('banking_notes', ''),
              'owner_context': ledger.settings_prefix('owner_context_'),
              'allowance': ledger.setting('allowance'), 'totals_so_far': totals(ledger, today),
              'category_catalog': [{k: c[k] for k in ('name', 'emoji', 'grp', 'description', 'suggested_budget_cents', 'budget_cents', 'by', 'uses')}
                                   for c in ledger.categories()],
-             'owner_corrections': ledger.corrections(), 'recent_decided': recent,
+             'owner_corrections': ledger.corrections(8 if resumed else 30), 'recent_decided': recent,
              'brand_catalog': BRAND_CATALOG, 'cached_logo_merchants': _logos(ledger),
              'transactions_for_enrichment': [compact(by_id[json.loads(j['payload'])['id']]) for j in jobs
                  if j['kind'] == 'enrichment' and json.loads(j['payload'])['id'] in by_id],
              'evidence_window': {'start': window_start.isoformat(), 'end': window_end.isoformat()},
              'jobs': [{'seq': j['seq'], 'kind': j['kind'], 'created': j['created'],
              'payload': json.loads(j['payload'])} for j in jobs], 'transactions_for_review': pending,
-             'provenance': 'Bank rows and prior decisions are durable local records; owner corrections override AI.'}
+             'provenance': 'Bank rows and prior decisions are durable local records; owner corrections override AI.',
+             'history': 'recent_decided is a short sample; search older decisions with transactions_search.'}
+    if resumed:
+        # Stable reference material was sent when this session started.
+        for key in ('accounts', 'provenance'):
+            payload.pop(key)
+        payload['category_catalog'] = [c['name'] for c in payload['category_catalog']]
+        payload['history'] += ' The category descriptions and accounts are as given earlier in this session.'
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
@@ -217,6 +248,10 @@ def _run(prompt, config, session=None, on_start=None):
             except ValueError: pass
         seen = [e['thread_id'] for e in events if e.get('type') == 'thread.started' and e.get('thread_id')]
         session_id = seen[-1] if seen else session
+        used = [(e.get('usage') or {}).get('input_tokens') or 0 for e in events if e.get('type') == 'turn.completed']
+        if used and used[-1] > config.get('banking_rotate_tokens', ROTATE_TOKENS):
+            # Retire a session before it grows too large to compact; the ledger rebuilds the next one.
+            session_id = None
         if process.returncode or not (root / 'answer.json').is_file():
             diagnostic = (stderr + stdout).decode('utf-8', 'replace').lower()[-4000:]
             if session and 'session' in diagnostic and any(term in diagnostic for term in
@@ -237,7 +272,7 @@ def ask(prompt, config, session=None, on_start=None):
         return _run(prompt, config, session, on_start)
     except SessionUnavailable:
         # Rebuild from the dated ledger narrative if a saved session is unavailable.
-        return _run(prompt, config, None, on_start)
+        return _run(getattr(prompt, 'fresh', prompt), config, None, on_start)
 
 
 def audit(ledger, config, today=None, ask=ask, notes='', job_kind=None, max_batches=None, batch_size=BATCH):
@@ -259,6 +294,8 @@ def audit(ledger, config, today=None, ask=ask, notes='', job_kind=None, max_batc
         thread.start()
         try:
             prompt = prompt_for(ledger, jobs, today, config, notes)
+            if session:
+                prompt = Prompt(prompt_for(ledger, jobs, today, config, notes, resumed=True), prompt)
             call_config = {**config, '_money_tool_ledger': str(ledger.path), '_money_tool_lease': token}
             result = ask(prompt, call_config, session, lambda pid: ledger.set_claim_process(token, pid))
             answer, next_session = result if isinstance(result, tuple) else (result, session)

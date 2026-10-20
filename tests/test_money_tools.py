@@ -92,6 +92,33 @@ class MoneyToolTests(unittest.TestCase):
         self.assertNotIn('-c',args[args.index('exec')+1:])
         self.assertEqual(args[args.index('resume')+1],'same-session')
 
+    def test_resumed_prompts_stay_small_and_large_sessions_are_retired(self):
+        from datetime import date
+        from personal_assistant.banking.agent import Prompt, ask, prompt_for
+        full=json.loads(prompt_for(self.ledger,self.jobs,date(2026,10,18),{},''))
+        resumed=json.loads(prompt_for(self.ledger,self.jobs,date(2026,10,18),{},'',resumed=True))
+        self.assertIn('accounts',full);self.assertNotIn('accounts',resumed)
+        self.assertTrue(all(isinstance(name,str) for name in resumed['category_catalog']))
+        for row in full['recent_decided']:self.assertNotIn('reasoning',row);self.assertNotIn('annotation_evidence',row)
+        answer={'decisions':[],'insights':[],'replies':[],'enrichments':[],'category_ops':[]}
+        sent=[]
+        class Process:
+            pid=123
+            def __init__(self,args,**kwargs):
+                self.resumed='resume' in args;self.out=Path(args[args.index('--output-last-message')+1]);self.returncode=0
+            def communicate(self,data,**kwargs):
+                sent.append((self.resumed,data.decode()))
+                if self.resumed:
+                    self.returncode=1;return b'{"type":"turn.failed","error":{"message":"pre-sampling compact failed"}}',b''
+                self.out.write_text(json.dumps(answer))
+                return b'{"type":"thread.started","thread_id":"big"}\n{"type":"turn.completed","usage":{"input_tokens":150000}}',b''
+            def wait(self,timeout=None):return 0
+        with patch('personal_assistant.banking.agent.subprocess.Popen',Process),patch('personal_assistant.banking.agent.subprocess.run'):
+            result=ask(Prompt('short','full'),{'codex':'codex','_money_tool_ledger':str(self.path),'_money_tool_lease':self.token},'old')
+        # The rebuilt session receives the full prompt, and one that already read too much is not kept.
+        self.assertEqual(sent,[(True,'short'),(False,'full')])
+        self.assertEqual(result,(answer,None))
+
     def test_an_overgrown_or_hanging_session_is_rebuilt_from_the_ledger(self):
         import subprocess
         from personal_assistant.banking.agent import ask
