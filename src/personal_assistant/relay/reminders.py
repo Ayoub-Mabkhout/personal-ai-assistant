@@ -81,7 +81,9 @@ class ReminderStore:
                    (identifier, kind, self.clock(), json.dumps(detail or {})))
 
     def project(self, snapshot):
-        source, revision, rows = snapshot['source_id'], snapshot['revision'], snapshot['reminders']
+        source, revision = snapshot['source_id'], snapshot['revision']
+        # Ordinary events are stored without a kind, so a snapshot from before kinds existed keeps its fingerprint.
+        rows = [{k: v for k, v in row.items() if not (k == 'kind' and v == 'event')} for row in snapshot['reminders']]
         UUID(source)
         if type(revision) is not int or revision < 0 or len(rows) > 5000:
             raise ValueError('Invalid reminder snapshot revision or size.')

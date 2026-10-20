@@ -79,6 +79,14 @@ class CalendarPageTests(unittest.TestCase):
         leap = self.calendar.add('Leap', '2000-02-29', all_day=True, kind='birthday', reminder_minutes=[])['event']
         self.assertEqual(leap['anchor'], '2000-02-29')
 
+    def test_an_unchanged_calendar_resends_the_same_revision_after_kinds_were_added(self):
+        store = ReminderStore(self.path / 'cloud.db', clock=lambda: epoch('2030-01-01T00:00:00+00:00'))
+        self.calendar.add('Call', '2030-03-28T09:00', '2030-03-28T09:30', reminder_minutes=[10])
+        snapshot = self.calendar.reminder_snapshot()
+        legacy = dict(snapshot, reminders=[{k: v for k, v in r.items() if k != 'kind'} for r in snapshot['reminders']])
+        self.assertTrue(store.project(legacy)['changed'])
+        self.assertFalse(store.project(snapshot)['changed'])
+
     def test_reminder_wording_reads_from_when_it_fires(self):
         base = {'timezone': 'Europe/Berlin', 'location': ''}
         event = dict(base, title='Dentist', kind='event', all_day=0, start_utc='2030-10-22T11:30:00+00:00',
