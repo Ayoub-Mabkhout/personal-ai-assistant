@@ -22,7 +22,8 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
                                                                        or scope.get('path','').startswith('/v1/files/')
-                                                                       or scope.get('path','').startswith('/groceries/v1/mobile/task-attachments/'))):
+                                                                       or scope.get('path','').startswith('/groceries/v1/mobile/task-attachments/')
+                                                                       or scope.get('path','').startswith('/v1/agent/tasks/'))):
             # Streamed uploads enforce their own declared, bounded size.
             return await self.app(scope, receive, send)
         body = bytearray()
@@ -192,7 +193,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.include_router(features_router(features,submit,'/v1/features'))
     if groceries:
         from .task_attachments import attachment_router
-        app.include_router(attachment_router(task_attachments,device_auth(groceries_api.devices),(submit_token,worker_token)))
+        app.include_router(attachment_router(task_attachments,device_auth(groceries_api.devices),(submit_token,worker_token),agent_queue))
         app.include_router(features_router(features,device_auth(groceries_api.devices),'/groceries/v1/mobile/features'))
         from .file_drops import FileDrops,file_drop_router
         drops=FileDrops(mobile_events,Path(path).with_name('file-drops'),**(file_drops or {}))

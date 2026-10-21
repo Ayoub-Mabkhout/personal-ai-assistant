@@ -214,3 +214,13 @@ worker, resumed sessions and the development-session forwarding message. Files
 remain data; they cannot override the user's instruction. These API operations
 alone make no model calls. Legacy owner web follow-ups reject attachment IDs;
 use Companion's paired uploader to associate and validate them.
+
+For file deliverables, every new worker and same-session continuation receives
+the current job ID and the `scripts/attach_task_file.py FILE --task JOB_ID` helper.
+The helper streams the selected original to the service-authenticated
+`PUT /relay/v1/agent/tasks/{job}/attachments/{id}` endpoint. The relay verifies the
+manifest/checksum, retains it, and records it as an answer attachment of that exact
+job. Native details expose separate `response_attachments` for the original answer
+and every continuation. Upload retries preserve IDs and do not duplicate files.
+No directory scanning or automatic collection of logs/intermediate files occurs.
+The worker must explicitly select requested deliverables and check upload success.

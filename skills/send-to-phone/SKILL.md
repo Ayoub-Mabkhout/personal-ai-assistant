@@ -5,6 +5,13 @@ description: Find a file the user asked for (on the laptop, or an email attachme
 
 # Send a file to the phone
 
+When worker instructions supply a current task ID and the file is a deliverable
+of that task, return it inside the answer using
+`scripts/attach_task_file.py FILE --task CURRENT_JOB_ID`. Use the current
+follow-up ID for a follow-up answer. The phone can open or save a copy from the
+conversation. Follow the separate file-drop workflow below when the user explicitly
+asks for an automatic delivery to Downloads, rather than a task attachment.
+
 Use this skill when the user asks to get, send, fetch or download a specific file
 "to my phone", "on my phone", or simply "send me the March invoice PDF" or "get me
 the slides from my thesis folder" from the phone. Resolve `scripts/` and `docs/`

@@ -233,3 +233,18 @@ Unbound uploads can only be read by their uploader. Paired phones can read files
 linked to shared task history; service credentials can download linked files for
 execution. Retries use stable IDs and verify original size and SHA-256. No public
 attachment URL or broad Android storage permission is required.
+
+### Files returned in answers
+
+Workers can attach generated or retrieved deliverables to an answer, including
+each same-session follow-up. Returned files appear beneath the assistant response;
+the original uploaded files remain beneath your request. Tap a file name to open
+a checksum-verified cached original. The download icon opens Android's **Save a
+copy** picker, where you can choose Downloads or another folder. No broad storage
+permission is needed. Files remain on the relay with the task history after a
+phone download; the same 10-file/25-MiB limits and shared quota apply.
+
+The worker uses `scripts/attach_task_file.py FILE --task CURRENT_JOB_ID`, rather
+than placing a laptop-only path in its answer. Successful uploads are visible
+while the task finishes, and stable content-based IDs make retries idempotent.
+This task-specific route is separate from explicit file drops to phone Downloads.

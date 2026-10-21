@@ -28,7 +28,8 @@ class TaskAttachments:
             db.executescript('''CREATE TABLE IF NOT EXISTS attachments(
                 id TEXT PRIMARY KEY,phone TEXT NOT NULL,name TEXT NOT NULL,mime TEXT NOT NULL,
                 size INTEGER NOT NULL,sha256 TEXT NOT NULL,ready INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL);
-                CREATE TABLE IF NOT EXISTS attachment_tasks(id TEXT NOT NULL,task TEXT NOT NULL,PRIMARY KEY(id,task));''')
+                CREATE TABLE IF NOT EXISTS attachment_tasks(id TEXT NOT NULL,task TEXT NOT NULL,PRIMARY KEY(id,task));
+                CREATE TABLE IF NOT EXISTS task_response_files(task TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(task,id));''')
 
     @contextmanager
     def db(self):
@@ -75,14 +76,29 @@ class TaskAttachments:
     def describe(self, identifiers):
         return [self.get(identifier) for identifier in identifiers]
 
+    def add_response(self, task, identifier):
+        with self.db() as db:
+            row=db.execute('SELECT phone,ready FROM attachments WHERE id=?',(identifier,)).fetchone()
+            if not row or not row['ready'] or row['phone']!='worker':raise HTTPException(404,'Response file is not ready.')
+            exists=db.execute('SELECT 1 FROM task_response_files WHERE task=? AND id=?',(task,identifier)).fetchone()
+            if exists:return False
+            if db.execute('SELECT COUNT(*) FROM task_response_files WHERE task=?',(task,)).fetchone()[0]>=MAX_FILES:
+                raise HTTPException(422,'A task answer can contain up to 10 files.')
+            db.execute('INSERT INTO attachment_tasks VALUES(?,?)',(identifier,task))
+            db.execute('INSERT INTO task_response_files VALUES(?,?)',(task,identifier))
+        return True
 
-def attachment_router(store, device, tokens):
+    def responses(self, task):
+        with self.db() as db:ids=[r[0] for r in db.execute('SELECT id FROM task_response_files WHERE task=? ORDER BY rowid',(task,))]
+        return self.describe(ids)
+
+
+def attachment_router(store, device, tokens, queue=None):
     api=APIRouter()
     def worker(authorization:str|None=Header(default=None)):
         if not authorization or not any(secrets.compare_digest(authorization,'Bearer '+token) for token in tokens):raise HTTPException(401,'Authentication required.')
 
-    @api.put('/groceries/v1/mobile/task-attachments/{identifier}')
-    async def upload(identifier:str,request:Request,phone=Depends(device),x_attachment_manifest:str=Header(default='')):
+    async def receive(identifier, request, phone, x_attachment_manifest):
         try:
             if len(x_attachment_manifest)>8192:raise ValueError()
             value=json.loads(base64.b64decode(x_attachment_manifest,validate=True))
@@ -103,6 +119,19 @@ def attachment_router(store, device, tokens):
         finally:
             Path(name).unlink(missing_ok=True)
         return store.get(identifier,phone)
+
+    @api.put('/groceries/v1/mobile/task-attachments/{identifier}')
+    async def upload(identifier:str,request:Request,phone=Depends(device),x_attachment_manifest:str=Header(default='')):
+        return await receive(identifier,request,phone,x_attachment_manifest)
+
+    @api.put('/v1/agent/tasks/{task}/attachments/{identifier}',dependencies=[Depends(worker)])
+    async def response_file(task:str,identifier:str,request:Request,x_attachment_manifest:str=Header(default='')):
+        if queue is None or not re.fullmatch(ID,task):raise HTTPException(404,'Task not found.')
+        job=queue.get(task)
+        row=await receive(identifier,request,'worker',x_attachment_manifest)
+        created=store.add_response(task,identifier)
+        if created and job['state'] not in ('queued','running') and queue.notifications_enabled:queue.notify_again(task)
+        return {**row,'task_id':task,'created':created}
 
     @api.get('/groceries/v1/mobile/task-attachments/{identifier}')
     def metadata(identifier:str,phone=Depends(device)):return store.get(identifier,phone)

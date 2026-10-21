@@ -71,6 +71,8 @@ and runtime evidence in the ignored private workspace.
 - [x] Standalone relay authentication and native-only service deployment; see the retirement runbook.
 - [x] Pictures/files on new tasks and same-session follow-ups, durable phone uploads,
       worker originals and cached attachment access from native task history.
+- [x] Files returned in task answers and follow-ups, with retained originals,
+      native opening and Save a copy to Downloads or another folder.
 - [ ] Task cancellation/retry controls from phone task history.
 - [x] Supervised live-Gmail collection and source-qualified follow-up extraction.
 - [ ] Finish attachment backfill and establish complete historical coverage.

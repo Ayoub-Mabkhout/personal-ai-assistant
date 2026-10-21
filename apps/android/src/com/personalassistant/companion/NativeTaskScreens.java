@@ -200,19 +200,20 @@ final class NativeTaskScreens {
             String signature=value.toString();
             if(!signature.equals(rendered)||placeholder){
                 int before=placeholder?0:messages.getChildCount();rendered=signature;placeholder=false;messages.removeAllViews();lastDay=0;
-                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")),value.optJSONArray("attachments"));
-                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null){exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")),turn.optJSONArray("attachments"));}}
+                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")),value.optJSONArray("attachments"),value.optJSONArray("response_attachments"));
+                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null){exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")),turn.optJSONArray("attachments"),turn.optJSONArray("response_attachments"));}}
                 for(int n=before;before>0&&n<messages.getChildCount();n++)AppUi.enter(messages.getChildAt(n),(n-before)*60);
             }
             canContinue=agent&&value.optBoolean("can_followup",true);if(instruction.isEnabled()!=canContinue){instruction.setEnabled(canContinue);instruction.setAlpha(canContinue?1f:.55f);}refreshSend();voice();
             if(agent&&!canContinue)line(saved,"This task cannot be continued.");else if(saved.getText().toString().equals("This task cannot be continued."))line(saved,"");
             settle();
         }
-        void exchange(String request,long asked,String answer,String raw,long answered,JSONArray files){
+        void exchange(String request,long asked,String answer,String raw,long answered,JSONArray files,JSONArray responseFiles){
             message(request,true,"You",asked,null);
             TaskAttachments.show(a,ui,messages,files);
             if(!answer.isEmpty())message(answer,false,"Assistant",answered,raw.equals("completed")||raw.equals("complete")?null:stateChip(raw));
             else{LinearLayout row=ui.row();row.setPadding(ui.dp(4),0,0,ui.dp(14));row.addView(stateChip(raw));messages.addView(row);}
+            TaskAttachments.show(a,ui,messages,responseFiles);
         }
         void message(String text,boolean user,String label,long at,View badge){
             if(text==null||text.isEmpty())return;

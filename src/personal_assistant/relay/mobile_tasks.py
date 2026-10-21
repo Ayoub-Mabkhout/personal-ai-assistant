@@ -129,8 +129,10 @@ def mobile_task_router(devices, queues,attachments=None):
         if attachments and kind=='agent':
             root=tasks.continuations.root(identifier)
             result['attachments']=attachments.describe(root['payload'].get('attachments',[]))
+            result['response_attachments']=attachments.responses(root['id'])
             for turn,job in zip(result['turns'],tasks.continuations.turns(identifier)):
                 turn['attachments']=attachments.describe(job['payload'].get('attachments',[]))
+                turn['response_attachments']=attachments.responses(job['id'])
         return result
 
     @api.post('/tasks/{kind}/{identifier}/followups')

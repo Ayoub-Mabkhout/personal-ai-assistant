@@ -15,6 +15,7 @@ import java.util.*;
 
 /** Private durable originals shared by new-task and follow-up drafts. */
 final class TaskAttachments {
+    private static final java.util.concurrent.ConcurrentHashMap<String,Object> fileLocks=new java.util.concurrent.ConcurrentHashMap<>();
     static final long MAX=25L*1024*1024;static final int COUNT=10;
     static File file(Context c,String id){if(!id.matches("[A-Za-z0-9_-]{8,64}"))throw new IllegalArgumentException("Invalid file ID");File dir=new File(c.getFilesDir(),"task-attachments");dir.mkdirs();return new File(dir,id);}
     static synchronized JSONArray draft(Context c,String key){try{return new JSONArray(Cloud.prefs(c).getString("attachment_draft:"+key,"[]"));}catch(Exception e){throw new IllegalStateException("Saved attachments need recovery",e);}}
@@ -55,11 +56,16 @@ final class TaskAttachments {
         }
     }
     static void show(Activity a,AppUi ui,LinearLayout box,JSONArray rows){
-        for(int n=0;rows!=null&&n<rows.length();n++){JSONObject row=rows.optJSONObject(n);if(row==null)continue;Button button=ui.quietButton(row.optString("name")+" - "+size(row.optLong("size")),()->open(a,row));box.addView(button,new LinearLayout.LayoutParams(-1,-2));}
+        for(int n=0;rows!=null&&n<rows.length();n++){JSONObject row=rows.optJSONObject(n);if(row==null)continue;LinearLayout line=ui.row();Button button=ui.quietButton(row.optString("name")+" - "+size(row.optLong("size")),()->open(a,row));line.addView(button,new LinearLayout.LayoutParams(0,-2,1));line.addView(ui.iconButton("download","Save a copy of "+row.optString("name"),()->save(a,row)),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));box.addView(line,new LinearLayout.LayoutParams(-1,-2));}
     }
-    static void open(Activity a,JSONObject row){Toast.makeText(a,"Opening "+row.optString("name"),Toast.LENGTH_SHORT).show();new Thread(()->{try{String id=row.getString("id");File target=file(a,id);
-        if(!target.isFile()||target.length()!=row.getLong("size")||!hash(target).equals(row.getString("sha256"))){HttpURLConnection con=connection(a,id,"/content","GET");File part=new File(target.getPath()+".part");try{check(con);long total=0;try(InputStream in=con.getInputStream();OutputStream out=new FileOutputStream(part)){byte[] b=new byte[65536];int k;while((k=in.read(b))!=-1){total+=k;if(total>row.getLong("size")||total>MAX)throw new Exception("Unexpected attachment size");out.write(b,0,k);}}if(total!=row.getLong("size")||!hash(part).equals(row.getString("sha256")))throw new Exception("Attachment checksum mismatch");if(!part.renameTo(target))throw new Exception("Could not save attachment");}finally{con.disconnect();part.delete();}}
-        Cloud.prefs(a).edit().putString("task_attachment:"+id,row.toString()).commit();Uri uri=Uri.parse("content://"+a.getPackageName()+".taskattachments/"+id);a.runOnUiThread(()->{try{a.startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,row.optString("mime","application/octet-stream")).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(Exception e){Toast.makeText(a,"No app can open this file type",Toast.LENGTH_LONG).show();}});
+    static File cached(Context c,JSONObject row)throws Exception{
+        String id=row.getString("id");synchronized(fileLocks.computeIfAbsent(id,k->new Object())){File target=file(c,id);
+            if(!target.isFile()||target.length()!=row.getLong("size")||!hash(target).equals(row.getString("sha256"))){HttpURLConnection con=connection(c,id,"/content","GET");File part=new File(target.getPath()+".part");try{check(con);long total=0;try(InputStream in=con.getInputStream();OutputStream out=new FileOutputStream(part)){byte[] b=new byte[65536];int k;while((k=in.read(b))!=-1){total+=k;if(total>row.getLong("size")||total>MAX)throw new Exception("Unexpected attachment size");out.write(b,0,k);}}if(total!=row.getLong("size")||!hash(part).equals(row.getString("sha256")))throw new Exception("Attachment checksum mismatch");if(!part.renameTo(target))throw new Exception("Could not save attachment");}finally{con.disconnect();part.delete();}}
+            Cloud.prefs(c).edit().putString("task_attachment:"+id,row.toString()).commit();return target;
+        }
+    }
+    static void save(Activity a,JSONObject row){Toast.makeText(a,"Preparing "+row.optString("name"),Toast.LENGTH_SHORT).show();new Thread(()->{try{cached(a,row);a.runOnUiThread(()->a.startActivity(new Intent(a,AttachmentExportActivity.class).putExtra("id",row.optString("id"))));}catch(Exception e){a.runOnUiThread(()->Toast.makeText(a,String.valueOf(e.getMessage()),Toast.LENGTH_LONG).show());}}).start();}
+    static void open(Activity a,JSONObject row){Toast.makeText(a,"Opening "+row.optString("name"),Toast.LENGTH_SHORT).show();new Thread(()->{try{cached(a,row);Uri uri=Uri.parse("content://"+a.getPackageName()+".taskattachments/"+row.getString("id"));a.runOnUiThread(()->{try{a.startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,row.optString("mime","application/octet-stream")).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(Exception e){Toast.makeText(a,"No app can open this file type",Toast.LENGTH_LONG).show();}});
     }catch(Exception e){a.runOnUiThread(()->Toast.makeText(a,String.valueOf(e.getMessage()),Toast.LENGTH_LONG).show());}}).start();}
     static String hash(File file)throws Exception{MessageDigest digest=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(file)){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)digest.update(b,0,n);}StringBuilder hex=new StringBuilder();for(byte b:digest.digest())hex.append(String.format("%02x",b&255));return hex.toString();}
 }

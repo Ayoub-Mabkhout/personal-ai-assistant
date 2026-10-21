@@ -56,6 +56,9 @@ continuity for actual service state and authentication status.
 
 For phone alarms and companion widget setup, use `skills/phone-control/SKILL.md`.
 To deliver a requested file to the phone's Downloads, use `skills/send-to-phone/SKILL.md`.
+For requested files returned inside a task answer, run `scripts/attach_task_file.py FILE --task CURRENT_JOB_ID`.
+Use the current follow-up job ID when continuing a task. Check upload success before
+claiming the file is attached; local paths alone are not phone-downloadable answers.
 Background Gmail collection and email-derived obligations run through the same
 Luna queue; see `docs/mail-automation.md`. No automatic outgoing correspondence is
 authorized by a background scan.

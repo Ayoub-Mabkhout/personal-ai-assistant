@@ -76,6 +76,56 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(child['payload']['resume_task']['root_id'],root)
         self.assertEqual(child['payload']['attachments'],['attachment-002'])
 
+    def response_upload(self,task,identifier='reply-file-001',data=b'finished PDF',**overrides):
+        manifest={'name':'Finished.pdf','mime':'application/pdf','size':len(data),'sha256':hashlib.sha256(data).hexdigest(),**overrides}
+        headers={**self.worker,'X-Attachment-Manifest':base64.b64encode(json.dumps(manifest).encode()).decode()}
+        return self.client.put('/v1/agent/tasks/'+task+'/attachments/'+identifier,content=data,headers=headers)
+
+    def test_response_originals_belong_to_their_answer_and_survive_store_reopen(self):
+        self.upload();root=self.new_task().json()['task_id']
+        first=self.response_upload(root);self.assertEqual(first.status_code,200,first.text)
+        self.assertTrue(first.json()['created']);self.assertFalse(self.response_upload(root).json()['created'])
+        child=self.client.post('/groceries/v1/mobile/tasks/agent/'+root+'/followups',headers=self.phone,json={'id':'response-followup','instruction':'Make an Excel too'}).json()['id']
+        self.assertEqual(self.response_upload(child,'reply-file-002',name='Updated.xlsx').status_code,200)
+        detail=self.client.get('/groceries/v1/mobile/tasks/agent/'+root,headers=self.phone).json()
+        self.assertEqual(detail['attachments'][0]['name'],'Example picture.png')
+        self.assertEqual([r['name'] for r in detail['response_attachments']],['Finished.pdf'])
+        self.assertEqual([r['name'] for r in detail['turns'][0]['response_attachments']],['Updated.xlsx'])
+        for auth in [self.phone,self.other]:
+            response=self.client.get('/groceries/v1/mobile/task-attachments/reply-file-001/content',headers=auth)
+            self.assertEqual(response.content,b'finished PDF')
+        from personal_assistant.relay.task_attachments import TaskAttachments
+        reopened=TaskAttachments(self.root/'task-attachments.sqlite3',self.root/'task-attachments')
+        self.assertEqual(reopened.responses(root)[0]['id'],'reply-file-001')
+
+    def test_response_upload_requires_service_auth_known_task_checksum_and_bounded_count(self):
+        self.upload();root=self.new_task().json()['task_id']
+        path='/v1/agent/tasks/'+root+'/attachments/reply-file-001'
+        self.assertEqual(self.client.put(path,content=b'data',headers=self.phone).status_code,401)
+        self.assertEqual(self.response_upload('missing-task-001').status_code,404)
+        self.assertEqual(self.response_upload(root,sha256='0'*64).status_code,422)
+        self.assertEqual(self.app.state.task_attachments.responses(root),[])
+        for n in range(10):self.assertEqual(self.response_upload(root,'answer-file-%03d'%n).status_code,200)
+        self.assertEqual(self.response_upload(root,'answer-file-011').status_code,422)
+        self.assertEqual(len(self.app.state.task_attachments.responses(root)),10)
+
+    def test_worker_helper_uploads_exact_original_and_is_idempotent(self):
+        from personal_assistant.worker.task_files import attach
+        self.upload();root=self.new_task().json()['task_id'];file=self.root/'Report.pdf';data=b'%PDF original report'*4000;file.write_bytes(data)
+        testcase=self
+        class Adapter:
+            def call(self,path):
+                from personal_assistant.worker.runtime import TransportError
+                response=testcase.client.get(path,headers=testcase.worker)
+                if response.status_code!=200:raise TransportError(response.status_code)
+                return response.json()
+            def upload(self,path,source,size,headers):
+                response=testcase.client.put(path,content=source.read(),headers={**testcase.worker,**headers})
+                testcase.assertEqual(response.status_code,200,response.text);return response.json()
+        first=attach({},root,file,client=Adapter());second=attach({},root,file,client=Adapter())
+        self.assertEqual(first['id'],second['id']);self.assertFalse(second['created'])
+        self.assertEqual(self.client.get('/groceries/v1/mobile/task-attachments/'+first['id']+'/content',headers=self.phone).content,data)
+
 
 class WorkerAttachmentTests(unittest.TestCase):
     def test_download_verifies_original_and_reuses_it_then_rejects_corrupt_transfer(self):
@@ -112,11 +162,14 @@ class WorkerAttachmentTests(unittest.TestCase):
                 result=agent.execute(job,threading.Event())
                 self.assertEqual(json.loads(fake.calls[0]['prompt'])['attachments'],rows)
                 self.assertIn(json.dumps(rows[0]['path']),fake.calls[1]['instructions'])
+                self.assertIn('attach_task_file.py',fake.calls[1]['instructions'])
+                self.assertIn('"task_id": "original-task"',fake.calls[1]['instructions'])
                 session=result['result']['workers'][-1]['session_id']
                 child={'id':'continue-task','payload':{'id':'continue-task','command':'Compare it','attachments':['attachment-001'],'resume_task':{'root_id':'original-task'}}}
                 agent.execute(child,threading.Event())
                 self.assertEqual(fake.calls[-1]['session'],session)
                 self.assertIn(json.dumps(rows[0]['path']),fake.calls[-1]['instructions'])
+                self.assertIn('"task_id": "continue-task"',fake.calls[-1]['instructions'])
                 self.assertEqual(fetched.call_count,2)
 
 
