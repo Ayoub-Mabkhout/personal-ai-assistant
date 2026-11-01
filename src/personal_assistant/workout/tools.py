@@ -1,17 +1,19 @@
 """Read-only MCP tools for the persistent trainer; writes are owner-approved proposals."""
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 from urllib.parse import urlencode, quote
 from ..relay.client import OwnerClient
+from .models import MODELS
 
 
 def serve(config, source=sys.stdin, target=sys.stdout):
     client = OwnerClient(config)
     tools = [dict(name='workout_read',description='Read actual workout context. overview is aggregate evidence; entities pages all history; entity reads exact record/revision. No writes.',
         inputSchema={'type':'object','properties':{'view':{'type':'string','enum':['overview','entities','entity']},
-            'kind':{'type':'string'},'id':{'type':'string'},'offset':{'type':'integer'},'limit':{'type':'integer'}},
+            'kind':{'type':'string','enum':list(MODELS)},'id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'offset':{'type':'integer'},'limit':{'type':'integer'}},
             'required':['view'],'additionalProperties':False},annotations={'readOnlyHint':True,'destructiveHint':False})]
     for line in source:
         request = None
@@ -27,6 +29,8 @@ def serve(config, source=sys.stdin, target=sys.stdout):
                     args = params.get('arguments') or {}
                     if params['name']!='workout_read': raise ValueError('Unknown workout tool')
                     view = args.get('view')
+                    if view in ('entities','entity') and args.get('kind') is not None and args['kind'] not in MODELS:
+                        raise ValueError('Read a known workout entity kind')
                     if view=='overview': path='/overview'
                     elif view=='entities':
                         limit, offset = int(args.get('limit',20)), int(args.get('offset',0))
@@ -34,7 +38,10 @@ def serve(config, source=sys.stdin, target=sys.stdout):
                         query={'offset':offset,'limit':limit}
                         if args.get('kind'): query['kind']=args['kind']
                         path='/entities?'+urlencode(query)
-                    elif view=='entity': path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
+                    elif view=='entity':
+                        if args.get('kind') not in MODELS or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',args.get('id','')):
+                            raise ValueError('Read a known workout entity with a valid ID')
+                        path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
                     else: raise ValueError('Invalid view')
                     value=client.call('/relay/v1/workout'+path)
                     result={'content':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}],'isError':False}

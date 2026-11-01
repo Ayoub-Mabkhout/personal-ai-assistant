@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from personal_assistant.relay.api import create_app
 from personal_assistant.relay.store import Conflict, Missing
@@ -35,6 +36,19 @@ class WorkoutTests(unittest.TestCase):
         self.store=Workouts(Path(self.tmp.name)/'workout.sqlite3',clock=lambda:self.now)
 
     def tearDown(self): self.tmp.cleanup()
+
+    def test_coach_read_tool_rejects_paths_outside_workout_entities(self):
+        from personal_assistant.workout.tools import serve
+        messages=[]
+        for index,args in enumerate(({'view':'entity','kind':'../../banking','id':'summary'},
+                                     {'view':'entity','kind':'workout','id':'../../banking/summary'})):
+            messages.append(json.dumps({'jsonrpc':'2.0','id':index,'method':'tools/call',
+                                        'params':{'name':'workout_read','arguments':args}}))
+        output=io.StringIO()
+        with patch('personal_assistant.workout.tools.OwnerClient') as client:
+            serve({},io.StringIO('\n'.join(messages)+'\n'),output)
+            client.return_value.call.assert_not_called()
+        self.assertTrue(all(json.loads(line)['result']['isError'] for line in output.getvalue().splitlines()))
 
     def test_sync_retries_conflicts_and_atomic_batches(self):
         operation=op('exercise','bench',{'name':'Bench'})
