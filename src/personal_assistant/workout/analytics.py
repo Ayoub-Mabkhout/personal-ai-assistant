@@ -23,7 +23,7 @@ def e1rm(item, hard_only=False):
     weight, reps = item.get('weight_kg'), item.get('reps')
     if not weight or not reps or not 1<=reps<=10: return None
     hard = (item.get('kind')=='failure' or (item.get('rir') is not None and item['rir']<=2)
-            or (item.get('rpe') is not None and item['rpe']>=8))
+            or (item.get('rpe') is not None and item['rpe']>=8) or (item.get('rir') is None and item.get('rpe') is None))
     if hard_only and not hard: return None
     return weight if reps==1 else weight*(1+reps/30)
 
@@ -90,7 +90,8 @@ def weight_trend(points, today):
             out[f'count_{window}d'] = len(values)
         series.append(out)
     latest = series[-1] if series else None
-    return {'raw':sorted(raw,key=lambda p:p['measured_at']),'daily':series,'latest':latest,
+    gaps=[{'from_date':a.isoformat(),'to_date':b.isoformat(),'gap_days':(b-a).days,'style':'dashed'} for a,b in zip(sorted(days),sorted(days)[1:]) if (b-a).days>7]
+    return {'gaps':gaps,'gap_threshold_days':7,'raw':sorted(raw,key=lambda p:p['measured_at']),'daily':series,'latest':latest,
             'stale':bool(latest and date.fromisoformat(latest['date'])<today-timedelta(days=7)),
             'method':'Daily mean, then unweighted observed-day rolling mean; minimum 3/7 or 5/14 observed days. Missing days are not filled.'}
 
@@ -136,7 +137,7 @@ def overview(store, today=None):
             if estimated:
                 value = {'workout_id':w['id'],'date':day.isoformat(),'set_id':item['id'],
                          'weight_kg':item['weight_kg'],'reps':item['reps'],'estimated_1rm_kg':round(estimated,2),
-                         'effort_confirmed':e1rm(item,True) is not None}
+                         'effort_confirmed':e1rm(item,True) is not None,'rir_assumed':item.get('rir') is None and item.get('rpe') is None}
                 if eid not in records or estimated>records[eid]['estimated_1rm_kg']: records[eid]=value
                 if today-timedelta(days=28)<=day:
                     if eid not in recent or estimated>recent[eid]['estimated_1rm_kg']: recent[eid]=value
@@ -187,33 +188,34 @@ def overview(store, today=None):
         key=(item['exercise_id'],item['distance_m'],item['incline_percent'],item['elevation_gain_m'])
         if key not in cardio_records or item['seconds']<cardio_records[key]['seconds']: cardio_records[key]=item
     latest_weight=max((m for m in measurements if m['kind']=='bodyweight' and datetime.fromisoformat(m['measured_at']).date()<=today),key=lambda m:m['measured_at'],default=None)
-    latest_waist=max((m for m in measurements if m['kind']=='waist' and datetime.fromisoformat(m['measured_at']).date()<=today),key=lambda m:m['measured_at'],default=None)
     height=athlete.get('height_cm')
-    body={'status':'ready' if height and latest_weight and latest_waist else 'needs_input','height_cm':height,
-          'bodyweight_kg':latest_weight['value'] if latest_weight else None,'waist_cm':latest_waist['value'] if latest_waist else None,
+    body={'status':'ready' if height and latest_weight else 'needs_input','height_cm':height,
+          'bodyweight_kg':latest_weight['value'] if latest_weight else None,
+          'weight_kg':latest_weight['value'] if latest_weight else None,
           'weight_measured_at':latest_weight['measured_at'] if latest_weight else None,
-          'waist_measured_at':latest_waist['measured_at'] if latest_waist else None,
-          'bmi':round(latest_weight['value']/(height/100)**2,2) if height and latest_weight else None,
-          'waist_height_ratio':round(latest_waist['value']/height,3) if height and latest_waist else None,
-          'method':'Descriptive measurements only; BMI and waist/height do not establish muscle mass or a clinical body-composition rank.'}
-    if body['status']=='ready' and any(datetime.fromisoformat(m['measured_at']).date()<today-timedelta(days=30) for m in (latest_weight,latest_waist)):
-        body['status']='stale'
-    body.update(weight_kg=body['bodyweight_kg'],waist_to_height=body['waist_height_ratio'],
-        weight_readings=sum(m['kind']=='bodyweight' for m in measurements),waist_readings=sum(m['kind']=='waist' for m in measurements),
-        weight_age_days=(today-datetime.fromisoformat(latest_weight['measured_at']).date()).days if latest_weight else None,
-        waist_age_days=(today-datetime.fromisoformat(latest_waist['measured_at']).date()).days if latest_waist else None)
-    low,high,ceiling=(athlete.get(k) for k in ('goal_weight_min_kg','goal_weight_max_kg','waist_height_ceiling'))
+          'weight_readings':sum(m['kind']=='bodyweight' for m in measurements),
+          'weight_age_days':(today-datetime.fromisoformat(latest_weight['measured_at']).date()).days if latest_weight else None,
+          'method':'Observed weight and height only; no waist requirement or muscularity inference.'}
+    if body['status']=='ready' and body['weight_age_days']>30: body['status']='stale'
+    low,high=(athlete.get(k) for k in ('goal_weight_min_kg','goal_weight_max_kg'))
     body_rank={'status':'needs_input','score':None,'tier':None,'scope':'personal_nonclinical',
-        'goal_weight_min_kg':low,'goal_weight_max_kg':high,'waist_height_ceiling':ceiling,
-        'floor':0,'next_tier':None,'progress':None,
-        'limitations':'Personal goals, not a clinical assessment, measured muscularity or population comparison.',
-        'method':'Owner-defined goal bands only. 100 points inside weight range and at/below chosen waist ceiling; zero outside. Lower waist earns no extra credit. Not a measure of muscle mass, health or a population percentile.'}
+        'goal_weight_min_kg':low,'goal_weight_max_kg':high,'floor':0,'next_tier':None,'progress':None,
+        'limitations':'Personal weight goal, not a clinical assessment or measurement of muscularity.',
+        'method':'100 points within the owner-defined weight band; zero outside. No waist requirement.'}
     if body['status']=='stale': body_rank['status']='stale'
-    elif body['status']=='ready' and low and high and ceiling:
-        within=low<=body['weight_kg']<=high and body['waist_to_height']<=ceiling
+    elif body['status']=='ready' and low and high:
+        within=low<=body['weight_kg']<=high
         body_rank.update(status='within_goal' if within else 'outside_goal',score=100 if within else 0,
                          tier='On target' if within else 'Outside personal band',progress=1 if within else 0)
-    return {'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
+    from .programs import next_workout,cycle_progress
+    from .metrics import metrics
+    for info in sprints:
+        sprint=next(r for r in grouped['sprint'] if r['id']==info['id'])
+        if sprint['data'].get('cycle'):
+            info.update(cycle_progress(sprint,workouts,today))
+            info['planned']=info['target_sessions'];info['completed']=info['completed_sessions']
+    extra=metrics(all_items,today)
+    return {**extra,'next_workout':next_workout(all_items,today),'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
         'personal_records':personal,'exercise_records':list(exercise_records.values()),
         'ranks':list(candidates.values()),'ranking_method':METHOD,
         'lift_ranks':lift_ranks,'tiers':[{'floor':floor,'name':name} for floor,name in TIERS],

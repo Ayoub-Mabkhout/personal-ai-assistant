@@ -44,6 +44,12 @@ def serve(config, source=sys.stdin, target=sys.stdout):
                         path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
                     else: raise ValueError('Invalid view')
                     value=client.call('/relay/v1/workout'+path)
+                    if view=='overview':
+                        value={k:value.get(k) for k in ('completed_workouts','body_metrics','body_rank','next_workout','sprints',
+                            'lift_ranks','aggregate_score','trainer','next_session_brief')}
+                        # Full exercise histories remain available through paged entity reads.
+                        # A dashboard payload must not fill an agent context with every chart point.
+                        value['detail_access']='Read exact workout/template/sprint entities only when needed.'
                     result={'content':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}],'isError':False}
                 except Exception as error:
                     result={'content':[{'type':'text','text':type(error).__name__+': '+str(error)}],'isError':True}

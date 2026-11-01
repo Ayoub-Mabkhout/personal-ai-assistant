@@ -178,7 +178,7 @@ class WorkoutTests(unittest.TestCase):
         self.store.mutate([op('photo','photo1',{},photo['revision'],deleted=True)])
         with self.assertRaises(Missing): self.store.blob(digest)
 
-    def test_substitution_preserves_completed_sets_and_finished_history(self):
+    def test_retroactive_set_correction_requires_owner_approval(self):
         data=dict(name='Active',started_at='2026-01-01T12:00:00Z',status='active',sets=[
             dict(id='done',exercise_id='bench',weight_kg=50,reps=5,completed=True),
             dict(id='next',exercise_id='bench',weight_kg=50,reps=5,completed=False)])
@@ -190,12 +190,14 @@ class WorkoutTests(unittest.TestCase):
         proposal=op('workout','current',changed,workout['revision'])
         damaged={**changed,'sets':[dict(s) for s in changed['sets']]}
         damaged['sets'][0]['weight_kg']=100
-        with self.assertRaises(ValueError):
-            self.store.finish(claim['id'],claim['token'],'Bad',[{**proposal,'data':damaged}])
-        self.store.finish(claim['id'],claim['token'],'Substitution proposed',[proposal])
-        self.assertEqual(self.store.get('workout','current')['data']['sets'][1]['exercise_id'],'bench')
+        self.store.finish(claim['id'],claim['token'],'Correction and substitution proposed',[{**proposal,'data':damaged}])
+        before=self.store.get('workout','current')['data']['sets']
+        self.assertEqual(before[0]['weight_kg'],50)
+        self.assertEqual(before[1]['exercise_id'],'bench')
         self.store.approve(claim['id'])
-        self.assertEqual(self.store.get('workout','current')['data']['sets'][1]['exercise_id'],'dumbbell_bench')
+        after=self.store.get('workout','current')['data']['sets']
+        self.assertEqual(after[0]['weight_kg'],100)
+        self.assertEqual(after[1]['exercise_id'],'dumbbell_bench')
 
     def test_rest_is_not_missed_and_block_timing_survives_round_trip(self):
         sprint=self.store.mutate([op('sprint','sprint1',dict(name='Strength',phase='strength',start='2026-01-01',end='2026-01-14',

@@ -1,5 +1,6 @@
 """Paired Companion and protected owner routes share the same workout engine."""
 import re
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import Field
@@ -23,6 +24,12 @@ class Question(Model):
 class Ready(Model):
     state: str = 'ready'
     detail: str = Field(default='',max_length=500)
+
+
+class Extension(Model):
+    end: date
+    base_revision: int = Field(ge=0)
+    mutation_id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,100}$')
 
 
 class Lease(Model):
@@ -65,6 +72,11 @@ def routers(store, submit, device=None):
 
         @router.get('/overview')
         def summary(): return overview(store)
+
+        @router.post('/sprints/{identifier}/extend')
+        def extend_sprint(identifier: str,body: Extension):
+            from .programs import extend
+            return extend(store,identifier,body.end,body.base_revision,body.mutation_id)
 
         @router.get('/export')
         def export(): return store.export()

@@ -35,6 +35,7 @@ class Exercise(Model):
     aliases: list[str] = Field(default_factory=list, max_length=40)
     load_convention: Literal['total', 'per_hand', 'bodyweight', 'assisted', 'unknown'] = 'unknown'
     mode: Literal['strength', 'cardio', 'other'] = 'strength'
+    movement: Literal['press','squat','hinge','row','pull','curl','extension','raise','lunge','core','run','walk','other'] = 'other'
 
 
 class SetLog(Model):
@@ -144,16 +145,22 @@ class Sprint(Model):
     name: str = Field(min_length=1, max_length=200)
     phase: str = Field(min_length=1, max_length=100)
     start: date
-    end: date
+    end: date | None = None
     status: Literal['planned', 'active', 'completed', 'cancelled'] = 'planned'
     goals: list[str] = Field(default_factory=list, max_length=20)
     success_criteria: list[str] = Field(default_factory=list, max_length=30)
     scheduled: list[dict] = Field(default_factory=list, max_length=100)
+    cycle: list[str] = Field(default_factory=list,max_length=100)
+    target_sessions: int | None = Field(default=None,ge=1,le=10000)
+    extensions: list[dict] = Field(default_factory=list,max_length=100)
     constraints: str = Field(default='', max_length=8000)
     retrospective: str = Field(default='', max_length=16000)
 
     @model_validator(mode='after')
     def check(self):
+        from .programs import add_months
+        if self.end is None: self.end=add_months(self.start,4)
+        if self.target_sessions is None: self.target_sessions=len(self.cycle) or len(self.scheduled) or 1
         if self.end < self.start: raise ValueError('Sprint end precedes start')
         for item in self.scheduled:
             if set(item) - {'date', 'template_id', 'notes'} or 'date' not in item:

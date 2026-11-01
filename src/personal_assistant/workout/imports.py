@@ -49,7 +49,15 @@ def exercise(name):
     equipment = next((word for word in ('dumbbell','barbell','cable','machine','treadmill') if word in lower),'')
     cardio = any(word in lower for word in ('treadmill','running','cycling','rowing machine'))
     convention = 'per_hand' if equipment=='dumbbell' else 'total' if equipment in ('barbell','cable','machine') else 'bodyweight' if 'body' in lower or 'pull-up' in lower or lower=='dip' else 'unknown'
-    return validate('exercise',dict(name=name,equipment=equipment,muscles=muscle_groups(name),
+    movement='other'
+    for pattern,value in [('running','run'),('walking','walk'),('squat','squat'),('deadlift','hinge'),('lunge','lunge'),
+                          ('row','row'),('pulldown','pull'),('pull up','pull'),('pull-up','pull'),('curl','curl'),
+                          ('extension','extension'),('pushdown','extension'),('skullcrusher','extension'),('raise','raise'),
+                          ('press','press'),('plank','core'),('crunch','core')]:
+        if pattern in lower: movement=value;break
+    if equipment=='treadmill': equipment='machine'
+    if not equipment: equipment='bodyweight' if any(t in lower for t in ('pull up','pull-up','dip','plank','hanging')) else 'other'
+    return validate('exercise',dict(name=name,equipment=equipment,movement=movement,muscles=muscle_groups(name),
                                   aliases=[],load_convention=convention,mode='cardio' if cardio else 'strength'))
 
 

@@ -208,8 +208,8 @@ class Workouts:
         validated = [Mutation.model_validate(p).model_dump() for p in proposals]
         # Specialist proposals are limited to future planning, not rewrites of history.
         for p in validated:
-            if p['kind'] not in ('template','sprint','workout') or p['deleted']: raise ValueError('Trainer may propose planning changes only')
-            validate(p['kind'],p['data'])
+            if p['kind'] not in ('template','sprint','workout'): raise ValueError('Unknown trainer proposal kind')
+            if not p['deleted']: validate(p['kind'],p['data'])
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             prior = db.execute('SELECT * FROM trainer WHERE id=?',(identifier,)).fetchone()
@@ -228,7 +228,7 @@ class Workouts:
                 for photo in data['photo_ids']:
                     if not db.execute("SELECT 1 FROM entities WHERE kind='photo' AND id=? AND deleted=0",(photo,)).fetchone():
                         raise ValueError('An approved photo was deleted during analysis')
-                self.mutate([dict(mutation_id='assessment_'+identifier,kind='composition',id=identifier,base_revision=0,data=data)],'approved_photo_analysis',db)
+                self.mutate([dict(mutation_id=hashlib.sha256(('assessment:'+identifier).encode()).hexdigest(),kind='composition',id=identifier,base_revision=0,data=data)],'approved_photo_analysis',db)
             changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,answered_at=?,lease_until=NULL WHERE id=? AND token=? AND state='running' AND lease_until>?",
                 (answer,encoded(validated),state,self.clock(),identifier,token,self.clock())).rowcount
             if not changed: raise Conflict('Trainer lease lost')
@@ -246,17 +246,11 @@ class Workouts:
 
     def check_proposals(self, db, proposals):
         for p in proposals:
-            if p['kind']!='workout': continue
-            row=db.execute("SELECT * FROM entities WHERE kind='workout' AND id=? AND deleted=0",(p['id'],)).fetchone()
-            if not row: raise ValueError('Trainer can only adapt an existing active workout')
-            old=json.loads(row['data']);new=validate('workout',p['data'])
-            if row['revision']!=p['base_revision']: raise Conflict('Active workout changed while trainer was responding')
-            if old['status'] not in ('draft','active','paused'): raise ValueError('Trainer cannot rewrite finished workouts')
-            if {k:v for k,v in old.items() if k!='sets'}!={k:v for k,v in new.items() if k!='sets'}:
-                raise ValueError('Trainer may adapt pending sets, not recorded workout facts')
-            completed={s['id']:s for s in old['sets'] if s['completed']}
-            next_completed={s['id']:s for s in new['sets'] if s['completed']}
-            if completed!=next_completed: raise ValueError('Trainer cannot change completed sets')
+            row=db.execute('SELECT * FROM entities WHERE kind=? AND id=?',(p['kind'],p['id'])).fetchone()
+            if (row['revision'] if row else 0)!=p['base_revision']:
+                raise Conflict('Record changed while trainer was responding')
+            if p['deleted'] and (not row or row['deleted']): raise ValueError('Cannot delete a missing workout record')
+            if not p['deleted']: validate(p['kind'],p['data'])
 
     def next_session_brief(self):
         with self.db() as db:
@@ -272,7 +266,7 @@ class Workouts:
 
     def prepare_brief(self, timezone='UTC'):
         """Owner-opted-in, debounced ahead-of-session preparation. Never uses photos."""
-        from datetime import datetime
+        from datetime import datetime,date
         from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
         from .analytics import scheduled_day
         try: today=datetime.fromtimestamp(self.clock(),ZoneInfo(timezone)).date().isoformat()
@@ -287,17 +281,23 @@ class Workouts:
             if not rows or self.clock()-max(r['updated'] for r in rows)<120: return {'queued':False}
             # Only future scheduled work; an ongoing workout is never interrupted by auto-coaching.
             if any(r['kind']=='workout' and r['data']['status'] in ('active','paused') for r in rows): return {'queued':False}
-            choices=[]
-            completed={(r['data'].get('sprint_id'),scheduled_day(r['data']).isoformat()) for r in rows
-                       if r['kind']=='workout' and r['data']['status'] in ('completed','rest','skipped')}
-            for row in rows:
-                if row['kind']=='sprint' and row['data']['status'] in ('planned','active'):
-                    for session in row['data']['scheduled']:
-                        if session['date']>=today and (row['id'],session['date']) not in completed:
-                            choices.append((session['date'],row['id'],session.get('template_id')))
-            if not choices: return {'queued':False}
-            when,sprint_id,template_id=sorted(choices,key=lambda c:(c[0],c[1],c[2] or ''))[0]
-            session_id=sprint_id+':'+when+':'+(template_id or '')
+            from .programs import next_workout
+            next_item=next_workout(rows,date.fromisoformat(today))
+            if next_item:
+                sprint_id=next_item['sprint_id'];template_id=next_item['template_id'];when=today
+                session_id=sprint_id+':'+str(next_item['sequence_number'])+':'+template_id
+            else:
+                choices=[]
+                completed={(r['data'].get('sprint_id'),scheduled_day(r['data']).isoformat()) for r in rows
+                           if r['kind']=='workout' and r['data']['status'] in ('completed','rest','skipped')}
+                for row in rows:
+                    if row['kind']=='sprint' and row['data']['status'] in ('planned','active'):
+                        for session in row['data'].get('scheduled',[]):
+                            if session['date']>=today and (row['id'],session['date']) not in completed:
+                                choices.append((session['date'],row['id'],session.get('template_id')))
+                if not choices: return {'queued':False}
+                when,sprint_id,template_id=sorted(choices,key=lambda c:(c[0],c[1],c[2] or ''))[0]
+                session_id=sprint_id+':'+when+':'+(template_id or '')
             previous=db.execute("SELECT created FROM trainer WHERE json_extract(context,'$.automatic')=1 AND json_extract(context,'$.session_id')=? ORDER BY created DESC LIMIT 1",(session_id,)).fetchone()
             if previous and self.clock()-previous['created']<21600: return {'queued':False}
             # Include exact revisions, so retries cannot duplicate an identical brief.
