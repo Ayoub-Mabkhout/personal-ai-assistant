@@ -73,8 +73,15 @@ Text sizes use `sp` on Android so they follow the user's font scale.
   state-bound indicator only while that work is actually happening.
 - **Navigation.** Floating pill bar on `surface` with an aurora-gradient pill
   behind the selected item, which slides between tabs. Selected icon and label
-  use `on-accent`; others use `muted`. Android tabs: Voice, Calendar, Shop,
-  Money, Activity, Settings.
+  use `on-accent`; others use `muted`. Android tabs: Voice, Calendar, Train,
+  Money, Shop. Activity and Settings are round icons in the top corner of every
+  page, with a rose dot on Activity when a task needs input.
+- **Train.** App palette, with rank colour reserved for crests. Nine crests gain
+  a crown, wings and a star by tier, and the tiers are camps on a dusk ridge. No
+  XP, trophies, streaks or grades: the rewards are records as they happen and one
+  short crest reveal on a rank-up, without travel when animations are off. The
+  live session hides the navigation bar, keeps the screen on, and keeps weight and
+  reps editable throughout, prefilled from the sprint target.
 - **Calendar.** For checking, not editing: a six-week month card (today in the
   aurora pill, an `accent` dot per entry and an `aurora` rose dot per birthday),
   then "Coming up" grouped by day. Each entry card has a coloured edge, its time

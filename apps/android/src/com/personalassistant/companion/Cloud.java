@@ -69,6 +69,8 @@ final class Cloud {
             return new JSONTokener(out.toString("UTF-8")).nextValue();
         } finally {connection.disconnect();}
     }
+    /** Raw bytes for imports and photos, which aren't JSON. */
+    static byte[] raw(Context c,String method,String path,byte[] body,String type)throws Exception{final String base,token;synchronized(Cloud.class){SharedPreferences p=prefs(c);base=p.getString("origin","");token=p.getString("token","");}if(base.isEmpty())throw new Exception("Pair the companion first");HttpURLConnection connection=(HttpURLConnection)new URL(base+"/groceries/v1/mobile/"+path).openConnection();connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(10000);connection.setReadTimeout(120000);connection.setRequestMethod(method);connection.setRequestProperty("Authorization","Bearer "+token);try{if(body!=null){connection.setRequestProperty("Content-Type",type);connection.setDoOutput(true);connection.setFixedLengthStreamingMode(body.length);try(OutputStream out=connection.getOutputStream()){out.write(body);}}int status=connection.getResponseCode();if(status<200||status>=300)throw new HttpError(status,"Server refused ("+status+")");ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[65536];int n;try(InputStream in=connection.getInputStream()){while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>16777216)throw new Exception("Server response too large");}}return out.toByteArray();}finally{connection.disconnect();}}
     /** Optional read-only settings fetch; older/offline servers retain the last valid cache. */
     static void syncPreferences(Context c)throws Exception{
         SharedPreferences p=prefs(c);final String token,origin;long now=System.currentTimeMillis();

@@ -18,7 +18,7 @@ final class MainVoice {
 
     MainVoice(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;
-        LinearLayout top=ui.row();View mark=new View(a);mark.setBackground(ui.aurora(150,true));mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);top.addView(mark,new LinearLayout.LayoutParams(ui.dp(22),ui.dp(22)));
+        LinearLayout top=ui.row();top.setPadding(0,0,ui.dp(88),0);View mark=new View(a);mark.setBackground(ui.aurora(150,true));mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);top.addView(mark,new LinearLayout.LayoutParams(ui.dp(22),ui.dp(22)));
         meridian=AppUi.DAYLIGHT.equals(ui.mode);TextView brand=ui.type("Companion",17,24,700,-.012f,meridian?0xFFFFFFFF:ui.text);if(meridian)brand.setShadowLayer(ui.dpf(4),0,ui.dpf(1),0x66140828);
         top.addView(brand,MainParts.weighted(ui,1,10,0,0,0));
         connection=ui.statusChip("Connect phone","neutral");FrameLayout hit=new FrameLayout(a);hit.setPadding(ui.dp(4),0,ui.dp(4),0);hit.setBackground(ui.pressable(null,24));hit.setClickable(true);hit.setFocusable(true);hit.setOnClickListener(v->a.openConnection());hit.addView(connection,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|Gravity.END));top.addView(hit,new LinearLayout.LayoutParams(-2,ui.dp(48)));page.addView(top);
