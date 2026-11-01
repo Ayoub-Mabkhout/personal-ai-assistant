@@ -152,6 +152,25 @@ class WorkoutTests(unittest.TestCase):
         self.store.mutate([op('photo','photo1',{},photo['revision'],deleted=True)])
         with self.assertRaises(Missing): self.store.blob(digest)
 
+    def test_substitution_preserves_completed_sets_and_finished_history(self):
+        data=dict(name='Active',started_at='2026-01-01T12:00:00Z',status='active',sets=[
+            dict(id='done',exercise_id='bench',weight_kg=50,reps=5,completed=True),
+            dict(id='next',exercise_id='bench',weight_kg=50,reps=5,completed=False)])
+        workout=self.store.mutate([op('workout','current',data)])[0]
+        self.store.heartbeat();self.store.question('question_one','Equipment occupied')
+        claim=self.store.claim()
+        changed={**workout['data'],'sets':[dict(s) for s in workout['data']['sets']]}
+        changed['sets'][1]['exercise_id']='dumbbell_bench'
+        proposal=op('workout','current',changed,workout['revision'])
+        damaged={**changed,'sets':[dict(s) for s in changed['sets']]}
+        damaged['sets'][0]['weight_kg']=100
+        with self.assertRaises(ValueError):
+            self.store.finish(claim['id'],claim['token'],'Bad',[{**proposal,'data':damaged}])
+        self.store.finish(claim['id'],claim['token'],'Substitution proposed',[proposal])
+        self.assertEqual(self.store.get('workout','current')['data']['sets'][1]['exercise_id'],'bench')
+        self.store.approve(claim['id'])
+        self.assertEqual(self.store.get('workout','current')['data']['sets'][1]['exercise_id'],'dumbbell_bench')
+
 
 class WorkoutApiTests(unittest.TestCase):
     def setUp(self):

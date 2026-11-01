@@ -22,7 +22,8 @@ Respect the owner's goals and configurable phase. Never infer current loads from
 recommend maximal testing during reconditioning. Ask about current symptoms; do not diagnose pain.
 For substitutions, fatigue, training adaptations and sprint reviews: separate evidence, interpretation
 and proposed plan. Existing logs remain facts. A plan change is a proposal, never an applied edit.
-Read current revisions before proposing template/sprint changes. Return complete validated JSON data
+Read current revisions before proposing template/sprint changes or substitutions to pending sets in an
+active workout. Never change completed sets or any workout fields other than pending sets. Return complete validated JSON data
 in each proposal's data_json, using the provided schema for that kind; empty proposals when unnecessary.
 Use code-provided statistics, not invented percentiles; easy sets cannot establish reliable maxes.
 For a sprint retrospective, assess THAT sprint's goals, recovery context and deviations, and propose
@@ -41,7 +42,7 @@ SCHEMA = {'type':'object','additionalProperties':False,'required':['text','memor
     'properties':{'text':{'type':'string'},'memory_summary':{'type':'string'},'assessment_json':{'type':'string'},
     'proposals':{'type':'array','items':{'type':'object','additionalProperties':False,
         'required':['kind','id','base_revision','data_json','reason'], 'properties':{
-            'kind':{'type':'string','enum':['template','sprint']},'id':{'type':'string'},
+            'kind':{'type':'string','enum':['template','sprint','workout']},'id':{'type':'string'},
             'base_revision':{'type':'integer'},'data_json':{'type':'string'},'reason':{'type':'string'}}}}}}
 
 
@@ -65,7 +66,7 @@ def run_model(config, config_file, state, job, images, workspace):
     for path in images: args += ['--image',str(path)]
     args += ['-']
     prompt = {'job':{k:v for k,v in job.items() if k!='token'},'previous_narrative':state.get('memory',''),
-              'data_schemas':{k:MODELS[k].model_json_schema() for k in ('template','sprint','composition')},
+              'data_schemas':{k:MODELS[k].model_json_schema() for k in ('template','sprint','workout','composition')},
               'current_approved_photo_ids':job['photos'],
               'model':config.get('workout_model',config.get('banking_model','gpt-6-sol')),
               'now':datetime.now(timezone.utc).isoformat(),

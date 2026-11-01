@@ -206,7 +206,7 @@ class Workouts:
         validated = [Mutation.model_validate(p).model_dump() for p in proposals]
         # Specialist proposals are limited to future planning, not rewrites of history.
         for p in validated:
-            if p['kind'] not in ('template','sprint') or p['deleted']: raise ValueError('Trainer may propose template/sprint changes only')
+            if p['kind'] not in ('template','sprint','workout') or p['deleted']: raise ValueError('Trainer may propose planning changes only')
             validate(p['kind'],p['data'])
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -216,6 +216,7 @@ class Workouts:
                 return
             job = db.execute("SELECT * FROM trainer WHERE id=? AND token=? AND state='running' AND lease_until>?",(identifier,token,self.clock())).fetchone()
             if not job: raise Conflict('Trainer lease lost')
+            self.check_proposals(db,validated)
             if assessment:
                 if state!='completed': raise ValueError('Failed jobs cannot save estimates')
                 allowed = json.loads(job['photos'])
@@ -236,6 +237,21 @@ class Workouts:
             row = db.execute('SELECT * FROM trainer WHERE id=?', (identifier,)).fetchone()
             if not row or row['state']!='completed': raise Missing('Completed trainer answer not found')
             proposals = json.loads(row['proposals'] or '[]')
+            if not row['approved']: self.check_proposals(db,proposals)
             result = self.mutate(proposals,'approved_trainer_proposal',db)
             db.execute('UPDATE trainer SET approved=1 WHERE id=?', (identifier,))
             return {'approved': True, 'results': result}
+
+    def check_proposals(self, db, proposals):
+        for p in proposals:
+            if p['kind']!='workout': continue
+            row=db.execute("SELECT * FROM entities WHERE kind='workout' AND id=? AND deleted=0",(p['id'],)).fetchone()
+            if not row: raise ValueError('Trainer can only adapt an existing active workout')
+            old=json.loads(row['data']);new=validate('workout',p['data'])
+            if row['revision']!=p['base_revision']: raise Conflict('Active workout changed while trainer was responding')
+            if old['status'] not in ('draft','active','paused'): raise ValueError('Trainer cannot rewrite finished workouts')
+            if {k:v for k,v in old.items() if k!='sets'}!={k:v for k,v in new.items() if k!='sets'}:
+                raise ValueError('Trainer may adapt pending sets, not recorded workout facts')
+            completed={s['id']:s for s in old['sets'] if s['completed']}
+            next_completed={s['id']:s for s in new['sets'] if s['completed']}
+            if completed!=next_completed: raise ValueError('Trainer cannot change completed sets')
