@@ -23,7 +23,9 @@ class BodyLimit:
         if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
                                                                        or scope.get('path','').startswith('/v1/files/')
                                                                        or scope.get('path','').startswith('/groceries/v1/mobile/task-attachments/')
-                                                                       or scope.get('path','').startswith('/v1/agent/tasks/'))):
+                                                                       or scope.get('path','').startswith('/v1/agent/tasks/')
+                                                                       or '/workout/photos/' in scope.get('path',''))
+                                      or (scope.get('method')=='POST' and '/workout/imports/' in scope.get('path',''))):
             # Streamed uploads enforce their own declared, bounded size.
             return await self.app(scope, receive, send)
         body = bytearray()
@@ -32,6 +34,8 @@ class BodyLimit:
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
         if path.startswith('/groceries/v1/mobile/termux/'):
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
+        if path.endswith('/workout/sync'):
+            limit=2*1024*1024
         while True:
             message = await receive()
             if message['type'] == 'http.disconnect':
@@ -210,6 +214,12 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         banking,submit,device_auth(groceries_api.devices) if groceries else submit,owner_auth)
     app.include_router(banking_owner);app.include_router(banking_public);app.include_router(banking_conversation);app.include_router(banking_owner_view)
     if groceries: app.include_router(banking_phone)
+    from personal_assistant.workout.store import Workouts
+    from personal_assistant.workout.api import routers as workout_routers
+    workouts=Workouts(Path(path).with_name('workout.sqlite3'),**({'clock':clock} if clock else {}))
+    app.state.workouts=workouts
+    for routes in workout_routers(workouts,submit,device_auth(groceries_api.devices) if groceries else None):
+        app.include_router(routes)
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))

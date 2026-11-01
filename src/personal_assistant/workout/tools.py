@@ -1,0 +1,59 @@
+"""Read-only MCP tools for the persistent trainer; writes are owner-approved proposals."""
+import argparse
+import json
+from pathlib import Path
+import sys
+from urllib.parse import urlencode, quote
+from ..relay.client import OwnerClient
+
+
+def serve(config, source=sys.stdin, target=sys.stdout):
+    client = OwnerClient(config)
+    tools = [dict(name='workout_read',description='Read actual workout context. overview is aggregate evidence; entities pages all history; entity reads exact record/revision. No writes.',
+        inputSchema={'type':'object','properties':{'view':{'type':'string','enum':['overview','entities','entity']},
+            'kind':{'type':'string'},'id':{'type':'string'},'offset':{'type':'integer'},'limit':{'type':'integer'}},
+            'required':['view'],'additionalProperties':False},annotations={'readOnlyHint':True,'destructiveHint':False})]
+    for line in source:
+        request = None
+        try:
+            request = json.loads(line)
+            if 'id' not in request: continue
+            method, params = request.get('method'), request.get('params',{})
+            if method=='initialize': result={'protocolVersion':params.get('protocolVersion','2024-11-05'),'capabilities':{'tools':{}},'serverInfo':{'name':'workout-specialist','version':'1.0'}}
+            elif method=='ping': result={}
+            elif method=='tools/list': result={'tools':tools}
+            elif method=='tools/call':
+                try:
+                    args = params.get('arguments') or {}
+                    if params['name']!='workout_read': raise ValueError('Unknown workout tool')
+                    view = args.get('view')
+                    if view=='overview': path='/overview'
+                    elif view=='entities':
+                        limit, offset = int(args.get('limit',20)), int(args.get('offset',0))
+                        if not 1<=limit<=100 or offset<0: raise ValueError('Invalid page')
+                        query={'offset':offset,'limit':limit}
+                        if args.get('kind'): query['kind']=args['kind']
+                        path='/entities?'+urlencode(query)
+                    elif view=='entity': path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
+                    else: raise ValueError('Invalid view')
+                    value=client.call('/relay/v1/workout'+path)
+                    result={'content':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}],'isError':False}
+                except Exception as error:
+                    result={'content':[{'type':'text','text':type(error).__name__+': '+str(error)}],'isError':True}
+            else:
+                target.write(json.dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32601,'message':'Method not found'}})+'\n');target.flush();continue
+            response={'jsonrpc':'2.0','id':request['id'],'result':result}
+        except Exception:
+            response={'jsonrpc':'2.0','id':request.get('id') if isinstance(request,dict) else None,'error':{'code':-32700,'message':'Invalid request'}}
+        target.write(json.dumps(response,ensure_ascii=False)+'\n');target.flush()
+
+
+def main():
+    sys.stdin.reconfigure(encoding='utf-8');sys.stdout.reconfigure(encoding='utf-8')
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config',type=Path,required=True)
+    args=parser.parse_args()
+    serve(json.loads(args.config.read_text(encoding='utf-8-sig')))
+
+
+if __name__=='__main__': main()
