@@ -54,6 +54,8 @@ Reference pages, checked 2026-11-01:
 
 Epley estimates apply to 2–10 reps; a single stays its recorded load. Current ranks require a completed working/failure set in the last 28 days with confirmed high effort, and measured bodyweight within the preceding 14 days or recorded for that session. Easy reconditioning sets do not establish a precise maximum. Imported historical estimates can remain uncertain, and never become today's rank or recommended load. App scores interpolate the five source ratio levels to 200/400/600/800/1000 and map to nine named tiers; this is an app-specific presentation. Aggregate and muscle scores are means of supported current lifts with explicit coverage, not overall fitness percentiles. Hiking elevation and treadmill incline remain separate dimensions when comparing cardio efforts.
 
+`exercise_records` separately preserves historical/recent best load, best rep count (with its load) and best single-set kg×reps for all completed working/failure sets. Bodyweight and high-rep exercises retain personal records without fabricating an estimated maximum. Volume follows the exercise's recorded load convention, so a per-hand dumbbell number remains per hand; unknown bodyweight is not silently added.
+
 Weight trends average observations per day, then average observed days in each window; minimum 3 days for 7-day and 5 days for 14-day averages. Missing days are not invented. Sprint evidence uses the selected phase/goals and distinguishes recovery-adjusted skips. It is evidence for a retrospective, not an automatic declaration that every goal succeeded.
 
 ## Specialist lifecycle

@@ -107,6 +107,7 @@ def overview(store, today=None):
     workouts = sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
     completed = [r for r in workouts if r['data']['status']=='completed' and day_of(r['data'])<=today]
     records, recent, candidates, cardio = {}, {}, {}, []
+    exercise_records={}
     hard_recent=set()
     measurements = [r['data'] for r in grouped['measurement']]
     for w in completed:
@@ -119,6 +120,18 @@ def overview(store, today=None):
             if eligible: bodyweight = max(eligible,key=lambda m:m['measured_at'])['value']
         for item in data['sets']:
             eid = item['exercise_id']; ex = catalog.get(eid,{'name':eid,'muscles':[]})
+            if item.get('completed') and item.get('kind') in ('working','failure') and item.get('reps'):
+                stats=exercise_records.setdefault(eid,{'exercise_id':eid,'name':ex['name'],
+                    'load_convention':ex.get('load_convention','unknown'),'historical':{},'recent':{}})
+                fact={'workout_id':w['id'],'set_id':item['id'],'date':day.isoformat(),
+                      'weight_kg':item.get('weight_kg'),'reps':item['reps']}
+                windows=[stats['historical']]+([stats['recent']] if today-timedelta(days=28)<=day else [])
+                for window in windows:
+                    if item['reps']>window.get('best_reps',{}).get('reps',0): window['best_reps']=fact
+                    load=item.get('weight_kg') or 0
+                    if load>window.get('best_load',{}).get('weight_kg',0): window['best_load']=fact
+                    if load and load*item['reps']>window.get('best_volume',{}).get('kg_repetitions',0):
+                        window['best_volume']={**fact,'kg_repetitions':round(load*item['reps'],3)}
             estimated = e1rm(item)
             if estimated:
                 value = {'workout_id':w['id'],'date':day.isoformat(),'set_id':item['id'],
@@ -201,7 +214,8 @@ def overview(store, today=None):
         body_rank.update(status='within_goal' if within else 'outside_goal',score=100 if within else 0,
                          tier='On target' if within else 'Outside personal band',progress=1 if within else 0)
     return {'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
-        'personal_records':personal,'ranks':list(candidates.values()),'ranking_method':METHOD,
+        'personal_records':personal,'exercise_records':list(exercise_records.values()),
+        'ranks':list(candidates.values()),'ranking_method':METHOD,
         'lift_ranks':lift_ranks,'tiers':[{'floor':floor,'name':name} for floor,name in TIERS],
         'aggregate_score':round(mean(v['score'] for v in candidates.values())) if candidates else None,
         'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS),'window_days':28},

@@ -103,6 +103,18 @@ class WorkoutTests(unittest.TestCase):
         self.assertEqual(rank('Unknown machine',100,70,'male')['status'],'unsupported_exercise')
         self.assertNotEqual(rank('Bench Press (Barbell)',100,None,'male')['status'],'ranked')
 
+    def test_bodyweight_and_high_rep_records_do_not_need_a_max_estimate(self):
+        raw=strong_csv([{'Exercise Name':'Pull Up','Weight (kg)':'0','Reps':'14'},
+                       {'Exercise Name':'Lateral Raise (Dumbbell)','Weight (kg)':'8','Reps':'20'}])
+        reconcile(self.store,raw,commit=True)
+        result=overview(self.store,date(2024,6,2))
+        self.assertEqual(result['personal_records'],[]) # no defensible low-rep e1RM
+        records={r['name']:r for r in result['exercise_records']}
+        self.assertEqual(records['Pull Up']['historical']['best_reps']['reps'],14)
+        self.assertNotIn('best_volume',records['Pull Up']['historical'])
+        self.assertEqual(records['Lateral Raise (Dumbbell)']['historical']['best_volume']['kg_repetitions'],160)
+        self.assertEqual(records['Lateral Raise (Dumbbell)']['load_convention'],'per_hand')
+
     def test_single_specialist_leases_and_persistent_conversation(self):
         with self.assertRaises(Conflict): self.store.question('question_one','Hello')
         self.store.heartbeat()
