@@ -113,6 +113,7 @@ class WorkoutTests(unittest.TestCase):
         second=self.store.claim();self.assertEqual(first['id'],second['id'])
         with self.assertRaises(Conflict): self.store.finish(first['id'],first['token'],'Stale',[])
         self.store.finish(second['id'],second['token'],'Answer',[])
+        self.store.finish(second['id'],second['token'],'Answer',[]) # lost HTTP response retry is safe
         self.assertEqual(self.store.claim()['id'],'question_two')
         history=self.store.conversation()
         self.assertEqual([x['question'] for x in history],['Hello','Follow-up'])

@@ -210,6 +210,10 @@ class Workouts:
             validate(p['kind'],p['data'])
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            prior = db.execute('SELECT * FROM trainer WHERE id=?',(identifier,)).fetchone()
+            if (prior and prior['state']==state and prior['token']==token
+                    and prior['answer']==answer and prior['proposals']==encoded(validated)):
+                return
             job = db.execute("SELECT * FROM trainer WHERE id=? AND token=? AND state='running' AND lease_until>?",(identifier,token,self.clock())).fetchone()
             if not job: raise Conflict('Trainer lease lost')
             if assessment:
@@ -222,7 +226,7 @@ class Workouts:
                     if not db.execute("SELECT 1 FROM entities WHERE kind='photo' AND id=? AND deleted=0",(photo,)).fetchone():
                         raise ValueError('An approved photo was deleted during analysis')
                 self.mutate([dict(mutation_id='assessment_'+identifier,kind='composition',id=identifier,base_revision=0,data=data)],'approved_photo_analysis',db)
-            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,token=NULL,lease_until=NULL WHERE id=? AND token=? AND state='running' AND lease_until>?",
+            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,lease_until=NULL WHERE id=? AND token=? AND state='running' AND lease_until>?",
                 (answer,encoded(validated),state,identifier,token,self.clock())).rowcount
             if not changed: raise Conflict('Trainer lease lost')
 
