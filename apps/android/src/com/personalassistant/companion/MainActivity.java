@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         if(previous>=0){showTab(previous);return;}
         if(isTaskRoot())moveTaskToBack(true);else finish();
     }
-    @Override public void onDestroy(){if(themeWatcher!=null)themeWatcher.stop();NativeTaskScreens.close(this);MoneyConversation.close(this);FeatureScreen.close(this);Updates.dismissPrompt(this);super.onDestroy();}
+    @Override public void onDestroy(){if(themeWatcher!=null)themeWatcher.stop();if(train!=null)train.close();NativeTaskScreens.close(this);MoneyConversation.close(this);FeatureScreen.close(this);Updates.dismissPrompt(this);super.onDestroy();}
     @Override public void onStop(){if(shopping!=null)shopping.commit(false);if(registered){unregisterReceiver(receiver);registered=false;}Cloud.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener);super.onStop();}
     boolean paired(){SharedPreferences p=Cloud.prefs(this);return !p.getString("token","").isEmpty()&&!p.getString("status","").startsWith("Disconnected.");}
     boolean syncing(){return syncBusy;}
@@ -46,7 +46,7 @@ public class MainActivity extends Activity {
     void note(String message){if(shopping!=null)shopping.note(message,"warning","alert");}
 
     /** Recreation for a palette change waits for pairing, sync and update work, installer handoffs, an active voice session and any dialog; drafts, selection, tab and scroll survive it. */
-    private boolean themeReady(){SharedPreferences p=Cloud.prefs(this);return resumed&&hasWindowFocus()&&!pairBusy&&!syncBusy&&!updateBusy&&!Updates.promptVisible(this)&&!p.getBoolean("update_install_pending",false)&&!p.getBoolean("voice_conversation_active",false)&&!taskTalk()&&!p.getBoolean("voice_listening_test",false)&&SystemClock.elapsedRealtime()>=themeBusyUntil;}
+    private boolean themeReady(){SharedPreferences p=Cloud.prefs(this);return resumed&&hasWindowFocus()&&!pairBusy&&!syncBusy&&!updateBusy&&!Updates.promptVisible(this)&&!p.getBoolean("update_install_pending",false)&&!p.getBoolean("voice_conversation_active",false)&&!taskTalk()&&!train.busy()&&!p.getBoolean("voice_listening_test",false)&&SystemClock.elapsedRealtime()>=themeBusyUntil;}
     /** A task conversation stays on while its answer is awaited, even though the recorder is then free for Hey Chat and Talk. */
     private boolean taskTalk(){return AppUi.micActive(this)&&Cloud.prefs(this).getString("task_voice","").startsWith("talk:");}
     private EditText[] fields(){return new EditText[]{shopping.input,settings.server,settings.code};}
