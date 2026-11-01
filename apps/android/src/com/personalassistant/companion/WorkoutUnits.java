@@ -19,6 +19,8 @@ final class WorkoutUnits {
     static String distance(Context c,double metres){return distanceNumber(c,metres)+" "+distanceLabel(c);}
     static double distanceIn(Context c,double shown){return imperial(c)?shown*MILE:shown*1000;}
     static String speed(Context c,double kmh){return round(Math.round((imperial(c)?kmh*1000/MILE:kmh)*10)/10.0)+(imperial(c)?" mph":" km/h");}
+    static String speedNumber(Context c,double kmh){return round(Math.round((imperial(c)?kmh*1000/MILE:kmh)*10)/10.0);}
+    static double speedIn(Context c,double shown){return imperial(c)?shown*MILE/1000:shown;}
     /** Minutes and seconds per kilometre or mile. */
     static String pace(Context c,double secondsPerKm){return WorkoutViews.clock(Math.round(imperial(c)?secondsPerKm*MILE/1000:secondsPerKm))+"/"+distanceLabel(c);}
 }
