@@ -14,6 +14,8 @@ final class WorkoutUnits {
     static String distanceLabel(Context c){return imperial(c)?"mi":"km";}
     static String loadNumber(Context c,double kg){return round(Math.round((imperial(c)?kg/LB:kg)*10)/10.0);}
     static String load(Context c,double kg){return loadNumber(c,kg)+" "+loadLabel(c);}
+    /** A session or month total: whole units with thousands separators. */
+    static String total(Context c,double kg){return String.format(Locale.getDefault(),"%,d",Math.round(imperial(c)?kg/LB:kg))+" "+loadLabel(c);}
     static double loadIn(Context c,double shown){return imperial(c)?shown*LB:shown;}
     static String distanceNumber(Context c,double metres){double v=imperial(c)?metres/MILE:metres/1000;return String.format(Locale.ROOT,"%.2f",v).replaceAll("\\.?0+$","");}
     static String distance(Context c,double metres){return distanceNumber(c,metres)+" "+distanceLabel(c);}
