@@ -44,16 +44,44 @@ class SetLog(Model):
     notes: str = Field(default='', max_length=8000)
 
 
+class SessionBlock(Model):
+    id: str = Field(min_length=1,max_length=100)
+    kind: Literal['run','warmup','exercise','rest','other']
+    exercise_id: str | None = Field(default=None,max_length=100)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    planned_seconds: int | None = Field(default=None,ge=0,le=86400)
+
+    @model_validator(mode='after')
+    def check(self):
+        for value in (self.started_at,self.ended_at):
+            if value and value.tzinfo is None: raise ValueError('Block timestamp needs timezone')
+        if self.ended_at and (not self.started_at or self.ended_at<self.started_at):
+            raise ValueError('Block ends before it starts')
+        return self
+
+
+class SessionChange(Model):
+    id: str = Field(min_length=1,max_length=100)
+    at: datetime
+    kind: Literal['swap_day','edit_exercises','shorter','rest_move','other']
+    note: str = Field(min_length=1,max_length=2000)
+    original_date: date | None = None
+    new_date: date | None = None
+
+
 class Workout(Model):
     name: str = Field(min_length=1, max_length=200)
     started_at: str = Field(min_length=10, max_length=50)
     timezone: str = Field(default='UTC', max_length=100)
     duration_seconds: int = Field(default=0, ge=0, le=604800)
-    status: Literal['draft', 'active', 'paused', 'completed', 'skipped'] = 'draft'
+    status: Literal['draft', 'active', 'paused', 'completed', 'skipped', 'rest'] = 'draft'
     sprint_id: str | None = Field(default=None, max_length=100)
     template_id: str | None = Field(default=None, max_length=100)
     bodyweight_kg: float | None = Field(default=None, gt=0, le=500)
     sets: list[SetLog] = Field(default_factory=list, max_length=1000)
+    blocks: list[SessionBlock] = Field(default_factory=list,max_length=1000)
+    session_changes: list[SessionChange] = Field(default_factory=list,max_length=100)
     notes: str = Field(default='', max_length=16000)
     skip_reason: str = Field(default='', max_length=1000)
     recovery_adjusted: bool = False
@@ -80,6 +108,7 @@ class Prescription(Model):
     weight_kg: float | None = Field(default=None, ge=0, le=2000)
     distance_m: float | None = Field(default=None, gt=0, le=1000000)
     speed_kmh: float | None = Field(default=None, gt=0, le=60)
+    estimated_seconds: int | None = Field(default=None,ge=0,le=86400)
     notes: str = Field(default='', max_length=2000)
 
     @model_validator(mode='after')
@@ -92,6 +121,7 @@ class Template(Model):
     name: str = Field(min_length=1, max_length=200)
     exercises: list[Prescription] = Field(default_factory=list, max_length=100)
     notes: str = Field(default='', max_length=8000)
+    planned_blocks: list[SessionBlock] = Field(default_factory=list,max_length=200)
 
 
 class Sprint(Model):

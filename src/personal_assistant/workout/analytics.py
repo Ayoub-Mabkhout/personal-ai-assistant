@@ -94,7 +94,7 @@ def overview(store, today=None):
         if not item['deleted']: grouped[item['kind']].append(item)
     catalog = {r['id']:r['data'] for r in grouped['exercise']}
     profiles = grouped['athlete']
-    athlete = profiles[-1]['data'] if profiles else {}
+    athlete = max(profiles,key=lambda p:p['updated'])['data'] if profiles else {}
     workouts = sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
     completed = [r for r in workouts if r['data']['status']=='completed' and day_of(r['data'])<=today]
     records, recent, candidates, cardio = {}, {}, {}, []
@@ -134,13 +134,14 @@ def overview(store, today=None):
         sprint = item['data']
         within = [w for w in workouts if w['data'].get('sprint_id')==item['id'] and sprint['start']<=day_of(w['data']).isoformat()<=sprint['end']]
         done = [w for w in within if w['data']['status']=='completed']
-        adjusted = [w for w in within if w['data']['status']=='skipped' and w['data']['recovery_adjusted']]
+        adjusted = [w for w in within if w['data']['status']=='rest' or (w['data']['status']=='skipped' and w['data']['recovery_adjusted'])]
         planned = len(sprint['scheduled'])
         denominator = max(0,planned-len(adjusted))
         sprints.append({'id':item['id'],'name':sprint['name'],'phase':sprint['phase'],'status':sprint['status'],
             'planned':planned,'completed':len(done),'recovery_adjusted_skips':len(adjusted),
             'adherence':min(1,len(done)/denominator) if denominator else None,
             'average_duration_seconds':round(mean(w['data']['duration_seconds'] for w in done)) if done else None,
+            'session_changes':[c for w in within for c in w['data'].get('session_changes',[])],
             'success_criteria':sprint['success_criteria'],'interpretation':'Evidence only; specialist reviews goals and proposes next sprint.'})
     muscle_ranks = {}
     for item in candidates.values():
@@ -154,6 +155,18 @@ def overview(store, today=None):
     for item in cardio:
         key=(item['exercise_id'],item['distance_m'],item['incline_percent'],item['elevation_gain_m'])
         if key not in cardio_records or item['seconds']<cardio_records[key]['seconds']: cardio_records[key]=item
+    latest_weight=max((m for m in measurements if m['kind']=='bodyweight' and datetime.fromisoformat(m['measured_at']).date()<=today),key=lambda m:m['measured_at'],default=None)
+    latest_waist=max((m for m in measurements if m['kind']=='waist' and datetime.fromisoformat(m['measured_at']).date()<=today),key=lambda m:m['measured_at'],default=None)
+    height=athlete.get('height_cm')
+    body={'status':'ready' if height and latest_weight and latest_waist else 'needs_input','height_cm':height,
+          'bodyweight_kg':latest_weight['value'] if latest_weight else None,'waist_cm':latest_waist['value'] if latest_waist else None,
+          'weight_measured_at':latest_weight['measured_at'] if latest_weight else None,
+          'waist_measured_at':latest_waist['measured_at'] if latest_waist else None,
+          'bmi':round(latest_weight['value']/(height/100)**2,2) if height and latest_weight else None,
+          'waist_height_ratio':round(latest_waist['value']/height,3) if height and latest_waist else None,
+          'method':'Descriptive measurements only; BMI and waist/height do not establish muscle mass or a clinical body-composition rank.'}
+    if body['status']=='ready' and any(datetime.fromisoformat(m['measured_at']).date()<today-timedelta(days=30) for m in (latest_weight,latest_waist)):
+        body['status']='stale'
     return {'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
         'personal_records':personal,'ranks':list(candidates.values()),'ranking_method':METHOD,
         'aggregate_score':round(mean(v['score'] for v in candidates.values())) if candidates else None,
@@ -161,5 +174,6 @@ def overview(store, today=None):
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
+        'body_metrics':body,'next_session_brief':store.next_session_brief(),
         'active_workouts':[r for r in workouts if r['data']['status'] in ('active','paused')],
         'latest_workouts':list(reversed(workouts[-10:]))}

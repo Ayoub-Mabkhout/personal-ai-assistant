@@ -33,6 +33,8 @@ class Workouts:
             CREATE TABLE IF NOT EXISTS specialist(id INTEGER PRIMARY KEY CHECK(id=1),seen REAL,state TEXT,detail TEXT);''')
             if 'original' not in {row['name'] for row in db.execute('PRAGMA table_info(imports)')}:
                 db.execute('ALTER TABLE imports ADD COLUMN original BLOB')
+            if 'answered_at' not in {row['name'] for row in db.execute('PRAGMA table_info(trainer)')}:
+                db.execute('ALTER TABLE trainer ADD COLUMN answered_at REAL')
 
     @contextmanager
     def db(self):
@@ -182,7 +184,7 @@ class Workouts:
         rows = db.execute('SELECT * FROM trainer WHERE (? IS NULL OR created<?) ORDER BY created DESC,rowid DESC LIMIT ?',
                           (before,before,limit)).fetchall()
         return [{k: json.loads(r[k]) if k in ('photos','context','proposals') and r[k] else r[k]
-                 for k in ('id','question','photos','context','created','state','answer','proposals','approved')} for r in reversed(rows)]
+                 for k in ('id','question','photos','context','created','state','answer','answered_at','proposals','approved')} for r in reversed(rows)]
 
     def claim(self):
         with self.db() as db:
@@ -227,8 +229,8 @@ class Workouts:
                     if not db.execute("SELECT 1 FROM entities WHERE kind='photo' AND id=? AND deleted=0",(photo,)).fetchone():
                         raise ValueError('An approved photo was deleted during analysis')
                 self.mutate([dict(mutation_id='assessment_'+identifier,kind='composition',id=identifier,base_revision=0,data=data)],'approved_photo_analysis',db)
-            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,lease_until=NULL WHERE id=? AND token=? AND state='running' AND lease_until>?",
-                (answer,encoded(validated),state,identifier,token,self.clock())).rowcount
+            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,answered_at=?,lease_until=NULL WHERE id=? AND token=? AND state='running' AND lease_until>?",
+                (answer,encoded(validated),state,self.clock(),identifier,token,self.clock())).rowcount
             if not changed: raise Conflict('Trainer lease lost')
 
     def approve(self, identifier):
@@ -255,3 +257,15 @@ class Workouts:
             completed={s['id']:s for s in old['sets'] if s['completed']}
             next_completed={s['id']:s for s in new['sets'] if s['completed']}
             if completed!=next_completed: raise ValueError('Trainer cannot change completed sets')
+
+    def next_session_brief(self):
+        with self.db() as db:
+            row=db.execute("SELECT * FROM trainer WHERE state='completed' AND json_extract(context,'$.purpose')='next_session_brief' ORDER BY answered_at DESC,rowid DESC LIMIT 1").fetchone()
+            if not row:
+                return {'text':None,'generated_at':None,'session_id':None,
+                        'status':'missing' if self.status(db)['available'] else 'unavailable'}
+            context=json.loads(row['context']);at=row['answered_at'] or row['created']
+            cursor=db.execute('SELECT coalesce(max(revision),0) FROM changes').fetchone()[0]
+            stale=self.clock()-at>86400 or context.get('revision')!=cursor
+            return {'text':row['answer'],'generated_at':at,'session_id':context.get('session_id'),
+                    'status':'stale' if stale else 'cached','specialist_available':self.status(db)['available']}

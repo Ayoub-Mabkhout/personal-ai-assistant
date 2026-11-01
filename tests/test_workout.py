@@ -171,6 +171,32 @@ class WorkoutTests(unittest.TestCase):
         self.store.approve(claim['id'])
         self.assertEqual(self.store.get('workout','current')['data']['sets'][1]['exercise_id'],'dumbbell_bench')
 
+    def test_rest_is_not_missed_and_block_timing_survives_round_trip(self):
+        sprint=self.store.mutate([op('sprint','sprint1',dict(name='Strength',phase='strength',start='2026-01-01',end='2026-01-14',
+            scheduled=[{'date':'2026-01-01'},{'date':'2026-01-03'}]))])[0]
+        data=dict(name='Rest and move',started_at='2026-01-01T12:00:00Z',status='rest',sprint_id='sprint1',
+            session_changes=[dict(id='move1',at='2026-01-01T10:00:00Z',kind='rest_move',note='Rest today, move the session.')],
+            blocks=[dict(id='run',kind='run',started_at='2026-01-01T10:00:00Z',ended_at='2026-01-01T10:07:30Z',planned_seconds=450)])
+        self.store.mutate([op('workout','rest_day',data),op('workout','done_day',dict(name='Done',started_at='2026-01-03T12:00:00Z',status='completed',sprint_id='sprint1'))])
+        report=overview(self.store,date(2026,1,5))['sprints'][0]
+        self.assertEqual(report['adherence'],1)
+        self.assertEqual(report['recovery_adjusted_skips'],1)
+        self.assertEqual(len(report['session_changes']),1)
+        self.assertEqual(self.store.get('sprint','sprint1')['revision'],sprint['revision'])
+        self.assertEqual(self.store.get('workout','rest_day')['data']['blocks'][0]['planned_seconds'],450)
+
+    def test_cached_next_session_brief_does_not_trigger_a_model_and_is_stale_after_edit(self):
+        self.store.heartbeat()
+        self.assertEqual(self.store.next_session_brief()['status'],'missing')
+        self.store.question('question_brief','Prepare next session',context={'purpose':'next_session_brief','session_id':'next1','revision':0})
+        claim=self.store.claim();self.store.finish(claim['id'],claim['token'],'A cached brief.',[])
+        self.assertEqual(self.store.next_session_brief()['status'],'cached')
+        self.store.mutate([op('exercise','bench',{'name':'Bench'})])
+        self.assertEqual(self.store.next_session_brief()['status'],'stale')
+        self.now+=100
+        self.assertEqual(self.store.next_session_brief()['text'],'A cached brief.')
+        self.assertFalse(self.store.next_session_brief()['specialist_available'])
+
 
 class WorkoutApiTests(unittest.TestCase):
     def setUp(self):
