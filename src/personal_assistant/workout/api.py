@@ -110,6 +110,9 @@ def routers(store, submit, device=None):
     @owner.post('/trainer/claim')
     def claim(): return {'job':store.claim()}
 
+    @owner.post('/trainer/prepare-brief')
+    def prepare_brief(timezone: str='UTC'): return store.prepare_brief(timezone)
+
     @owner.post('/trainer/{identifier}/renew')
     def renew(identifier: str,body: Lease):
         store.renew(identifier,body.token)

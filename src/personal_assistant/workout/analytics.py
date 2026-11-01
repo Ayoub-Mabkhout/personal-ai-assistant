@@ -98,6 +98,7 @@ def overview(store, today=None):
     workouts = sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
     completed = [r for r in workouts if r['data']['status']=='completed' and day_of(r['data'])<=today]
     records, recent, candidates, cardio = {}, {}, {}, []
+    hard_recent=set()
     measurements = [r['data'] for r in grouped['measurement']]
     for w in completed:
         data = w['data']; day = day_of(data)
@@ -117,6 +118,7 @@ def overview(store, today=None):
                 if eid not in records or estimated>records[eid]['estimated_1rm_kg']: records[eid]=value
                 if today-timedelta(days=28)<=day:
                     if eid not in recent or estimated>recent[eid]['estimated_1rm_kg']: recent[eid]=value
+                    if e1rm(item,True): hard_recent.add(eid)
                     if e1rm(item,True) and bodyweight:
                         result = rank(ex['name'],estimated,bodyweight,athlete.get('sex'))
                         if result['status']=='ranked' and (eid not in candidates or result['score']>candidates[eid]['score']):
@@ -129,6 +131,13 @@ def overview(store, today=None):
     personal = [{'exercise_id':eid,'name':catalog.get(eid,{}).get('name',eid),'historical_best':value,
                  'recent_best':recent.get(eid),'comeback_ratio':round(recent[eid]['estimated_1rm_kg']/value['estimated_1rm_kg'],3) if eid in recent else None}
                 for eid,value in records.items()]
+    lift_ranks=[]
+    for name in BENCHMARKS:
+        eid=next((eid for eid,ex in catalog.items() if ex['name'].casefold()==name),None)
+        status=('ranked' if eid in candidates else 'no_recent_set' if eid not in recent else
+                'needs_hard_set' if eid not in hard_recent else 'needs_profile' if athlete.get('sex') not in ('male','female') else 'needs_bodyweight')
+        lift_ranks.append({**candidates.get(eid,{}),'exercise_name':catalog[eid]['name'] if eid else name,
+                           'exercise_id':eid,'status':status,'recent_best':recent.get(eid),'historical_best':records.get(eid)})
     sprints = []
     for item in grouped['sprint']:
         sprint = item['data']
@@ -167,13 +176,29 @@ def overview(store, today=None):
           'method':'Descriptive measurements only; BMI and waist/height do not establish muscle mass or a clinical body-composition rank.'}
     if body['status']=='ready' and any(datetime.fromisoformat(m['measured_at']).date()<today-timedelta(days=30) for m in (latest_weight,latest_waist)):
         body['status']='stale'
+    body.update(weight_kg=body['bodyweight_kg'],waist_to_height=body['waist_height_ratio'],
+        weight_readings=sum(m['kind']=='bodyweight' for m in measurements),waist_readings=sum(m['kind']=='waist' for m in measurements),
+        weight_age_days=(today-datetime.fromisoformat(latest_weight['measured_at']).date()).days if latest_weight else None,
+        waist_age_days=(today-datetime.fromisoformat(latest_waist['measured_at']).date()).days if latest_waist else None)
+    low,high,ceiling=(athlete.get(k) for k in ('goal_weight_min_kg','goal_weight_max_kg','waist_height_ceiling'))
+    body_rank={'status':'needs_input','score':None,'tier':None,'scope':'personal_nonclinical',
+        'goal_weight_min_kg':low,'goal_weight_max_kg':high,'waist_height_ceiling':ceiling,
+        'floor':0,'next_tier':None,'progress':None,
+        'limitations':'Personal goals, not a clinical assessment, measured muscularity or population comparison.',
+        'method':'Owner-defined goal bands only. 100 points inside weight range and at/below chosen waist ceiling; zero outside. Lower waist earns no extra credit. Not a measure of muscle mass, health or a population percentile.'}
+    if body['status']=='stale': body_rank['status']='stale'
+    elif body['status']=='ready' and low and high and ceiling:
+        within=low<=body['weight_kg']<=high and body['waist_to_height']<=ceiling
+        body_rank.update(status='within_goal' if within else 'outside_goal',score=100 if within else 0,
+                         tier='On target' if within else 'Outside personal band',progress=1 if within else 0)
     return {'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
         'personal_records':personal,'ranks':list(candidates.values()),'ranking_method':METHOD,
+        'lift_ranks':lift_ranks,'tiers':[{'floor':floor,'name':name} for floor,name in TIERS],
         'aggregate_score':round(mean(v['score'] for v in candidates.values())) if candidates else None,
         'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS),'window_days':28},
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
-        'body_metrics':body,'next_session_brief':store.next_session_brief(),
+        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),
         'active_workouts':[r for r in workouts if r['data']['status'] in ('active','paused')],
         'latest_workouts':list(reversed(workouts[-10:]))}

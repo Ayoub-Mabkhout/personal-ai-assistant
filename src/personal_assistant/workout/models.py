@@ -1,7 +1,7 @@
 """Version-one wire format. Metric source values are never doubled for dumbbells."""
 from datetime import datetime, date
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class Model(BaseModel):
@@ -16,6 +16,16 @@ class Athlete(Model):
     units: Literal['metric', 'imperial'] = 'metric'
     goals: list[str] = Field(default_factory=list, max_length=20)
     context: str = Field(default='', max_length=8000)
+    goal_weight_min_kg: float | None = Field(default=None,gt=0,le=500,validation_alias=AliasChoices('goal_weight_min_kg','target_weight_min_kg'))
+    goal_weight_max_kg: float | None = Field(default=None,gt=0,le=500,validation_alias=AliasChoices('goal_weight_max_kg','target_weight_max_kg'))
+    waist_height_ceiling: float | None = Field(default=None,gt=0,le=1)
+    auto_coach_briefs: bool = False
+
+    @model_validator(mode='after')
+    def check(self):
+        if self.goal_weight_min_kg and self.goal_weight_max_kg and self.goal_weight_max_kg<self.goal_weight_min_kg:
+            raise ValueError('Personal weight goal range is reversed')
+        return self
 
 
 class Exercise(Model):
@@ -62,12 +72,18 @@ class SessionBlock(Model):
 
 
 class SessionChange(Model):
-    id: str = Field(min_length=1,max_length=100)
+    id: str = Field(default='',max_length=100)
     at: datetime
-    kind: Literal['swap_day','edit_exercises','shorter','rest_move','other']
-    note: str = Field(min_length=1,max_length=2000)
+    kind: Literal['swap','edit','shorter','rest','other','swap_day','edit_exercises','rest_move']
+    reason: str = Field(min_length=1,max_length=2000,validation_alias=AliasChoices('reason','note'))
+    from_template_id: str | None = Field(default=None,max_length=100)
     original_date: date | None = None
     new_date: date | None = None
+
+    @model_validator(mode='after')
+    def check(self):
+        if self.at.tzinfo is None: raise ValueError('Session change needs timezone')
+        return self
 
 
 class Workout(Model):

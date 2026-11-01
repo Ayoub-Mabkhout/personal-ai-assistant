@@ -175,7 +175,7 @@ class WorkoutTests(unittest.TestCase):
         sprint=self.store.mutate([op('sprint','sprint1',dict(name='Strength',phase='strength',start='2026-01-01',end='2026-01-14',
             scheduled=[{'date':'2026-01-01'},{'date':'2026-01-03'}]))])[0]
         data=dict(name='Rest and move',started_at='2026-01-01T12:00:00Z',status='rest',sprint_id='sprint1',
-            session_changes=[dict(id='move1',at='2026-01-01T10:00:00Z',kind='rest_move',note='Rest today, move the session.')],
+            session_changes=[dict(id='move1',at='2026-01-01T10:00:00Z',kind='rest',reason='Rest today, move the session.')],
             blocks=[dict(id='run',kind='run',started_at='2026-01-01T10:00:00Z',ended_at='2026-01-01T10:07:30Z',planned_seconds=450)])
         self.store.mutate([op('workout','rest_day',data),op('workout','done_day',dict(name='Done',started_at='2026-01-03T12:00:00Z',status='completed',sprint_id='sprint1'))])
         report=overview(self.store,date(2026,1,5))['sprints'][0]
@@ -196,6 +196,40 @@ class WorkoutTests(unittest.TestCase):
         self.now+=100
         self.assertEqual(self.store.next_session_brief()['text'],'A cached brief.')
         self.assertFalse(self.store.next_session_brief()['specialist_available'])
+
+    def test_automatic_brief_needs_owner_opt_in_and_deduplicates(self):
+        from datetime import datetime,timezone
+        self.now=datetime(2026,1,1,tzinfo=timezone.utc).timestamp()
+        profile=self.store.mutate([op('athlete','self',{})])[0]
+        self.store.mutate([op('sprint','sprint1',dict(name='Next sprint',phase='strength',start='2026-01-01',end='2026-01-14',
+            scheduled=[{'date':'2026-01-03','template_id':'plan'}]))])
+        self.store.heartbeat()
+        self.assertFalse(self.store.prepare_brief()['queued'])
+        self.store.mutate([op('athlete','self',{**profile['data'],'auto_coach_briefs':True},profile['revision'])])
+        self.assertFalse(self.store.prepare_brief()['queued']) # wait for stable inputs
+        self.now+=121;self.store.heartbeat()
+        self.assertTrue(self.store.prepare_brief()['queued'])
+        self.assertFalse(self.store.prepare_brief()['queued'])
+        claim=self.store.claim()
+        self.assertEqual(claim['photos'],[])
+        self.assertTrue(claim['context']['automatic'])
+        self.store.finish(claim['id'],claim['token'],'A prepared session brief.',[])
+        self.assertFalse(self.store.prepare_brief()['queued'])
+
+    def test_personal_body_goal_does_not_reward_a_lower_waist_or_invent_muscularity(self):
+        self.store.mutate([op('athlete','self',dict(height_cm=180,target_weight_min_kg=75,target_weight_max_kg=80,waist_height_ceiling=.5)),
+            op('measurement','weight',dict(measured_at='2026-01-01T07:00:00Z',kind='bodyweight',value=76,unit='kg')),
+            op('measurement','waist',dict(measured_at='2026-01-01T07:00:00Z',kind='waist',value=85,unit='cm'))])
+        result=overview(self.store,date(2026,1,2))
+        self.assertEqual(result['body_rank']['score'],100)
+        self.assertEqual(result['body_rank']['scope'],'personal_nonclinical')
+        waist=self.store.get('measurement','waist')
+        self.store.mutate([op('measurement','waist',{**waist['data'],'value':80},waist['revision'])])
+        self.assertEqual(overview(self.store,date(2026,1,2))['body_rank']['score'],100)
+        weight=self.store.get('measurement','weight')
+        self.store.mutate([op('measurement','weight',{**weight['data'],'value':70},weight['revision'])])
+        self.assertEqual(overview(self.store,date(2026,1,2))['body_rank']['score'],0)
+        self.assertEqual(overview(self.store,date(2026,3,1))['body_rank']['status'],'stale')
 
 
 class WorkoutApiTests(unittest.TestCase):

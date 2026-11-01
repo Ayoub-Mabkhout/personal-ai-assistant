@@ -269,3 +269,42 @@ class Workouts:
             stale=self.clock()-at>86400 or context.get('revision')!=cursor
             return {'text':row['answer'],'generated_at':at,'session_id':context.get('session_id'),
                     'status':'stale' if stale else 'cached','specialist_available':self.status(db)['available']}
+
+    def prepare_brief(self, timezone='UTC'):
+        """Owner-opted-in, debounced ahead-of-session preparation. Never uses photos."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
+        try: today=datetime.fromtimestamp(self.clock(),ZoneInfo(timezone)).date().isoformat()
+        except (ValueError,ZoneInfoNotFoundError): raise ValueError('Unknown brief timezone') from None
+        with self.db() as db:
+            if not self.status(db)['available']: return {'queued':False}
+            rows=[self.row(r) for r in db.execute('SELECT * FROM entities WHERE deleted=0')]
+            profiles=[r for r in rows if r['kind']=='athlete']
+            if not profiles or not max(profiles,key=lambda r:r['updated'])['data'].get('auto_coach_briefs'):
+                return {'queued':False}
+            if db.execute("SELECT 1 FROM trainer WHERE state IN ('queued','running')").fetchone(): return {'queued':False}
+            if not rows or self.clock()-max(r['updated'] for r in rows)<120: return {'queued':False}
+            # Only future scheduled work; an ongoing workout is never interrupted by auto-coaching.
+            if any(r['kind']=='workout' and r['data']['status'] in ('active','paused') for r in rows): return {'queued':False}
+            choices=[]
+            completed={(r['data'].get('sprint_id'),r['data']['started_at'][:10]) for r in rows
+                       if r['kind']=='workout' and r['data']['status'] in ('completed','rest')}
+            for row in rows:
+                if row['kind']=='sprint' and row['data']['status'] in ('planned','active'):
+                    for session in row['data']['scheduled']:
+                        if session['date']>=today and (row['id'],session['date']) not in completed:
+                            choices.append((session['date'],row['id'],session.get('template_id')))
+            if not choices: return {'queued':False}
+            when,sprint_id,template_id=sorted(choices,key=lambda c:(c[0],c[1],c[2] or ''))[0]
+            session_id=sprint_id+':'+when+':'+(template_id or '')
+            previous=db.execute("SELECT created FROM trainer WHERE json_extract(context,'$.automatic')=1 AND json_extract(context,'$.session_id')=? ORDER BY created DESC LIMIT 1",(session_id,)).fetchone()
+            if previous and self.clock()-previous['created']<21600: return {'queued':False}
+            # Include exact revisions, so retries cannot duplicate an identical brief.
+            signature=hashlib.sha256(encoded(sorted((r['kind'],r['id'],r['revision']) for r in rows)).encode()).hexdigest()
+            identifier='brief_'+signature
+            if db.execute('SELECT 1 FROM trainer WHERE id=?',(identifier,)).fetchone(): return {'queued':False}
+            cursor=db.execute('SELECT coalesce(max(revision),0) FROM changes').fetchone()[0]
+        result=self.question(identifier,'Prepare a concise brief for the next session using the current sprint goals, recent performance and recovery. Do not change the plan or analyse photos.',
+            context={'purpose':'next_session_brief','automatic':True,'session_id':session_id,'revision':cursor,
+                     'date':when,'sprint_id':sprint_id,'template_id':template_id})
+        return {'queued':True,**result}

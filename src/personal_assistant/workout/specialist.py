@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 from urllib.request import Request
+from urllib.parse import urlencode
 from ..relay.client import OwnerClient
 from ..worker.runtime import Singleton
 
@@ -124,6 +125,7 @@ def download_photos(client,job,root):
 
 def run_once(client, config, config_file, state, invoke=run_model):
     client.call('/relay/v1/workout/trainer/heartbeat',{'state':'ready'},'PUT')
+    client.call('/relay/v1/workout/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
     job=client.call('/relay/v1/workout/trainer/claim',{},'POST')['job']
     if not job: return False
     stop=threading.Event()
