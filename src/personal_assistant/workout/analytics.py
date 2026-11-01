@@ -62,6 +62,15 @@ def day_of(workout):
     return at.astimezone(ZoneInfo(workout['timezone'])).date() if at.tzinfo else at.date()
 
 
+def scheduled_day(workout):
+    """A one-day override retains the session's original place in its sprint."""
+    source=workout.get('source',{})
+    companion=source.get('companion',{}) if isinstance(source,dict) else {}
+    original=companion.get('scheduled_date') if isinstance(companion,dict) else None
+    try: return date.fromisoformat(original) if original else day_of(workout)
+    except (TypeError,ValueError): return day_of(workout)
+
+
 def weight_trend(points, today):
     by_day = defaultdict(list)
     raw = []
@@ -141,7 +150,7 @@ def overview(store, today=None):
     sprints = []
     for item in grouped['sprint']:
         sprint = item['data']
-        within = [w for w in workouts if w['data'].get('sprint_id')==item['id'] and sprint['start']<=day_of(w['data']).isoformat()<=sprint['end']]
+        within = [w for w in workouts if w['data'].get('sprint_id')==item['id'] and sprint['start']<=scheduled_day(w['data']).isoformat()<=sprint['end']]
         done = [w for w in within if w['data']['status']=='completed']
         adjusted = [w for w in within if w['data']['status']=='rest' or (w['data']['status']=='skipped' and w['data']['recovery_adjusted'])]
         planned = len(sprint['scheduled'])

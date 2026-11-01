@@ -177,7 +177,7 @@ class WorkoutTests(unittest.TestCase):
         data=dict(name='Rest and move',started_at='2026-01-01T12:00:00Z',status='rest',sprint_id='sprint1',
             session_changes=[dict(id='move1',at='2026-01-01T10:00:00Z',kind='rest',reason='Rest today, move the session.')],
             blocks=[dict(id='run',kind='run',started_at='2026-01-01T10:00:00Z',ended_at='2026-01-01T10:07:30Z',planned_seconds=450)])
-        self.store.mutate([op('workout','rest_day',data),op('workout','done_day',dict(name='Done',started_at='2026-01-03T12:00:00Z',status='completed',sprint_id='sprint1'))])
+        self.store.mutate([op('workout','rest_day',data),op('workout','done_day',dict(name='Done later',started_at='2026-01-15T12:00:00Z',status='completed',sprint_id='sprint1',source={'companion':{'scheduled_date':'2026-01-03'}}))])
         report=overview(self.store,date(2026,1,5))['sprints'][0]
         self.assertEqual(report['adherence'],1)
         self.assertEqual(report['recovery_adjusted_skips'],1)

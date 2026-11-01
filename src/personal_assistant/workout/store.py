@@ -274,6 +274,7 @@ class Workouts:
         """Owner-opted-in, debounced ahead-of-session preparation. Never uses photos."""
         from datetime import datetime
         from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
+        from .analytics import scheduled_day
         try: today=datetime.fromtimestamp(self.clock(),ZoneInfo(timezone)).date().isoformat()
         except (ValueError,ZoneInfoNotFoundError): raise ValueError('Unknown brief timezone') from None
         with self.db() as db:
@@ -287,8 +288,8 @@ class Workouts:
             # Only future scheduled work; an ongoing workout is never interrupted by auto-coaching.
             if any(r['kind']=='workout' and r['data']['status'] in ('active','paused') for r in rows): return {'queued':False}
             choices=[]
-            completed={(r['data'].get('sprint_id'),r['data']['started_at'][:10]) for r in rows
-                       if r['kind']=='workout' and r['data']['status'] in ('completed','rest')}
+            completed={(r['data'].get('sprint_id'),scheduled_day(r['data']).isoformat()) for r in rows
+                       if r['kind']=='workout' and r['data']['status'] in ('completed','rest','skipped')}
             for row in rows:
                 if row['kind']=='sprint' and row['data']['status'] in ('planned','active'):
                     for session in row['data']['scheduled']:
