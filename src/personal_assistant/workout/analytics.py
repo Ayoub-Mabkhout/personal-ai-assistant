@@ -224,6 +224,6 @@ def overview(store, today=None):
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
-        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),
+        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),'workout_briefs':store.workout_briefs(),
         'active_workouts':[r for r in workouts if r['data']['status'] in ('active','paused')],
         'latest_workouts':list(reversed(workouts[-10:]))}

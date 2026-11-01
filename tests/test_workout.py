@@ -225,6 +225,70 @@ class WorkoutTests(unittest.TestCase):
         self.assertEqual(self.store.next_session_brief()['text'],'A cached brief.')
         self.assertFalse(self.store.next_session_brief()['specialist_available'])
 
+    def test_template_keeps_every_planned_set_and_warm_ups_do_not_count_as_hard_sets(self):
+        plan=[dict(kind='warmup',reps=8,weight_kg=20),dict(kind='warmup',reps=5,weight_kg=40),dict(reps=5,weight_kg=60),dict(reps=5,weight_kg=60),dict(kind='drop',reps=10,weight_kg=40)]
+        saved=self.store.mutate([op('template','push',dict(name='Push',exercises=[dict(exercise_id='bench',set_plan=plan,superset='a')]))])[0]['data']
+        self.assertEqual(saved['exercises'][0]['sets'],3)
+        self.assertEqual([s['kind'] for s in saved['exercises'][0]['set_plan']],['warmup','warmup','working','working','drop'])
+        self.assertEqual(saved['exercises'][0]['superset'],'a')
+
+    def test_coach_can_propose_a_new_exercise_with_its_own_pose(self):
+        self.store.heartbeat()
+        self.store.question('question_new','Add a landmine press')
+        claim=self.store.claim()
+        pose=dict(head=[24,10],limbs=[[24,14,24,30],[24,18,34,12]])
+        self.store.finish(claim['id'],claim['token'],'Added.',[op('exercise','landmine',dict(name='Landmine Press',equipment='Barbell',movement='press',pose=pose))])
+        self.store.approve('question_new')
+        self.assertEqual(self.store.get('exercise','landmine')['data']['pose'],pose)
+
+    def test_pose_points_must_stay_on_the_grid(self):
+        for pose in (dict(head=[24,99],limbs=[[1,2,3,4]]),dict(head=[24,10],limbs=[[1,2,3]])):
+            with self.assertRaises(ValueError): self.store.mutate([op('exercise','bad',dict(name='Bad',pose=pose))])
+
+    def finished(self,identifier='done1',**changes):
+        return op('workout',identifier,dict(dict(name='Push',started_at='2026-01-01T18:00:00+00:00',status='completed',source={'companion':{}}),**changes))
+
+    def test_finished_workout_queues_a_brief_even_with_the_coach_offline(self):
+        self.store.mutate([op('athlete','self',dict(auto_coach_briefs=True))])
+        self.store.mutate([self.finished()])
+        self.assertEqual(self.store.workout_briefs()['done1']['state'],'waiting')
+        self.assertEqual(self.store.next_session_brief()['status'],'waiting')
+        self.store.heartbeat()
+        self.assertEqual(self.store.workout_briefs()['done1']['state'],'writing')
+        claim=self.store.claim();self.assertEqual(claim['context']['workout_id'],'done1')
+        self.store.finish(claim['id'],claim['token'],'Strong session. Add 5 lb to bench next time. Extra detail nobody asked for. More.',[])
+        brief=self.store.workout_briefs()['done1']
+        self.assertEqual((brief['state'],brief['text']),('ready','Strong session. Add 5 lb to bench next time.'))
+        self.store.question('unrelated_chat','Explain this workout',context={'workout_id':'done1'})
+        claim=self.store.claim();self.store.finish(claim['id'],claim['token'],'A longer unrelated discussion.',[])
+        self.now+=100;self.assertFalse(self.store.status()['available'])
+        self.assertEqual(self.store.workout_briefs()['done1']['text'],brief['text'])
+
+    def test_briefs_remove_markdown_and_keep_two_short_sentences(self):
+        from personal_assistant.workout.store import brief_text
+        self.assertEqual(brief_text('**Strong session.**\n- Keep *one* set next time.\nThird sentence.'),
+                         'Strong session. Keep one set next time.')
+        self.assertNotIn('**',brief_text('**Next session: A**.\nKeep the load. More.'))
+
+    def test_brief_waits_for_opt_in_and_never_runs_for_imports(self):
+        self.store.mutate([op('athlete','self',{})])
+        self.store.mutate([self.finished('off')])
+        self.store.mutate([op('athlete','self',dict(auto_coach_briefs=True),self.store.get('athlete','self')['revision'])])
+        self.store.mutate([self.finished('imported',source={'strong':{}})])
+        self.assertEqual(self.store.workout_briefs(),{})
+
+    def test_failed_brief_retries_later_and_deleting_the_workout_cancels_it(self):
+        self.store.mutate([op('athlete','self',dict(auto_coach_briefs=True))])
+        first=self.store.mutate([self.finished()])[0]
+        self.store.heartbeat()
+        claim=self.store.claim();self.store.finish(claim['id'],claim['token'],'Failed.',[],'failed')
+        self.assertIsNone(self.store.claim())
+        self.now+=1801;self.store.heartbeat()
+        self.assertEqual(self.store.claim()['id'],'brief_workout_done1')
+        self.now+=121;self.store.mutate([self.finished('done2')])
+        self.store.mutate([op('workout','done2',{},self.store.get('workout','done2')['revision'],deleted=True)])
+        self.assertNotIn('done2',self.store.workout_briefs())
+
     def test_automatic_brief_needs_owner_opt_in_and_deduplicates(self):
         from datetime import datetime,timezone
         self.now=datetime(2026,1,1,tzinfo=timezone.utc).timestamp()

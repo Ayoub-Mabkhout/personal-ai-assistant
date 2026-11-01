@@ -82,6 +82,12 @@ Text sizes use `sp` on Android so they follow the user's font scale.
   short crest reveal on a rank-up, without travel when animations are off. The
   live session hides the navigation bar, keeps the screen on, and keeps weight and
   reps editable throughout, prefilled from the sprint target.
+  Set letters and equipment artwork use movement colours. Tap a set letter to
+  cycle its type, swipe right to complete or left to delete, and use the link
+  between adjacent exercise cards to form or split supersets. The unit header is
+  a compact per-exercise switch. History combines month totals and a calendar;
+  dated charts scroll and support hold-to-scrub. Coach briefs stay short, use
+  plain text and remain visible in session history when offline.
 - **Calendar.** For checking, not editing: a six-week month card (today in the
   aurora pill, an `accent` dot per entry and an `aurora` rose dot per birthday),
   then "Coming up" grouped by day. Each entry card has a coloured edge, its time

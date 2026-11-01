@@ -54,26 +54,21 @@ final class WorkoutViews {
             for(Object[] r:REGIONS){int v=score((String)r[0]);p.setColor(v<0?ui.stroke:COLORS[tierOf(v)][0]);Path a=new Path();a.moveTo((float)r[1],(float)r[2]);for(int i=3;i<r.length;i+=2)a.lineTo((float)r[i],(float)r[i+1]);a.close();c.drawPath(a,p);}c.restore();}
     }
 
-    /** Lines over a shared x axis. A gap wider than gap is drawn dashed, so a break is never read as measured data. */
-    static final class Chart extends View {
-        final AppUi ui;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final ArrayList<double[][]> series=new ArrayList<>();final ArrayList<Integer> colors=new ArrayList<>(),widths=new ArrayList<>();final ArrayList<Boolean> bridged=new ArrayList<>();double gap=1e18;Double reference;
-        Chart(AppUi ui){super(ui.context);this.ui=ui;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
-        /** points[i]={x,y}; width 0 draws dots. */
-        Chart line(double[][] points,int color,int width){series.add(points);colors.add(color);widths.add(width);bridged.add(true);return this;}
-        /** A line that stops at a gap instead of bridging it: a rolling average doesn't exist there. */
-        Chart breaks(double[][] points,int color,int width){line(points,color,width);bridged.set(bridged.size()-1,false);return this;}
-        @Override protected void onDraw(Canvas c){double x0=1e18,x1=-1e18,y0=1e18,y1=-1e18;for(double[][] s:series)for(double[] q:s){x0=Math.min(x0,q[0]);x1=Math.max(x1,q[0]);y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}if(reference!=null){y0=Math.min(y0,reference);y1=Math.max(y1,reference);}if(x1<x0)return;if(x1==x0)x1=x0+1;if(y1==y0){y0-=1;y1+=1;}
-            float pad=ui.dpf(6),w=getWidth()-2*pad,h=getHeight()-2*pad;if(reference!=null){p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(ui.dpf(1));p.setColor(ui.strokeStrong);p.setPathEffect(new DashPathEffect(new float[]{ui.dpf(3),ui.dpf(4)},0));float y=(float)(pad+h-(reference-y0)/(y1-y0)*h);c.drawLine(pad,y,pad+w,y,p);p.setPathEffect(null);}
-            for(int i=0;i<series.size();i++){double[][] s=series.get(i);p.setColor(colors.get(i));int wd=widths.get(i);p.setStrokeCap(Paint.Cap.ROUND);if(wd==0){p.setStyle(Paint.Style.FILL);for(double[] q:s)c.drawCircle((float)(pad+(q[0]-x0)/(x1-x0)*w),(float)(pad+h-(q[1]-y0)/(y1-y0)*h),ui.dpf(2.2f),p);continue;}
-                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(ui.dpf(wd));Path a=new Path(),missing=new Path();boolean open=false;double last=0;float px=0,py=0;for(double[] q:s){float x=(float)(pad+(q[0]-x0)/(x1-x0)*w),y=(float)(pad+h-(q[1]-y0)/(y1-y0)*h);if(!open){a.moveTo(x,y);a.lineTo(x,y);open=true;}else if(q[0]-last>gap){missing.moveTo(px,py);missing.lineTo(x,y);a.moveTo(x,y);a.lineTo(x,y);}else a.lineTo(x,y);last=q[0];px=x;py=y;}c.drawPath(a,p);if(bridged.get(i)){p.setPathEffect(new DashPathEffect(new float[]{ui.dpf(3),ui.dpf(5)},0));p.setStrokeWidth(ui.dpf(1.5f));c.drawPath(missing,p);p.setPathEffect(null);}}p.setStyle(Paint.Style.FILL);}
+    /** A row that slides under the finger: left past a third deletes, right past a quarter completes. Vertical scrolling and taps pass through. */
+    static final class SwipeRow extends LinearLayout {
+        final Runnable remove,complete;final int slop;float startX,startY;boolean dragging;
+        SwipeRow(AppUi ui,Runnable remove){this(ui,remove,null);}
+        SwipeRow(AppUi ui,Runnable remove,Runnable complete){super(ui.context);this.remove=remove;this.complete=complete;slop=android.view.ViewConfiguration.get(ui.context).getScaledTouchSlop()*2;}
+        @Override public boolean onInterceptTouchEvent(MotionEvent e){if(e.getAction()==MotionEvent.ACTION_DOWN){startX=e.getRawX();startY=e.getRawY();dragging=false;}else if(e.getAction()==MotionEvent.ACTION_MOVE){float dx=e.getRawX()-startX;if((dx<-slop||complete!=null&&dx>slop)&&Math.abs(e.getRawY()-startY)<slop){dragging=true;getParent().requestDisallowInterceptTouchEvent(true);return true;}}return false;}
+        @Override public boolean onTouchEvent(MotionEvent e){if(!dragging)return e.getAction()==MotionEvent.ACTION_DOWN;if(e.getAction()==MotionEvent.ACTION_MOVE){float dx=e.getRawX()-startX;setTranslationX(complete==null?Math.min(0,dx):dx);setAlpha(1-Math.abs(getTranslationX())/getWidth());}else if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){dragging=false;float x=getTranslationX();if(e.getAction()==MotionEvent.ACTION_UP&&-x>getWidth()/3f){performHapticFeedback(HapticFeedbackConstants.CONFIRM);remove.run();}else if(e.getAction()==MotionEvent.ACTION_UP&&complete!=null&&x>getWidth()/4f){performHapticFeedback(HapticFeedbackConstants.CONFIRM);setTranslationX(0);setAlpha(1);complete.run();}else animate().translationX(0).alpha(1).setDuration(160).start();}return true;}
     }
 
-    /** A row that slides left under the finger and deletes past a third of its width; vertical scrolling and taps pass through. */
-    static final class SwipeRow extends LinearLayout {
-        final Runnable remove;final int slop;float startX,startY;boolean dragging;
-        SwipeRow(AppUi ui,Runnable remove){super(ui.context);this.remove=remove;slop=android.view.ViewConfiguration.get(ui.context).getScaledTouchSlop()*2;}
-        @Override public boolean onInterceptTouchEvent(MotionEvent e){if(e.getAction()==MotionEvent.ACTION_DOWN){startX=e.getRawX();startY=e.getRawY();dragging=false;}else if(e.getAction()==MotionEvent.ACTION_MOVE&&startX-e.getRawX()>slop&&Math.abs(e.getRawY()-startY)<slop){dragging=true;getParent().requestDisallowInterceptTouchEvent(true);return true;}return false;}
-        @Override public boolean onTouchEvent(MotionEvent e){if(!dragging)return e.getAction()==MotionEvent.ACTION_DOWN;if(e.getAction()==MotionEvent.ACTION_MOVE){setTranslationX(Math.min(0,e.getRawX()-startX));setAlpha(1+getTranslationX()/getWidth());}else if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){dragging=false;if(e.getAction()==MotionEvent.ACTION_UP&&-getTranslationX()>getWidth()/3f){performHapticFeedback(HapticFeedbackConstants.CONFIRM);remove.run();}else animate().translationX(0).alpha(1).setDuration(160).start();}return true;}
+    /** Minus and plus around a value; holding either keeps it moving. */
+    static final class Stepper extends LinearLayout {
+        final AppUi ui;double value;final double step,min;final java.util.function.DoubleFunction<String> shown;final TextView label;Runnable changed;Runnable repeat;
+        Stepper(AppUi ui,double value,double step,double min,java.util.function.DoubleFunction<String> shown){super(ui.context);this.ui=ui;this.value=value;this.step=step;this.min=min;this.shown=shown;setOrientation(HORIZONTAL);setGravity(Gravity.CENTER_VERTICAL);label=ui.type(shown.apply(value),20,26,800,0,ui.text);label.setGravity(Gravity.CENTER);addView(button("minus","Less",-1),new LayoutParams(ui.dp(48),ui.dp(48)));addView(label,new LayoutParams(0,-2,1));addView(button("plus","More",1),new LayoutParams(ui.dp(48),ui.dp(48)));}
+        private void nudge(int way){value=Math.max(min,Math.round((value+way*step)/step)*step);label.setText(shown.apply(value));if(changed!=null)changed.run();}
+        private View button(String icon,String name,int way){ImageButton b=ui.iconButton(icon,name,ui.accent,()->{});b.setOnClickListener(null);b.setOnTouchListener((v,e)->{if(e.getActionMasked()==MotionEvent.ACTION_DOWN){nudge(way);v.setPressed(true);repeat=new Runnable(){public void run(){nudge(way);v.postDelayed(this,70);}};v.postDelayed(repeat,380);}else if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){v.setPressed(false);v.removeCallbacks(repeat);}return true;});return b;}
     }
 
     /** Full-height sheet with a back control. */
@@ -83,6 +78,11 @@ final class WorkoutViews {
             scroll=new ScrollView(ui.context);body=ui.column();body.setPadding(ui.dp(16),ui.dp(8),ui.dp(16),ui.dp(28));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));dialog.setContentView(root);}
         Sheet show(){dialog.show();Window w=dialog.getWindow();if(w!=null)w.setLayout(-1,-1);return this;}
     }
+    static int setColor(AppUi ui,String kind){switch(kind){case "warmup":return ui.hue(AppUi.ORANGE);case "drop":return ui.hue(AppUi.BLUE);case "failure":return ui.hue(AppUi.RED);default:return ui.text;}}
+    static String setMark(String kind,int number){switch(kind){case "warmup":return "W";case "drop":return "D";case "failure":return "F";default:return String.valueOf(number);}}
+    /** A working set shows its number; warm-up, drop and failure sets show a coloured letter. */
+    static TextView setTag(AppUi ui,String kind,int number){int color=setColor(ui,kind);TextView t=ui.type(setMark(kind,number),14,20,800,0,color);t.setGravity(Gravity.CENTER);t.setBackground(ui.outline("working".equals(kind)?0:AppUi.alpha(color,.18f),10,0,0));t.setContentDescription(("warmup".equals(kind)?"Warm-up":"drop".equals(kind)?"Drop":"failure".equals(kind)?"Failure":"Working")+" set. Tap to change type");return t;}
+    static View stat(AppUi ui,String value,String label){LinearLayout c=ui.column();c.setGravity(Gravity.CENTER);c.addView(ui.type(value,18,24,800,0,ui.text));c.addView(ui.type(label,11.5f,16,500,0,ui.muted));return c;}
     static LinearLayout card(AppUi ui){LinearLayout box=ui.column();box.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));box.setBackground(ui.outline(ui.surface,18,ui.stroke,1));return box;}
     static LinearLayout.LayoutParams gap(AppUi ui,int bottom){return MainParts.params(ui,-1,-2,0,0,0,bottom);}
     static View pair(AppUi ui,String left,String right,int rightColor){LinearLayout r=ui.row();r.addView(ui.type(left,14,20,400,0,ui.text),new LinearLayout.LayoutParams(0,-2,1));r.addView(ui.type(right,14,20,600,0,rightColor));r.setPadding(0,ui.dp(3),0,ui.dp(3));return r;}

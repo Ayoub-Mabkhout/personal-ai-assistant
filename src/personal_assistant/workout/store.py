@@ -2,12 +2,25 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import re
 from pathlib import Path
 import secrets
 import sqlite3
 import time
 from ..relay.store import Conflict, Missing
 from .models import MODELS, Mutation, validate
+
+
+def brief_text(text, limit=170):
+    """Briefs stay brief whatever the model returned: two sentences at most, never a wall of text."""
+    plain=(text or '').split('Proposed changes:')[0]
+    plain=re.sub(r'\[([^\]]+)\]\([^)]*\)',r'\1',plain)
+    plain=re.sub(r'(?m)^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)','',plain)
+    plain=plain.replace('**','').replace('__','').replace('`','')
+    plain=re.sub(r'(?<!\w)[*_]([^*_\n]+)[*_](?!\w)',r'\1',plain)
+    words=' '.join(plain.split())
+    kept=' '.join(re.split(r'(?<=[.!?])\s+',words)[:2])
+    return kept if len(kept)<=limit else kept[:limit].rsplit(' ',1)[0].rstrip(' ,;:')+'…'
 
 
 def encoded(value):
@@ -78,6 +91,9 @@ class Workouts:
             db.execute('INSERT OR REPLACE INTO entities VALUES(?,?,?,?,?,?)',
                 (op['kind'], op['id'], revision, op['deleted'], encoded(data), now))
             result = dict(kind=op['kind'], id=op['id'], revision=revision, deleted=op['deleted'], data=data, updated=now)
+            if op['kind'] == 'workout':
+                if op['deleted']: db.execute("DELETE FROM trainer WHERE id=? AND state='queued'",('brief_workout_'+op['id'],))
+                else: self.enqueue_workout_brief(db,op['id'],data,old,revision)
             db.execute('INSERT INTO mutations VALUES(?,?,?)', (op['mutation_id'], request, encoded(result)))
             results.append(result)
             if op['kind'] == 'photo' and op['deleted'] and old and not old['deleted']:
@@ -190,7 +206,7 @@ class Workouts:
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM trainer WHERE state='running' AND lease_until>?",(self.clock(),)).fetchone(): return None
-            row = db.execute("SELECT * FROM trainer WHERE state='queued' OR (state='running' AND lease_until<=?) ORDER BY created,rowid LIMIT 1",(self.clock(),)).fetchone()
+            row = db.execute("SELECT * FROM trainer WHERE (state='queued' AND coalesce(json_extract(context,'$.not_before'),0)<=?) OR (state='running' AND lease_until<=?) ORDER BY created,rowid LIMIT 1",(self.clock(),self.clock())).fetchone()
             if not row: return None
             token = secrets.token_urlsafe(24)
             db.execute("UPDATE trainer SET state='running',token=?,lease_until=? WHERE id=?",(token,self.clock()+120,row['id']))
@@ -208,7 +224,7 @@ class Workouts:
         validated = [Mutation.model_validate(p).model_dump() for p in proposals]
         # Owner-approved revisions retain original imports and the entity history.
         for p in validated:
-            if p['kind'] not in ('template','sprint','workout'): raise ValueError('Unknown trainer proposal kind')
+            if p['kind'] not in ('exercise','template','sprint','workout'): raise ValueError('Unknown trainer proposal kind')
             if not p['deleted']: validate(p['kind'],p['data'])
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -218,6 +234,12 @@ class Workouts:
                 return
             job = db.execute("SELECT * FROM trainer WHERE id=? AND token=? AND state='running' AND lease_until>?",(identifier,token,self.clock())).fetchone()
             if not job: raise Conflict('Trainer lease lost')
+            context=json.loads(job['context'])
+            if state=='failed' and context.get('workout_id') and context.get('attempts',0)<12:
+                # A limit or outage shouldn't lose the brief: try again later, about six hours in all.
+                context.update(attempts=context.get('attempts',0)+1,not_before=self.clock()+1800)
+                db.execute("UPDATE trainer SET state='queued',token=NULL,lease_until=NULL,context=? WHERE id=?",(encoded(context),identifier))
+                return
             self.check_proposals(db,validated)
             if assessment:
                 if state!='completed': raise ValueError('Failed jobs cannot save estimates')
@@ -255,14 +277,43 @@ class Workouts:
     def next_session_brief(self):
         with self.db() as db:
             row=db.execute("SELECT * FROM trainer WHERE state='completed' AND json_extract(context,'$.purpose')='next_session_brief' ORDER BY answered_at DESC,rowid DESC LIMIT 1").fetchone()
+            online=self.status(db)['available']
+            pending=bool(db.execute("SELECT 1 FROM trainer WHERE state IN ('queued','running') AND json_extract(context,'$.purpose')='next_session_brief'").fetchone())
+            writing=online and pending
+            failed=db.execute("SELECT 1 FROM trainer WHERE state='failed' AND json_extract(context,'$.purpose')='next_session_brief' AND answered_at>?",(row['answered_at'] or row['created'] if row else 0,)).fetchone()
             if not row:
-                return {'text':None,'generated_at':None,'session_id':None,
-                        'status':'missing' if self.status(db)['available'] else 'unavailable'}
+                return {'text':None,'generated_at':None,'session_id':None,'specialist_available':online,
+                        'status':'writing' if writing else 'waiting' if pending else 'failed' if failed and online else 'missing' if online else 'unavailable'}
             context=json.loads(row['context']);at=row['answered_at'] or row['created']
             cursor=db.execute('SELECT coalesce(max(revision),0) FROM changes').fetchone()[0]
             stale=self.clock()-at>86400 or context.get('revision')!=cursor
-            return {'text':row['answer'],'generated_at':at,'session_id':context.get('session_id'),
-                    'status':'stale' if stale else 'cached','specialist_available':self.status(db)['available']}
+            return {'text':brief_text(row['answer']),'generated_at':at,'session_id':context.get('session_id'),'specialist_available':online,
+                    'status':'writing' if writing else 'waiting' if pending else 'failed' if stale and failed and online else 'stale' if stale else 'cached'}
+
+    def enqueue_workout_brief(self, db, identifier, data, old, revision):
+        """Queued with the workout itself, so it survives a closed app, a dead connection and an offline coach."""
+        if data.get('status')!='completed' or 'companion' not in data.get('source',{}): return
+        if old and not old['deleted'] and json.loads(old['data']).get('status')=='completed': return
+        profile=db.execute("SELECT data FROM entities WHERE kind='athlete' AND deleted=0 ORDER BY updated DESC LIMIT 1").fetchone()
+        if not profile or not json.loads(profile['data']).get('auto_coach_briefs'): return
+        question=('The owner just finished '+data['name']+'. Write a brief for them: at most two short sentences and 30 words, '
+                  'how it went, then the one thing to do next session. No headings, lists or preamble. Do not change the plan or analyse photos.')
+        db.execute('INSERT OR IGNORE INTO trainer(id,question,photos,context,created,state) VALUES(?,?,?,?,?,?)',
+            ('brief_workout_'+identifier,question,'[]',encoded({'purpose':'next_session_brief','automatic':True,'workout_id':identifier,
+             'session_id':'workout:'+identifier,'revision':revision}),self.clock(),'queued'))
+
+    def workout_briefs(self, limit=100):
+        """The brief written for each recent workout, so History can show it long after the end screen closed."""
+        with self.db() as db:
+            rows=db.execute("SELECT * FROM trainer WHERE json_extract(context,'$.purpose')='next_session_brief' AND json_extract(context,'$.workout_id') IS NOT NULL ORDER BY created DESC,rowid DESC LIMIT ?",(limit,)).fetchall()
+            online=self.status(db)['available']
+        out={}
+        for row in rows:
+            if json.loads(row['context'])['workout_id'] in out: continue
+            ready=row['state']=='completed'
+            out[json.loads(row['context'])['workout_id']]={'text':brief_text(row['answer']) if ready else None,'generated_at':row['answered_at'] if ready else None,
+                'state':'ready' if ready else 'failed' if row['state']=='failed' else 'writing' if online else 'waiting'}
+        return out
 
     def prepare_brief(self, timezone='UTC'):
         """Owner-opted-in, debounced ahead-of-session preparation. Never uses photos."""
@@ -279,6 +330,7 @@ class Workouts:
                 return {'queued':False}
             if db.execute("SELECT 1 FROM trainer WHERE state IN ('queued','running')").fetchone(): return {'queued':False}
             if not rows or self.clock()-max(r['updated'] for r in rows)<120: return {'queued':False}
+            if db.execute("SELECT 1 FROM trainer WHERE json_extract(context,'$.workout_id') IS NOT NULL AND created>?",(self.clock()-21600,)).fetchone(): return {'queued':False}
             # Only future scheduled work; an ongoing workout is never interrupted by auto-coaching.
             if any(r['kind']=='workout' and r['data']['status'] in ('active','paused') for r in rows): return {'queued':False}
             from .programs import next_workout

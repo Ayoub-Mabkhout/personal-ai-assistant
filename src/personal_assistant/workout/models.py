@@ -28,6 +28,20 @@ class Athlete(Model):
         return self
 
 
+class Pose(Model):
+    """A stick figure on a 48-unit square, so a new exercise can have its own illustration."""
+    head: list[float] = Field(min_length=2, max_length=2)
+    limbs: list[list[float]] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode='after')
+    def check(self):
+        for line in self.limbs:
+            if len(line)<4 or len(line)>16 or len(line)%2: raise ValueError('A limb needs two to eight x,y points')
+        if any(not 0<=v<=48 for v in self.head+[v for line in self.limbs for v in line]):
+            raise ValueError('Pose points stay on the 48-unit grid')
+        return self
+
+
 class Exercise(Model):
     name: str = Field(min_length=1, max_length=150)
     equipment: str = Field(default='', max_length=80)
@@ -36,6 +50,7 @@ class Exercise(Model):
     load_convention: Literal['total', 'per_hand', 'bodyweight', 'assisted', 'unknown'] = 'unknown'
     mode: Literal['strength', 'cardio', 'other'] = 'strength'
     movement: Literal['press','squat','hinge','row','pull','curl','extension','raise','lunge','core','run','walk','other'] = 'other'
+    pose: Pose | None = None
 
 
 class SetLog(Model):
@@ -115,6 +130,15 @@ class Workout(Model):
         return self
 
 
+class PlannedSet(Model):
+    kind: Literal['working', 'warmup', 'drop', 'failure'] = 'working'
+    reps: int | None = Field(default=None, ge=0, le=1000)
+    weight_kg: float | None = Field(default=None, ge=0, le=2000)
+    rir: float | None = Field(default=None, ge=0, le=30)
+    distance_m: float | None = Field(default=None, gt=0, le=1000000)
+    seconds: int | None = Field(default=None, gt=0, le=86400)
+
+
 class Prescription(Model):
     exercise_id: str = Field(min_length=1, max_length=100)
     sets: int = Field(default=1, ge=0, le=30)
@@ -127,10 +151,14 @@ class Prescription(Model):
     speed_kmh: float | None = Field(default=None, gt=0, le=60)
     estimated_seconds: int | None = Field(default=None,ge=0,le=86400)
     notes: str = Field(default='', max_length=2000)
+    set_plan: list[PlannedSet] = Field(default_factory=list, max_length=60)
+    superset: str = Field(default='', max_length=40)
 
     @model_validator(mode='after')
     def check(self):
         if self.max_reps < self.min_reps: raise ValueError('Rep range is reversed')
+        # sets stays the count of hard sets, so warm-ups never inflate a plan's volume.
+        if self.set_plan: self.sets = max(1,sum(s.kind!='warmup' for s in self.set_plan))
         return self
 
 
