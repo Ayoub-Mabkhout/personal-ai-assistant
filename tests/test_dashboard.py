@@ -46,14 +46,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.json()['transactions'],[])
 
     def test_money_endpoint_reads_local_ledger_and_exposes_category_and_fixed_fields(self):
+        from datetime import date
         from personal_assistant.banking.ledger import Ledger, summarise
+        current_start=date.today().replace(day=1).isoformat()
         path=self.root/'banking/ledger.sqlite3'
         ledger=Ledger(path)
         ledger.link('bank','DE',{'session_id':'session','accounts':[{'uid':'account','account_id':{'iban':'DE00'},'currency':'EUR'}]})
         ledger.store('account',[
-            {'entry_reference':'rent','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':'2026-10-01','transaction_amount':{'amount':'500','currency':'EUR'},'creditor':{'name':'Landlord'}},
-            {'entry_reference':'food','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':'2026-10-02','transaction_amount':{'amount':'20','currency':'EUR'},'creditor':{'name':'Cafe'}},
-        ],'2026-10-01')
+            {'entry_reference':'rent','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':current_start,'transaction_amount':{'amount':'500','currency':'EUR'},'creditor':{'name':'Landlord'}},
+            {'entry_reference':'food','status':'BOOK','credit_debit_indicator':'DBIT','booking_date':current_start,'transaction_amount':{'amount':'20','currency':'EUR'},'creditor':{'name':'Cafe'}},
+        ],current_start)
         rows={row['counterparty']:row for row in ledger.transactions()}
         ledger.decide(rows['Landlord']['id'],'fixed_cost','Housing',False,[],'Recurring',1,None,'ai')
         ledger.decide(rows['Cafe']['id'],'expense','Eating out',True,[],'Meal',1,'Was this a work lunch?','ai')
