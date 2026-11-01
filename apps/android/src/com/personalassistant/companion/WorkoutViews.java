@@ -54,7 +54,7 @@ final class WorkoutViews {
             for(Object[] r:REGIONS){int v=score((String)r[0]);p.setColor(v<0?ui.stroke:COLORS[tierOf(v)][0]);Path a=new Path();a.moveTo((float)r[1],(float)r[2]);for(int i=3;i<r.length;i+=2)a.lineTo((float)r[i],(float)r[i+1]);a.close();c.drawPath(a,p);}c.restore();}
     }
 
-    /** Lines over a shared x axis. A gap of more than gapDays between points is left unjoined, so breaks stay visible. */
+    /** Lines over a shared x axis. A gap wider than gap is drawn dashed, so a break is never read as measured data. */
     static final class Chart extends View {
         final AppUi ui;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final ArrayList<double[][]> series=new ArrayList<>();final ArrayList<Integer> colors=new ArrayList<>(),widths=new ArrayList<>();double gap=1e18;Double reference;
         Chart(AppUi ui){super(ui.context);this.ui=ui;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
@@ -63,7 +63,15 @@ final class WorkoutViews {
         @Override protected void onDraw(Canvas c){double x0=1e18,x1=-1e18,y0=1e18,y1=-1e18;for(double[][] s:series)for(double[] q:s){x0=Math.min(x0,q[0]);x1=Math.max(x1,q[0]);y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}if(reference!=null){y0=Math.min(y0,reference);y1=Math.max(y1,reference);}if(x1<x0)return;if(x1==x0)x1=x0+1;if(y1==y0){y0-=1;y1+=1;}
             float pad=ui.dpf(6),w=getWidth()-2*pad,h=getHeight()-2*pad;if(reference!=null){p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(ui.dpf(1));p.setColor(ui.strokeStrong);p.setPathEffect(new DashPathEffect(new float[]{ui.dpf(3),ui.dpf(4)},0));float y=(float)(pad+h-(reference-y0)/(y1-y0)*h);c.drawLine(pad,y,pad+w,y,p);p.setPathEffect(null);}
             for(int i=0;i<series.size();i++){double[][] s=series.get(i);p.setColor(colors.get(i));int wd=widths.get(i);p.setStrokeCap(Paint.Cap.ROUND);if(wd==0){p.setStyle(Paint.Style.FILL);for(double[] q:s)c.drawCircle((float)(pad+(q[0]-x0)/(x1-x0)*w),(float)(pad+h-(q[1]-y0)/(y1-y0)*h),ui.dpf(2.2f),p);continue;}
-                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(ui.dpf(wd));Path a=new Path();boolean open=false;double last=0;for(double[] q:s){float x=(float)(pad+(q[0]-x0)/(x1-x0)*w),y=(float)(pad+h-(q[1]-y0)/(y1-y0)*h);if(!open||q[0]-last>gap){a.moveTo(x,y);a.lineTo(x,y);open=true;}else a.lineTo(x,y);last=q[0];}c.drawPath(a,p);}p.setStyle(Paint.Style.FILL);}
+                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(ui.dpf(wd));Path a=new Path(),missing=new Path();boolean open=false;double last=0;float px=0,py=0;for(double[] q:s){float x=(float)(pad+(q[0]-x0)/(x1-x0)*w),y=(float)(pad+h-(q[1]-y0)/(y1-y0)*h);if(!open){a.moveTo(x,y);a.lineTo(x,y);open=true;}else if(q[0]-last>gap){missing.moveTo(px,py);missing.lineTo(x,y);a.moveTo(x,y);a.lineTo(x,y);}else a.lineTo(x,y);last=q[0];px=x;py=y;}c.drawPath(a,p);p.setPathEffect(new DashPathEffect(new float[]{ui.dpf(3),ui.dpf(5)},0));p.setStrokeWidth(ui.dpf(1.5f));c.drawPath(missing,p);p.setPathEffect(null);}p.setStyle(Paint.Style.FILL);}
+    }
+
+    /** A row that slides left under the finger and deletes past a third of its width; vertical scrolling and taps pass through. */
+    static final class SwipeRow extends LinearLayout {
+        final Runnable remove;final int slop;float startX,startY;boolean dragging;
+        SwipeRow(AppUi ui,Runnable remove){super(ui.context);this.remove=remove;slop=android.view.ViewConfiguration.get(ui.context).getScaledTouchSlop()*2;}
+        @Override public boolean onInterceptTouchEvent(MotionEvent e){if(e.getAction()==MotionEvent.ACTION_DOWN){startX=e.getRawX();startY=e.getRawY();dragging=false;}else if(e.getAction()==MotionEvent.ACTION_MOVE&&startX-e.getRawX()>slop&&Math.abs(e.getRawY()-startY)<slop){dragging=true;getParent().requestDisallowInterceptTouchEvent(true);return true;}return false;}
+        @Override public boolean onTouchEvent(MotionEvent e){if(!dragging)return e.getAction()==MotionEvent.ACTION_DOWN;if(e.getAction()==MotionEvent.ACTION_MOVE){setTranslationX(Math.min(0,e.getRawX()-startX));setAlpha(1+getTranslationX()/getWidth());}else if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){dragging=false;if(e.getAction()==MotionEvent.ACTION_UP&&-getTranslationX()>getWidth()/3f){performHapticFeedback(HapticFeedbackConstants.CONFIRM);remove.run();}else animate().translationX(0).alpha(1).setDuration(160).start();}return true;}
     }
 
     /** Full-height sheet with a back control. */
