@@ -30,6 +30,7 @@ final class AppUi {
     /** Null when built for a non-Activity host such as the assistant overlay; window() and sheets need an Activity. */
     final Activity activity;final Context context;final boolean dark;final float density;final String mode;
     final int background,surface,surfaceAlt,text,muted,accent,onAccent,accentSoft,stroke,strokeStrong;
+    static final int AMBER=0xFFFFB547,TEAL=0xFF3FD5C0,VIOLET=0xFFB59CFF,PINK=0xFFFF7DB0,BLUE=0xFF62B2FF,GREEN=0xFF56DFA0,ORANGE=0xFFFF9D4D,RED=0xFFF0565F;
     final int success,successSoft,warning,warningSoft,danger,dangerSoft,info,infoSoft,glow;
     final int[] aurora;
     /** Every token as shown, in DaylightPalette order; the theme watcher compares it with the palette now due. */
@@ -210,6 +211,9 @@ final class AppUi {
         ImageButton b=new ImageButton(context);b.setImageDrawable(new GlyphDrawable(icon,text,dp(22)));b.setScaleType(ImageView.ScaleType.CENTER);b.setMinimumWidth(dp(48));b.setMinimumHeight(dp(48));
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(alpha(accent,.16f)),insetOf(outline(surface,24,stroke,1),3,3,3,3),insetOf(pillMask(),3,3,3,3)));b.setContentDescription(description);b.setOnClickListener(v->action.run());press(b);return b;
     }
+    ImageButton iconButton(String icon,String description,int color,Runnable action){ImageButton b=iconButton(icon,description,action);b.setImageDrawable(new GlyphDrawable(icon,color,dp(22)));return b;}
+    /** The bright hues read on the dark palette; the light one takes a deeper shade. */
+    int hue(int color){return dark?color:mix(color,0xFF1A1030,.3f);}
     Fab fab(String icon,String description,Runnable action){
         Fab b=new Fab(context);b.setImageDrawable(new GlyphDrawable(icon,onAccent,dp(24)));b.setScaleType(ImageView.ScaleType.CENTER);b.setMinimumWidth(dp(52));b.setMinimumHeight(dp(52));
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x38FFFFFF),new Aurora(new int[]{aurora[0],aurora[1]},130,-1,dpf(1)),pillMask()));lift(b,-1,5,false);b.lift=b.getElevation();b.setContentDescription(description);b.setOnClickListener(v->action.run());press(b);return b;
@@ -333,6 +337,9 @@ final class AppUi {
             "machine","M4 3 V21|M20 3 V21|M4 3 H20|M12 3 V10|M8 10 H16|M8 14 H16|M8 18 H16",
             "cable","M12 3 V14|O12 17 3|M7 3 H17",
             "person","O12 6 3|M12 9.5 V15|M7 11.5 H17|M12 15 L8.5 21|M12 15 L15.5 21",
+            "body","FO12 4.8 2.8|M6 10 H18|M6 10 L4.5 15.5|M18 10 L19.5 15.5|M9.5 10 V15.5|M14.5 10 V15.5|M9.5 15.5 H14.5|M9.5 15.5 L8.5 21.5|M14.5 15.5 L15.5 21.5",
+            "trash","M4 7 H20|M9.5 7 V4.5 H14.5 V7|M6 7 L7 20.5 H17 L18 7|M10 11 V16.5|M14 11 V16.5",
+            "minus","M5 12 H19",
             "grip","FO9 7 1.4|FO15 7 1.4|FO9 12 1.4|FO15 12 1.4|FO9 17 1.4|FO15 17 1.4",
             "calendar","R3.5 5 17 15.5 2.5|M3.5 9.5 H20.5|M8 3 V6.5|M16 3 V6.5|FO8 13.5 1|FO12 13.5 1|FO16 13.5 1|FO8 17 1",
             "cake","M4 20.5 H20|M5.5 20.5 V13.5 A1.5 1.5 0 0 1 7 12 H17 A1.5 1.5 0 0 1 18.5 13.5 V20.5|M5.5 16 Q7.4 17.6 9.2 16 Q10.6 14.6 12 16 Q13.4 17.4 14.8 16 Q16.6 14.4 18.5 16|M12 12 V9|M12 4 Q13.6 5.8 12 7.2 Q10.4 5.8 12 4 Z",
@@ -635,7 +642,7 @@ final class AppUi {
     /** Floating pill navigation with an aurora indicator that slides under the selected item. */
     static final class NavBar extends FrameLayout {
         final AppUi ui;final LinearLayout row;final View[] items;final Icon[] glyphs;final TextView[] names;final Aurora pill;final IntConsumer pick;
-        int selected=-1;float pillX,pillW;ValueAnimator slide,tint;
+        int selected=-1;float pillX,pillW;ValueAnimator slide,tint;int[] hues;
         NavBar(AppUi ui,String[] labels,String[] icons,String[] tags,IntConsumer pick){
             super(ui.context);this.ui=ui;this.pick=pick;int n=labels.length;items=new View[n];glyphs=new Icon[n];names=new TextView[n];
             pill=new Aurora(new int[]{ui.aurora[0],ui.aurora[1]},120,-1,ui.dpf(1));setBackground(ui.cardFace(28));ui.lift(this,28,10,true);setMinimumHeight(ui.dp(64));setClipChildren(false);
@@ -661,7 +668,7 @@ final class AppUi {
             if(old>=0&&old!=index&&animate&&motion()&&isShown()){final float x0=pillX,w0=pillW;slide=ValueAnimator.ofFloat(0,1);slide.setDuration(260);slide.setInterpolator(SLIDE);slide.addUpdateListener(a->{float f=a.getAnimatedFraction();pillX=x0+(tx-x0)*f;pillW=w0+(tw-w0)*f;invalidate();});slide.start();}
             else{pillX=tx;pillW=tw;invalidate();}
         }
-        private void color(int i,int value){glyphs[i].color(value);names[i].setTextColor(value);names[i].setTypeface(face(value==ui.muted?500:700));}
+        private void color(int i,int value){glyphs[i].color(hues!=null&&value==ui.muted?hues[i]:value);names[i].setTextColor(value);names[i].setTypeface(face(value==ui.muted?500:700));}
         @Override protected void onLayout(boolean changed,int l,int t,int r,int b){super.onLayout(changed,l,t,r,b);if(selected>=0&&(slide==null||!slide.isRunning())){pillX=left(selected);pillW=width(selected);}}
         @Override protected void onDetachedFromWindow(){if(slide!=null)slide.cancel();if(tint!=null)tint.cancel();super.onDetachedFromWindow();}
         @Override protected void dispatchDraw(Canvas c){
