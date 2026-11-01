@@ -88,7 +88,7 @@ Bank connections are **read-only**: this integration cannot move money.
 
 [Money architecture & behavior](docs/money.md)
 
-[Workout logging, ranks & coaching](docs/workout.md) includes private progress photos with approval for each analysis. Logging and timers work offline; the coach uses the laptop's Codex session and has no API-funded fallback.
+[Workout logging, ranks & coaching](docs/workout.md) includes private progress photos with approval for each analysis. Logging works offline; the coach uses the laptop's Codex session and has no API-funded fallback.
 
 ### The useful parts stay useful offline
 

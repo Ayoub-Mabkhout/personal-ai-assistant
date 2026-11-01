@@ -22,7 +22,7 @@ Weight history retains observed points and7-/14-day averages with sample counts.
 
 ## Imports, private photos and coach
 
-Strong imports preserve exact original bytes/hash, dates, notes, warmup/drop/failure codes and per-hand dumbbell loads. Reimports are idempotent and overlapping corrections are reported without overwriting owner edits. Weight history uses a separate import; adapt its actual exported format when supplied.
+Strong imports preserve exact original bytes/hash, dates, notes, warmup/drop/failure codes and per-hand dumbbell loads. Reimports are idempotent and overlapping corrections are reported without overwriting owner edits. Weight history accepts Strong's semicolon `Date;Weight (kg)` (or pounds) export as well as canonical `measured_at,value,unit` CSV. When the export omits timezone, the selected import timezone is recorded as an assumption. Old readings remain dated history, not current weight.
 
 Phone endpoints use `/groceries/v1/mobile/workout` and existing pairing; owner endpoints use `/relay/v1/workout`. Entity kinds and DTOs are in models.py. `/changes` pages revision history; `/sync` atomically accepts stable mutation IDs/base revisions.409 keeps offline edits for review. `/entities`, `/overview`, `/export` and `/imports` preserve existing contracts.
 

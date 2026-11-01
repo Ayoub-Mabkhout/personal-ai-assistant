@@ -109,14 +109,21 @@ def strong(raw, timezone='UTC'):
 
 
 def bodyweight(raw, timezone='UTC'):
-    """Canonical weight CSV: measured_at,value,unit (kg/lb), optional notes/source."""
+    """Canonical weight CSV or Strong's original semicolon Date/Weight export."""
     try: zone = ZoneInfo(timezone)
     except (ZoneInfoNotFoundError,ValueError): raise ValueError('Unknown import timezone') from None
     if len(raw)>8*1024*1024: raise ValueError('Weight export exceeds 8 MiB')
     try: text = raw.decode('utf-8-sig')
     except UnicodeDecodeError: raise ValueError('Weight CSV must be UTF-8') from None
-    reader = csv.DictReader(io.StringIO(text,newline=''))
-    if not {'measured_at','value','unit'} <= set(reader.fieldnames or []):
+    header=next(csv.reader(io.StringIO(text),delimiter=';'),[])
+    strong_unit={'Weight (kg)':'kg','Weight (lb)':'lb'}.get(header[1] if len(header)==2 else '')
+    is_strong=bool(strong_unit and header[0]=='Date')
+    reader = csv.DictReader(io.StringIO(text,newline=''),delimiter=';' if is_strong else ',')
+    if is_strong:
+        reader=({'measured_at':r['Date'],'value':r[header[1]],'unit':strong_unit,
+                 'source':'strong_measurements','notes':'Original timezone absent; interpreted in '+timezone}
+                for r in reader)
+    elif not {'measured_at','value','unit'} <= set(reader.fieldnames or []):
         raise ValueError('Weight CSV needs measured_at,value,unit; optional notes,source')
     records = []
     seen = set()

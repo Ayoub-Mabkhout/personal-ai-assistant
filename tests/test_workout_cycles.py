@@ -30,6 +30,24 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(extended['data']['cycle'],['a','b','c'])
         self.assertEqual(extend(self.store,'s1',date(2027,4,1),sprint['revision'],'extend_sprint_1'),extended)
         self.assertEqual(len(extended['data']['extensions']),1)
+        completed=self.store.get('workout','done')
+        self.store.mutate([op('workout','done',{},completed['revision'],deleted=True)])
+        revised=overview(self.store,date(2026,11,1))
+        self.assertEqual(revised['sprints'][0]['completed_sessions'],0)
+        self.assertEqual(revised['next_workout']['template_id'],'a')
+
+    def test_strong_measurements_import_is_idempotent_and_retains_source(self):
+        from personal_assistant.workout.imports import reconcile
+        raw=b'"Date";"Weight (kg)"\n"2025-10-15 08:49:16";70.69999694824219\n'
+        preview=reconcile(self.store,raw,'bodyweight','Europe/Berlin')
+        self.assertEqual(preview['new'],1)
+        self.assertEqual(self.store.list('measurement')['items'],[])
+        reconcile(self.store,raw,'bodyweight','Europe/Berlin',True)
+        measured=self.store.list('measurement')['items'][0]['data']
+        self.assertAlmostEqual(measured['value'],70.69999694824219,places=6)
+        self.assertEqual(measured['source'],'strong_measurements')
+        self.assertTrue(measured['measured_at'].endswith('+02:00'))
+        self.assertTrue(reconcile(self.store,raw,'bodyweight','Europe/Berlin',True)['already_imported'])
 
     def test_waist_not_required_and_missing_rir_assumes_zero_without_rewriting(self):
         self.store.mutate([op('athlete','self',dict(height_cm=180,goal_weight_min_kg=70,goal_weight_max_kg=80)),

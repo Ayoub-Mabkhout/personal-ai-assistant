@@ -274,6 +274,31 @@ class WorkoutApiTests(unittest.TestCase):
 
     def tearDown(self): self.client.close();self.tmp.cleanup()
 
+    def test_runner_assigns_photo_provenance_instead_of_trusting_model_id(self):
+        from personal_assistant.workout.specialist import run_once
+        store=self.app.state.workouts;app_client=self.client;headers=self.owner
+        class Client:
+            def call(self,path,payload=None,method=None):
+                response=app_client.request(method or ('POST' if payload is not None else 'GET'),
+                    path.removeprefix('/relay'),json=payload,headers=headers)
+                response.raise_for_status();return response.json()
+        raw=b'\xff\xd8\xffsynthetic';digest=hashlib.sha256(raw).hexdigest()
+        store.put_blob(digest,'image/jpeg',raw)
+        store.mutate([op('photo','front',dict(captured_at='2026-01-01T07:00:00Z',blob_id=digest))])
+        store.heartbeat();store.question('photo_job','Estimate this photo',['front'],True)
+        def invoke(*args):
+            return dict(text='A rough visual range.',memory_summary='Approved baseline.',proposals=[],
+                assessment_json=json.dumps(dict(low_percent=12,high_percent=17,photo_ids=['front'],
+                    source_question='A model-authored description, not an identifier',model='untrusted',
+                    assessed_at='2020-01-01T00:00:00Z',uncertainty='Lighting limits precision.')))
+        with patch('personal_assistant.workout.specialist.download_photos',return_value=[]):
+            self.assertTrue(run_once(Client(),{},Path('synthetic-config.json'),{},invoke))
+        result=store.get('composition','photo_job')['data']
+        self.assertEqual(result['source_question'],'photo_job')
+        self.assertEqual(result['model'],'gpt-6-sol')
+        self.assertNotEqual(result['assessed_at'],'2020-01-01T00:00:00Z')
+        self.assertEqual(result['photo_ids'],['front'])
+
     def test_authentication_and_atomic_phone_sync(self):
         self.assertEqual(self.client.get(self.prefix+'/overview').status_code,401)
         result=self.client.post(self.prefix+'/sync',headers=self.headers,json={'operations':[op('exercise','bench',{'name':'Bench'})]})

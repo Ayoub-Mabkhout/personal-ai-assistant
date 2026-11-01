@@ -206,7 +206,7 @@ class Workouts:
         if state not in ('completed','failed'): raise ValueError('Invalid outcome')
         if not isinstance(answer,str) or not 1<=len(answer)<=24000 or len(proposals)>20: raise ValueError('Invalid specialist response')
         validated = [Mutation.model_validate(p).model_dump() for p in proposals]
-        # Specialist proposals are limited to future planning, not rewrites of history.
+        # Owner-approved revisions retain original imports and the entity history.
         for p in validated:
             if p['kind'] not in ('template','sprint','workout'): raise ValueError('Unknown trainer proposal kind')
             if not p['deleted']: validate(p['kind'],p['data'])
