@@ -407,6 +407,36 @@ class WorkoutTests(unittest.TestCase):
         self.assertEqual(status(date(2026,7,10)),'no_recent_set')
         self.assertEqual(overview(self.store,date(2026,1,3))['rank_coverage']['window_days'],183)
 
+    def test_running_rank_uses_published_levels_at_any_distance(self):
+        from personal_assistant.workout.analytics import run_levels,running_rank
+        self.assertAlmostEqual(1609.344/run_levels(1609.344,'male')[2],363)
+        self.assertAlmostEqual(5000/run_levels(5000,'male')[4],1050)
+        run=dict(date='2026-01-05',distance_m=5000,seconds=1361)
+        rank_=running_rank([run],date(2026,1,6),'male')
+        self.assertEqual((rank_['score'],rank_['percentile'],rank_['tier']),(600,50,'Emerald 4'))
+        self.assertEqual(rank_['next_tier'],'Emerald 3')
+        self.assertLess(rank_['next_1_5mi_seconds'],720)
+
+    def test_running_rank_ignores_short_hilly_and_old_runs(self):
+        from personal_assistant.workout.analytics import running_rank
+        base=dict(date='2026-01-05',distance_m=5000,seconds=1361)
+        for run in (dict(base,distance_m=500,seconds=100),dict(base,incline_percent=4),dict(base,date='2025-01-05')):
+            self.assertEqual(running_rank([run],date(2026,1,6),'male')['status'],'no_recent_run')
+        self.assertEqual(running_rank([base],date(2026,1,6),'unspecified')['status'],'needs_profile')
+
+    def test_a_running_rank_step_is_a_win_and_stays_out_of_the_overall_rank(self):
+        self.store.mutate([op('athlete','self',dict(sex='male')),op('exercise','run',{'name':'Running','mode':'cardio','movement':'run'})])
+        def jog(identifier,day,seconds):
+            return op('workout',identifier,dict(name='Run',started_at=day+'T18:00:00+00:00',status='completed',source={'companion':{}},
+                sets=[dict(id=identifier+'s',exercise_id='run',kind='working',distance_m=5000,seconds=seconds)]))
+        self.store.mutate([jog('a','2026-01-02',1800),jog('b','2026-01-03',1500),jog('c','2026-01-04',1600)])
+        self.assertEqual([w['kind'] for w in self.wins('a')],['rank'])
+        self.assertIn('rank',[w['kind'] for w in self.wins('b')])
+        self.assertNotIn('rank',[w['kind'] for w in self.wins('c')])
+        summary=overview(self.store,date(2026,1,5))
+        self.assertIsNone(summary['aggregate_score'])
+        self.assertEqual(summary['running']['rank']['status'],'ranked')
+
     def test_percentile_follows_the_published_levels(self):
         from personal_assistant.workout.analytics import percentile
         self.assertEqual([percentile(s) for s in (0,200,400,600,800,1000)],[0,5,20,50,80,95])

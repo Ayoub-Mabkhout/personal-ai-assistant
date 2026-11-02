@@ -1,7 +1,7 @@
 """What each finished session achieved: records against earlier sessions, and rank steps."""
 from datetime import timedelta
 from statistics import mean
-from .analytics import BENCHMARKS,RANK_WINDOW,TIERS,bodyweight_reps,day_of,e1rm,rank,rank_reps,rep_lift,session_bodyweight
+from .analytics import BENCHMARKS,RANK_WINDOW,TIERS,bodyweight_reps,run_score,day_of,e1rm,rank,rank_reps,rep_lift,session_bodyweight
 
 WINDOW=timedelta(days=28)
 METRICS=('estimated_max','heaviest','set_volume','most_reps','pace')
@@ -47,7 +47,7 @@ def session_wins(rows, limit=40, target=None):
     catalog=grouped['exercise']
     sex=max(grouped['athlete'],key=lambda p:p['updated'])['data'].get('sex') if grouped['athlete'] else None
     workouts=sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
-    alltime,dated,scores,out={}, {}, {}, {}
+    alltime,dated,scores,out,paces={}, {}, {}, {}, []
     def standing(day):
         """The best recent rank on each lift, by the same six-month rule as the Ranks page."""
         current={}
@@ -81,6 +81,15 @@ def session_wins(rows, limit=40, target=None):
             if reps: result=rank_reps(lift,reps,bodyweight,sex)
             elif estimate and bodyweight and name.casefold() in BENCHMARKS: result=rank(name,estimate,bodyweight,sex)
             if result.get('status')=='ranked': scores.setdefault(s['exercise_id'],[]).append((day,result['score']))
+        held=[s for d,s in paces if day-RANK_WINDOW<=d<=day]
+        for s in data['sets']:
+            if s.get('completed') and s.get('kind')=='working' and s.get('distance_m') and s.get('seconds'):
+                placed=run_score({'distance_m':s['distance_m'],'seconds':s['seconds'],'incline_percent':s.get('incline_percent')},sex)
+                if placed:
+                    old=max(held,default=None)
+                    if placed['score']>(old if old is not None else -1) and tier_of(placed['score'])!=(tier_of(old) if old is not None else None):
+                        wins.append({'kind':'rank','exercise_id':s['exercise_id'],'name':'Running','tier':tier_of(placed['score']),'score':placed['score'],'previous_tier':tier_of(old) if old is not None else None})
+                    held.append(placed['score']);paces.append((day,placed['score']))
         after=standing(day)
         for eid,score in after.items():
             old=before.get(eid)

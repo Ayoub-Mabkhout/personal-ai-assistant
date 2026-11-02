@@ -6,8 +6,10 @@ MILE_M=1609.344
 
 
 def metrics(rows,today):
-    from .analytics import day_of,e1rm
+    from .analytics import day_of,e1rm,running_rank
     catalog={r['id']:r['data'] for r in rows if r['kind']=='exercise' and not r['deleted']}
+    profiles=[r for r in rows if r['kind']=='athlete' and not r['deleted']]
+    sex=max(profiles,key=lambda p:p['updated'])['data'].get('sex') if profiles else None
     exercises=defaultdict(lambda:{'e1rm_series':[],'volume_series':[]})
     sessions=[];runs=[];warmups=[]
     for row in rows:
@@ -54,7 +56,7 @@ def metrics(rows,today):
     projected=min(projected,key=lambda r:r['pace_seconds_per_km'],default=None)
     best=lambda values:min(values,key=lambda r:r['pace_seconds_per_km'],default=None)
     return {'exercise_stats':list(exercises.values()),'workout_metrics':sessions,
-        'running':{'best_working':best(current),'historical_best_working':best(runs),
+        'running':{'rank':running_rank(runs,today,sex),'best_working':best(current),'historical_best_working':best(runs),
                    'recent_working':sorted(current,key=lambda r:(r['date'],r['workout_id'])),
                    'warmup_count':len(warmups),'working_count':len(runs),'current_window_days':28,
                    'benchmark_1_5mi':{'distance_m':benchmark,'observed':observed,

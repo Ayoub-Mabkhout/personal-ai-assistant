@@ -2,6 +2,7 @@
 from collections import defaultdict
 import re
 from datetime import date, datetime, timedelta, timezone
+from math import exp,log
 from statistics import mean
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,9 @@ BENCHMARKS = {
 }
 # A rank stands for six months: strength doesn't fade that fast, and a month away shouldn't erase it.
 RANK_WINDOW = timedelta(days=183)
+# Running Level's 1 mile and 5K times in seconds, Beginner to Elite, read 2026-11-02. Its levels mean the same 5 to 95 percent.
+BENCHMARK_M = 1.5*1609.344
+RUN_STANDARDS = {'male':([519,429,363,316,282],[1838,1578,1361,1186,1050]),'female':([622,514,435,378,337],[2223,1908,1639,1418,1242])}
 # Strength Level defines its five levels by the share of its community each one beats.
 PERCENTILES = [(0,0),(200,5),(400,20),(600,50),(800,80),(1000,95)]
 # Strength Level rep standards at its 70 kg row; a level under one rep is kept just below the next.
@@ -75,6 +79,37 @@ def rank_reps(lift, reps, bodyweight, sex):
             'bodyweight_kg':bodyweight,'sex':sex,'source_url':f'https://strengthlevel.com/strength-standards/{slug}/kg',**METHOD}
 
 
+def run_levels(distance, sex):
+    """Each level's speed at any distance, along the curve through its mile and 5K times."""
+    mile,five=RUN_STANDARDS[sex]
+    share=(log(distance)-log(1609.344))/(log(5000)-log(1609.344))
+    return [distance/exp(log(a)+share*(log(b)-log(a))) for a,b in zip(mile,five)]
+
+
+def run_score(run, sex):
+    """A flat working run of a sensible length, placed on the ladder; None for anything else."""
+    if sex not in RUN_STANDARDS or run.get('incline_percent') not in (None,0) or not 1000<=run['distance_m']<=21100: return None
+    return climb(run['distance_m']/run['seconds'],run_levels(run['distance_m'],sex))[0]
+
+
+def running_rank(runs, today, sex):
+    """The best flat working run of the last six months, with what the next division takes over 1.5 miles."""
+    if sex not in RUN_STANDARDS: return {'status':'needs_profile'}
+    placed=[(run_score(r,sex),r) for r in runs if today-RANK_WINDOW<=date.fromisoformat(r['date'])<=today]
+    placed=[p for p in placed if p[0]]
+    if not placed: return {'status':'no_recent_run'}
+    result,run=max(placed,key=lambda p:p[0]['score'])
+    levels=run_levels(BENCHMARK_M,sex);floors=[0,200,400,600,800,1000];speeds=[0,*levels]
+    target=None
+    following=next((n for n,_ in TIERS if n>result['score']),None)
+    if following is not None:
+        for (x,a),(y,b) in zip(zip(speeds,floors),zip(speeds[1:],floors[1:])):
+            if a<=following<=b: target=x+(y-x)*(following-a)/(b-a);break
+    return {**result,'run':run,'next_1_5mi_seconds':round(BENCHMARK_M/target) if target else None,
+            'source_url':'https://runninglevel.com/running-times/1-mile-times',
+            'cohort':'Running Level community','method':'Each level is interpolated between its published mile and 5K times for the distance run.'}
+
+
 def percentile(score):
     """Roughly what share of the Strength Level community a score beats, between its published levels."""
     for (a,x),(b,y) in zip(PERCENTILES,PERCENTILES[1:]):
@@ -90,7 +125,7 @@ def climb(value, levels):
         if value<=y:
             score = a+(value-x)/(y-x)*(b-a)
             break
-    score = max(0,min(1000,score))
+    score = round(max(0,min(1000,score)),6)
     floor, tier = next(t for t in reversed(TIERS) if score>=t[0])
     following = next(((n,t) for n,t in TIERS if n>score),None)
     target = None
