@@ -17,14 +17,14 @@ import java.util.*;
  * All numbers come from the relay's overview or the on-phone cache; nothing is estimated here, and missing inputs say so.
  */
 final class WorkoutScreen {
-    final MainActivity a;final AppUi ui;final LinearLayout page;final WorkoutHistory history;final WorkoutPlan plan;final WorkoutCoach coach;WorkoutLive live;boolean loading;String problem="";
+    final MainActivity a;final AppUi ui;final LinearLayout page;final WorkoutHistory history;final WorkoutPlan plan;final WorkoutCoach coach;WorkoutLive live,historyEdit;boolean loading;String problem="";
     static final DateTimeFormatter DAY=DateTimeFormatter.ofPattern("EEEE d MMMM"),SHORT=DateTimeFormatter.ofPattern("EEE d MMM");
     WorkoutScreen(MainActivity a,AppUi ui,LinearLayout page){this.a=a;this.ui=ui;this.page=page;history=new WorkoutHistory(this);plan=new WorkoutPlan(this);coach=new WorkoutCoach(this);render();}
     void refresh(){render();if(loading||!a.paired())return;loading=true;new Thread(()->{String message=WorkoutStore.sync(a);a.runOnUiThread(()->{loading=false;problem=message;if(!a.isFinishing())render();});}).start();}
     void liveClosed(){live=null;render();refresh();}
     /** A theme change waits for the workout, so the session on screen isn't torn down at sunset. */
-    boolean busy(){return live!=null;}
-    void close(){if(live!=null)live.close();}
+    boolean busy(){return live!=null||historyEdit!=null;}
+    void close(){if(historyEdit!=null)historyEdit.close();if(live!=null)live.close();}
     JSONObject overview(){return WorkoutStore.overview(a);}
 
     /** A dashboard in Money's hierarchy: the next workout leads, four live numbers follow, and everything else is one tap into its own grouped page. */
