@@ -62,6 +62,14 @@ def day_of(workout):
     return at.astimezone(ZoneInfo(workout['timezone'])).date() if at.tzinfo else at.date()
 
 
+def session_bodyweight(workout, day, measurements):
+    """Logged with the session, or measured no more than 14 days before that performance."""
+    if workout.get('bodyweight_kg'): return workout['bodyweight_kg']
+    eligible = [m for m in measurements if m['kind']=='bodyweight'
+                and day-timedelta(days=14)<=datetime.fromisoformat(m['measured_at']).date()<=day]
+    return max(eligible,key=lambda m:m['measured_at'])['value'] if eligible else None
+
+
 def scheduled_day(workout):
     """A one-day override retains the session's original place in its sprint."""
     source=workout.get('source',{})
@@ -113,12 +121,7 @@ def overview(store, today=None):
     measurements = [r['data'] for r in grouped['measurement']]
     for w in completed:
         data = w['data']; day = day_of(data)
-        bodyweight = data.get('bodyweight_kg')
-        if not bodyweight:
-            # Use measured bodyweight no more than 14 days before that performance.
-            eligible = [m for m in measurements if m['kind']=='bodyweight'
-                        and day-timedelta(days=14)<=datetime.fromisoformat(m['measured_at']).date()<=day]
-            if eligible: bodyweight = max(eligible,key=lambda m:m['measured_at'])['value']
+        bodyweight = session_bodyweight(data,day,measurements)
         for item in data['sets']:
             eid = item['exercise_id']; ex = catalog.get(eid,{'name':eid,'muscles':[]})
             if item.get('completed') and item.get('kind') in ('working','failure') and item.get('reps'):
@@ -215,6 +218,7 @@ def overview(store, today=None):
             info.update(cycle_progress(sprint,workouts,today))
             info['planned']=info['target_sessions'];info['completed']=info['completed_sessions']
     extra=metrics(all_items,today)
+    from .wins import session_wins
     return {**extra,'next_workout':next_workout(all_items,today),'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
         'personal_records':personal,'exercise_records':list(exercise_records.values()),
         'ranks':list(candidates.values()),'ranking_method':METHOD,
@@ -224,6 +228,6 @@ def overview(store, today=None):
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
-        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),'workout_briefs':store.workout_briefs(),
+        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),'workout_briefs':store.workout_briefs(),'workout_wins':session_wins(all_items),
         'active_workouts':[r for r in workouts if r['data']['status'] in ('active','paused')],
         'latest_workouts':list(reversed(workouts[-10:]))}

@@ -296,8 +296,12 @@ class Workouts:
         if old and not old['deleted'] and json.loads(old['data']).get('status')=='completed': return
         profile=db.execute("SELECT data FROM entities WHERE kind='athlete' AND deleted=0 ORDER BY updated DESC LIMIT 1").fetchone()
         if not profile or not json.loads(profile['data']).get('auto_coach_briefs'): return
+        from .wins import describe,session_wins
+        rows=[self.row(r) for r in db.execute("SELECT * FROM entities WHERE kind IN ('athlete','exercise','measurement','workout') AND deleted=0")]
+        wins=[describe(w) for w in session_wins(rows,target=identifier)]
         question=('The owner just finished '+data['name']+'. Write a brief for them: at most two short sentences and 30 words, '
-                  'how it went, then the one thing to do next session. No headings, lists or preamble. Do not change the plan or analyse photos.')
+                  'how it went, then the one thing to do next session. No headings, lists or preamble. Do not change the plan or analyse photos.'
+                  +(' Open by acknowledging what they achieved: '+'; '.join(wins[:3])+'.' if wins else ''))
         db.execute('INSERT OR IGNORE INTO trainer(id,question,photos,context,created,state) VALUES(?,?,?,?,?,?)',
             ('brief_workout_'+identifier,question,'[]',encoded({'purpose':'next_session_brief','automatic':True,'workout_id':identifier,
              'session_id':'workout:'+identifier,'revision':revision}),self.clock(),'queued'))

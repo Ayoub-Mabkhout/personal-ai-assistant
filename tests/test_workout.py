@@ -289,6 +289,43 @@ class WorkoutTests(unittest.TestCase):
         self.store.mutate([op('workout','done2',{},self.store.get('workout','done2')['revision'],deleted=True)])
         self.assertNotIn('done2',self.store.workout_briefs())
 
+    def lifted(self,identifier,day,weight,reps,rir=1,exercise='bench',source=None):
+        sets=[dict(id=identifier+'s',exercise_id=exercise,weight_kg=weight,reps=reps,rir=rir)]
+        return op('workout',identifier,dict(name='Push',started_at=day+'T18:00:00+00:00',status='completed',sets=sets,source={'companion':{}} if source is None else source))
+
+    def wins(self,identifier):
+        from personal_assistant.workout.wins import session_wins
+        return session_wins(self.store.export()['entities'],target=identifier)
+
+    def test_a_session_earns_a_record_only_against_earlier_sessions(self):
+        self.store.mutate([op('exercise','bench',{'name':'Bench Press (Barbell)'}),self.lifted('old','2024-01-01',100,5,source={'strong':{}}),self.lifted('one','2026-01-01',60,5),self.lifted('two','2026-01-08',70,5),self.lifted('three','2026-01-15',65,5),self.lifted('top','2026-01-22',105,5)])
+        self.assertEqual(self.wins('one'),[])
+        record=[w for w in self.wins('two') if w['kind']=='record'][0]
+        self.assertEqual((record['scope'],record['metric'],record['previous']),('recent','estimated_max',70.0))
+        self.assertEqual([w for w in self.wins('three') if w['kind']=='record'],[])
+        record=[w for w in self.wins('top') if w['kind']=='record'][0]
+        self.assertEqual((record['scope'],record['metric']),('all_time','estimated_max'))
+
+    def test_a_rank_step_needs_a_hard_set_and_counts_once(self):
+        self.store.mutate([op('athlete','self',dict(sex='male')),op('exercise','bench',{'name':'Bench Press (Barbell)'}),
+            op('measurement','w1',dict(measured_at='2026-01-01T08:00:00+00:00',kind='bodyweight',value=70,unit='kg')),
+            self.lifted('easy','2026-01-02',60,6,rir=5),self.lifted('hard','2026-01-03',60,6,rir=1),self.lifted('same','2026-01-04',60,6,rir=1),self.lifted('up','2026-01-05',100,6,rir=1)])
+        self.assertEqual([w for w in self.wins('easy') if w['kind']!='record'],[])
+        first=[w for w in self.wins('hard') if w['kind']=='rank'][0]
+        self.assertIsNone(first['previous_tier'])
+        self.assertEqual({w['kind'] for w in self.wins('hard')}>={'rank','overall'},True)
+        self.assertEqual([w for w in self.wins('same') if w['kind']=='rank'],[])
+        step=[w for w in self.wins('up') if w['kind']=='rank'][0]
+        self.assertEqual(step['previous_tier'],first['tier'])
+        self.assertNotEqual(step['tier'],first['tier'])
+
+    def test_the_brief_is_told_what_the_session_achieved(self):
+        self.store.mutate([op('athlete','self',dict(auto_coach_briefs=True)),op('exercise','bench',{'name':'Bench Press (Barbell)'}),self.lifted('one','2026-01-01',60,5)])
+        self.store.mutate([self.lifted('two','2026-01-08',70,5)])
+        rows=self.store.conversation()
+        text=[r['question'] for r in rows if r['id']=='brief_workout_two'][0]
+        self.assertIn('Bench Press (Barbell)',text);self.assertIn('estimated max',text)
+
     def test_automatic_brief_needs_owner_opt_in_and_deduplicates(self):
         from datetime import datetime,timezone
         self.now=datetime(2026,1,1,tzinfo=timezone.utc).timestamp()
