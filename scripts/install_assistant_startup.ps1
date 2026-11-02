@@ -3,19 +3,22 @@ $ErrorActionPreference='Stop'
 $assistantConfigPath=(Resolve-Path -LiteralPath $Config).Path
 $assistantSettings=Get-Content -LiteralPath $assistantConfigPath -Raw | ConvertFrom-Json
 $assistantLauncher=Join-Path $assistantSettings.repository 'scripts/run_assistant_services.py'
-$assistantPython=$assistantSettings.python
-if (-not (Test-Path -LiteralPath $assistantPython)) { throw 'The configured Python is unavailable.' }
+# A venv's pythonw.exe starts console Python, so Windows opens a terminal, and closing it stops every service.
+# The base interpreter's pythonw.exe never gets a console. Stopping the task still ends the services through their job.
+$assistantVenvConfig=Join-Path (Split-Path -Parent (Split-Path -Parent $assistantSettings.python)) 'pyvenv.cfg'
+$assistantHome=((Get-Content -LiteralPath $assistantVenvConfig | Where-Object { $_ -match '^home\s*=' }) -replace '^home\s*=\s*','').Trim()
+$assistantPython=Join-Path $assistantHome 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $assistantPython)) { throw 'The hidden Python launcher is unavailable.' }
 $assistantSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $assistantEscape={param($Value) [System.Security.SecurityElement]::Escape($Value)}
-# A venv's pythonw.exe still starts console Python, so Windows opens a terminal, and closing it stops every service.
-$assistantArguments='--headless "'+$assistantPython+'" "'+$assistantLauncher+'" --config "'+$assistantConfigPath+'"'
+$assistantArguments='"'+$assistantLauncher+'" --config "'+$assistantConfigPath+'"'
 $assistantTaskXml=@"
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
  <RegistrationInfo><Description>Personal assistant: outbound worker and private local dashboard.</Description></RegistrationInfo>
  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>$assistantSid</UserId></LogonTrigger></Triggers>
  <Principals><Principal id="Author"><UserId>$assistantSid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
- <Actions Context="Author"><Exec><Command>conhost.exe</Command><Arguments>$(& $assistantEscape $assistantArguments)</Arguments><WorkingDirectory>$(& $assistantEscape $assistantSettings.repository)</WorkingDirectory></Exec></Actions>
+ <Actions Context="Author"><Exec><Command>$(& $assistantEscape $assistantPython)</Command><Arguments>$(& $assistantEscape $assistantArguments)</Arguments><WorkingDirectory>$(& $assistantEscape $assistantSettings.repository)</WorkingDirectory></Exec></Actions>
 </Task>
 "@
 Register-ScheduledTask -TaskName 'PersonalAssistantServices' -Xml $assistantTaskXml -Force | Select-Object TaskName,State

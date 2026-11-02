@@ -5,7 +5,10 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
+# Started by the base pythonw.exe, which has no console; only the children use the virtual environment.
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from personal_assistant.worker.runtime import Singleton
 from personal_assistant.worker.processes import ProcessJob
 
