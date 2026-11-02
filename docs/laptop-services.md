@@ -4,6 +4,8 @@ The outbound worker and localhost dashboard run under one per-user supervisor.
 On Windows, `scripts/install_assistant_startup.ps1` installs the hidden
 `PersonalAssistantServices` scheduled task at sign-in. It runs without elevation,
 allows battery operation, restarts failures, and has no execution time limit.
+It runs through `conhost.exe --headless`, so no terminal window opens: a closed
+window would otherwise stop the supervisor and, through it, every service.
 Windows Job Objects tie child lifetime to the supervisor, including forced stops.
 
 The worker polls every four seconds, reconnects with bounded jitter/backoff,
