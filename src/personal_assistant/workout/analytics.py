@@ -138,9 +138,32 @@ def weight_trend(points, today):
             'method':'Daily mean, then unweighted observed-day rolling mean; minimum 3/7 or 5/14 observed days. Missing days are not filled.'}
 
 
+def local_today(rows):
+    """The owner's date, from where they last trained: just after midnight, UTC is still on yesterday."""
+    latest=max((r['data'] for r in rows if r['kind']=='workout' and not r['deleted']),key=lambda w:w['started_at'],default=None)
+    try: return datetime.now(ZoneInfo(latest['timezone'])).date()
+    except (TypeError,KeyError,ValueError): return datetime.now(timezone.utc).date()
+
+
+def sprint_history(grouped, workouts, sessions, wins, briefs, today):
+    """Each sprint as a finished chapter: what it came to, what it won and the coach's review, newest first."""
+    loads={m['workout_id']:m['total_volume_kg_reps'] for m in sessions}
+    out=[]
+    for item in sorted(grouped['sprint'],key=lambda r:r['data']['start'],reverse=True):
+        sprint=item['data']
+        done=[w for w in workouts if w['data'].get('sprint_id')==item['id'] and w['data']['status']=='completed']
+        won=[x for w in done for x in wins.get(w['id'],[])]
+        out.append({'id':item['id'],'name':sprint['name'],'phase':sprint['phase'],'status':sprint['status'],'start':sprint['start'],'end':sprint['end'],
+                    'ended':sprint['status']=='completed' or sprint['end']<today.isoformat(),'completed':len(done),'target_sessions':sprint.get('target_sessions'),
+                    'volume_kg_reps':round(sum(loads.get(w['id'],0) for w in done),1),'seconds':sum(w['data']['duration_seconds'] for w in done),
+                    'records':sum(x['kind']=='record' and x.get('scope')=='all_time' for x in won),'rank_ups':sum(x['kind']=='rank' for x in won),
+                    'brief':briefs.get(item['id'])})
+    return out
+
+
 def overview(store, today=None):
-    today = today or datetime.now(timezone.utc).date()
     all_items = store.export()['entities']
+    today = today or local_today(all_items)
     grouped = defaultdict(list)
     for item in all_items:
         if not item['deleted']: grouped[item['kind']].append(item)
@@ -275,6 +298,7 @@ def overview(store, today=None):
             info['planned']=info['target_sessions'];info['completed']=info['completed_sessions']
     extra=metrics(all_items,today)
     from .wins import session_wins
+    wins=session_wins(all_items,limit=100000)
     return {**extra,'next_workout':next_workout(all_items,today),'schema_version':1,'as_of':today.isoformat(),'completed_workouts':len(completed),'exercise_count':len(catalog),
         'personal_records':personal,'exercise_records':list(exercise_records.values()),
         'ranks':list(candidates.values()),'ranking_method':METHOD,
@@ -284,6 +308,7 @@ def overview(store, today=None):
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
-        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),'workout_briefs':store.workout_briefs(),'workout_wins':session_wins(all_items),
+        'body_metrics':body,'body_rank':body_rank,'next_session_brief':store.next_session_brief(),'workout_briefs':store.workout_briefs(),'workout_wins':{k:wins[k] for k in list(wins)[-40:]},
+        'sprint_history':sprint_history(grouped,workouts,extra['workout_metrics'],wins,store.sprint_briefs(),today),
         'active_workouts':[r for r in workouts if r['data']['status'] in ('active','paused')],
         'latest_workouts':list(reversed(workouts[-10:]))}

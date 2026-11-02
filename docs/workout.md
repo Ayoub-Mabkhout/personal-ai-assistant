@@ -6,6 +6,8 @@ The Companion keeps workout drafts, exercise order, set deletion and offline edi
 
 New sprints use an ordered `cycle` of template IDs, a finite `target_sessions`, `start` and `end`. Omitted end defaults to four calendar months after start. Completed sessions advance the cycle; rest/cancelled sessions do not. There is no weekly schedule. An unfinished deadline offers extension rather than a punitive failure. `POST /sprints/{id}/extend` takes `{end,base_revision,mutation_id}` and preserves the original deadline trail. Legacy dated schedules remain readable for migration.
 
+When a sprint is marked complete, passes its deadline or reaches its target, a short review of up to three sentences is queued for the coach. `overview.sprint_history` lists every sprint with its sessions, volume, records, rank ups and review, and History shows sprints as soft bands behind the calendar.
+
 The coach is the primary planning interface. It generates names from goals, progress and period, drafts the next sprint, adjusts the plan and offers owner-requested active or retrospective workout corrections/deletions. All changes require owner approval and revision checks; original Strong exports and prior entity versions remain retained. Manual sprint editing is secondary. Do not turn an initial reconditioning prescription into a permanent volume ceiling.
 
 ## Tracking and metrics

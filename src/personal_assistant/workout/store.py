@@ -11,15 +11,15 @@ from ..relay.store import Conflict, Missing
 from .models import MODELS, Mutation, validate
 
 
-def brief_text(text, limit=170):
-    """Briefs stay brief whatever the model returned: two sentences at most, never a wall of text."""
+def brief_text(text, limit=170, sentences=2):
+    """Briefs stay brief whatever the model returned: a couple of sentences, never a wall of text."""
     plain=(text or '').split('Proposed changes:')[0]
     plain=re.sub(r'\[([^\]]+)\]\([^)]*\)',r'\1',plain)
     plain=re.sub(r'(?m)^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)','',plain)
     plain=plain.replace('**','').replace('__','').replace('`','')
     plain=re.sub(r'(?<!\w)[*_]([^*_\n]+)[*_](?!\w)',r'\1',plain)
     words=' '.join(plain.split())
-    kept=' '.join(re.split(r'(?<=[.!?])\s+',words)[:2])
+    kept=' '.join(re.split(r'(?<=[.!?])\s+',words)[:sentences])
     return kept if len(kept)<=limit else kept[:limit].rsplit(' ',1)[0].rstrip(' ,;:')+'…'
 
 
@@ -94,6 +94,7 @@ class Workouts:
             if op['kind'] == 'workout':
                 if op['deleted']: db.execute("DELETE FROM trainer WHERE id=? AND state='queued'",('brief_workout_'+op['id'],))
                 else: self.enqueue_workout_brief(db,op['id'],data,old,revision)
+            if op['kind'] == 'sprint' and not op['deleted'] and data.get('status') == 'completed': self.enqueue_sprint_brief(db,op['id'],data)
             db.execute('INSERT INTO mutations VALUES(?,?,?)', (op['mutation_id'], request, encoded(result)))
             results.append(result)
             if op['kind'] == 'photo' and op['deleted'] and old and not old['deleted']:
@@ -235,7 +236,7 @@ class Workouts:
             job = db.execute("SELECT * FROM trainer WHERE id=? AND token=? AND state='running' AND lease_until>?",(identifier,token,self.clock())).fetchone()
             if not job: raise Conflict('Trainer lease lost')
             context=json.loads(job['context'])
-            if state=='failed' and context.get('workout_id') and context.get('attempts',0)<12:
+            if state=='failed' and (context.get('workout_id') or context.get('purpose')=='sprint_brief') and context.get('attempts',0)<12:
                 # A limit or outage shouldn't lose the brief: try again later, about six hours in all.
                 context.update(attempts=context.get('attempts',0)+1,not_before=self.clock()+1800)
                 db.execute("UPDATE trainer SET state='queued',token=NULL,lease_until=NULL,context=? WHERE id=?",(encoded(context),identifier))
@@ -306,6 +307,26 @@ class Workouts:
             ('brief_workout_'+identifier,question,'[]',encoded({'purpose':'next_session_brief','automatic':True,'workout_id':identifier,
              'session_id':'workout:'+identifier,'revision':revision}),self.clock(),'queued'))
 
+    def enqueue_sprint_brief(self, db, identifier, data):
+        """A finished sprint gets one short review of its own, written when the coach is next free."""
+        profile=db.execute("SELECT data FROM entities WHERE kind='athlete' AND deleted=0 ORDER BY updated DESC LIMIT 1").fetchone()
+        if not profile or not json.loads(profile['data']).get('auto_coach_briefs'): return
+        question=(f"The sprint {data['name']} ({data['start']} to {data['end']}) has ended. Write its brief: at most three short sentences and 45 words: "
+                  'what improved, what held back, and the focus for the next sprint. Read its workouts for evidence. No headings, lists or preamble. Do not change the plan or analyse photos.')
+        db.execute('INSERT OR IGNORE INTO trainer(id,question,photos,context,created,state) VALUES(?,?,?,?,?,?)',
+            ('brief_sprint_'+identifier,question,'[]',encoded({'purpose':'sprint_brief','automatic':True,'sprint_id':identifier}),self.clock(),'queued'))
+
+    def sprint_briefs(self):
+        with self.db() as db:
+            rows=db.execute("SELECT * FROM trainer WHERE json_extract(context,'$.purpose')='sprint_brief' ORDER BY created DESC,rowid DESC").fetchall()
+            online=self.status(db)['available']
+        out={}
+        for row in rows:
+            ready=row['state']=='completed'
+            out.setdefault(json.loads(row['context'])['sprint_id'],{'text':brief_text(row['answer'],260,3) if ready else None,'generated_at':row['answered_at'] if ready else None,
+                'state':'ready' if ready else 'failed' if row['state']=='failed' else 'writing' if online else 'waiting'})
+        return out
+
     def workout_briefs(self, limit=100):
         """The brief written for each recent workout, so History can show it long after the end screen closed."""
         with self.db() as db:
@@ -332,6 +353,13 @@ class Workouts:
             profiles=[r for r in rows if r['kind']=='athlete']
             if not profiles or not max(profiles,key=lambda r:r['updated'])['data'].get('auto_coach_briefs'):
                 return {'queued':False}
+            from .programs import cycle_progress
+            workouts=[r for r in rows if r['kind']=='workout']
+            for row in rows:
+                # A sprint can end by its deadline or its target without anyone marking it complete.
+                if row['kind']=='sprint' and row['data']['status']=='active' and (row['data']['end']<today or
+                        (row['data'].get('cycle') and cycle_progress(row,workouts,date.fromisoformat(today))['target_reached'])):
+                    self.enqueue_sprint_brief(db,row['id'],row['data'])
             if db.execute("SELECT 1 FROM trainer WHERE state IN ('queued','running')").fetchone(): return {'queued':False}
             if not rows or self.clock()-max(r['updated'] for r in rows)<120: return {'queued':False}
             if db.execute("SELECT 1 FROM trainer WHERE json_extract(context,'$.workout_id') IS NOT NULL AND created>?",(self.clock()-21600,)).fetchone(): return {'queued':False}

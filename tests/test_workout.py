@@ -361,6 +361,44 @@ class WorkoutTests(unittest.TestCase):
         record=[w for w in self.wins('two') if w['kind']=='record'][0]
         self.assertEqual((record['metric'],record['reps']),('most_reps',10))
 
+    def sprint_rows(self):
+        self.store.mutate([op('athlete','self',dict(auto_coach_briefs=True)),op('template','push',dict(name='Push')),
+            op('sprint','one',dict(name='One',phase='strength',start='2026-01-01',end='2026-03-01',status='active',cycle=['push'],target_sessions=2))])
+
+    def test_a_completed_sprint_queues_one_short_review(self):
+        self.sprint_rows()
+        current=self.store.get('sprint','one')
+        self.store.mutate([op('sprint','one',dict(current['data'],status='completed'),current['revision'])])
+        self.assertEqual(self.store.sprint_briefs()['one']['state'],'waiting')
+        self.store.heartbeat();claim=self.store.claim();self.assertEqual(claim['id'],'brief_sprint_one')
+        self.store.finish(claim['id'],claim['token'],'Bench climbed. Sleep held you back. Next, build squat volume. A fourth sentence.',[])
+        self.assertEqual(self.store.sprint_briefs()['one']['text'],'Bench climbed. Sleep held you back. Next, build squat volume.')
+        self.assertEqual(overview(self.store,date(2026,3,2))['sprint_history'][0]['brief']['state'],'ready')
+
+    def test_a_sprint_past_its_deadline_gets_its_review_without_being_marked(self):
+        from datetime import datetime,timezone
+        self.sprint_rows();self.store.heartbeat()
+        self.now=datetime(2026,3,5,tzinfo=timezone.utc).timestamp();self.store.heartbeat()
+        self.store.prepare_brief('UTC')
+        self.assertIn('one',self.store.sprint_briefs())
+
+    def test_sprint_history_sums_what_the_sprint_came_to(self):
+        self.sprint_rows()
+        self.store.mutate([op('exercise','bench',{'name':'Bench Press (Barbell)'})])
+        one=self.lifted('a','2026-01-02',60,5);one['data']['sprint_id']='one'
+        two=self.lifted('b','2026-01-03',70,5);two['data']['sprint_id']='one'
+        self.store.mutate([one,two])
+        entry=overview(self.store,date(2026,1,4))['sprint_history'][0]
+        self.assertEqual((entry['completed'],entry['target_sessions'],entry['records'],entry['ended']),(2,2,1,False))
+        self.assertEqual(entry['volume_kg_reps'],650)
+
+    def test_today_follows_the_owners_timezone_not_utc(self):
+        from personal_assistant.workout.analytics import local_today
+        rows=[dict(kind='workout',deleted=False,data=dict(started_at='2026-01-01T00:00:00+13:00',timezone='Pacific/Auckland'))]
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        self.assertEqual(local_today(rows),datetime.now(ZoneInfo('Pacific/Auckland')).date())
+
     def test_ranks_climb_league_style_through_divisions(self):
         from personal_assistant.workout.analytics import TIERS
         names=dict(TIERS)
