@@ -1,5 +1,6 @@
 """Recomputable progress, sprint evidence and explicitly app-specific ranks."""
 from collections import defaultdict
+import re
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
 from zoneinfo import ZoneInfo
@@ -11,12 +12,35 @@ BENCHMARKS = {
     'deadlift (barbell)': ('deadlift', [1.,1.50,2.,2.50,3.25], [.75,1.,1.50,2.,2.50]),
     'overhead press (barbell)': ('shoulder-press', [.35,.55,.80,1.05,1.35], [.20,.35,.50,.70,.95]),
 }
+# Strength Level rep standards at its 70 kg row; a level under one rep is kept just below the next.
+REP_BENCHMARKS = {'pull up':('pull-ups',[1,7,14,22,31],[.5,1,5,11,18]),'push up':('push-ups',[5,20,40,64,89],[1,7,17,30,43])}
+REP_NAMES = {'pullup':'pull up','pullups':'pull up','pullupweighted':'pull up','weightedpullup':'pull up','pushup':'push up','pushups':'push up'}
 # A League-style ladder: seven ranks of four divisions, climbing from 4 to 1, then three apex ranks.
 RANKS = [(0,'Iron'),(200,'Bronze'),(300,'Silver'),(400,'Gold'),(500,'Platinum'),(600,'Emerald'),(700,'Diamond'),(800,'Master')]
 TIERS = [(low+(high-low)*step//4,f'{name} {4-step}') for (low,name),(high,_) in zip(RANKS,RANKS[1:]) for step in range(4)]+[(800,'Master'),(900,'Grandmaster'),(950,'Challenger')]
 METHOD = {'version':'strength-ratios-2026-11-02-v2','cohort':'self-selected Strength Level users',
           'method':'Epley for 2–10 reps; tested single unchanged. Linear score interpolation through published bodyweight-ratio levels at 200/400/600/800/1000.',
-          'limitations':'App-specific score, not Liftoff score or a demographic percentile. No age/height adjustment; self-reported lifts; approximate 1RM. Only four named barbell lifts supported.'}
+          'limitations':'App-specific score, not Liftoff score or a demographic percentile. No age/height adjustment; self-reported lifts; approximate 1RM. Four named barbell lifts plus pull-ups and push-ups are supported; added load on those converts to estimated bodyweight reps.'}
+
+
+def hard_set(item):
+    return (item.get('kind')=='failure' or (item['rir']<=2 if item.get('rir') is not None
+            else item['rpe']>=8 if item.get('rpe') is not None else True))
+
+
+def rep_lift(name):
+    """The bodyweight lift an exercise counts as, whatever its spelling."""
+    return REP_NAMES.get(re.sub('[^a-z]','',name.casefold()))
+
+
+def bodyweight_reps(item, bodyweight, hard_only=True):
+    """Reps at bodyweight alone. Added load goes through Epley, so a weighted set counts as its estimated unweighted performance."""
+    if not item.get('completed') or item.get('kind') not in ('working','failure') or not item.get('reps'): return None
+    if item.get('distance_m') or (hard_only and not hard_set(item)): return None
+    added=item.get('weight_kg') or 0
+    if not added: return float(item['reps'])
+    if not bodyweight or item['reps']>10: return None
+    return ((bodyweight+added)*(1+item['reps']/30)/bodyweight-1)*30
 
 
 def e1rm(item, hard_only=False):
@@ -24,9 +48,7 @@ def e1rm(item, hard_only=False):
     weight, reps = item.get('weight_kg'), item.get('reps')
     if not weight or not reps or not 1<=reps<=10: return None
     # An entered RIR outranks any imported RPE; neither present assumes the set was hard.
-    hard = (item.get('kind')=='failure' or (item['rir']<=2 if item.get('rir') is not None
-            else item['rpe']>=8 if item.get('rpe') is not None else True))
-    if hard_only and not hard: return None
+    if hard_only and not hard_set(item): return None
     return weight if reps==1 else weight*(1+reps/30)
 
 
@@ -35,28 +57,38 @@ def rank(name, estimate, bodyweight, sex):
     if not source: return {'status':'unsupported_exercise'}
     if sex not in ('male','female') or not bodyweight: return {'status':'needs_bodyweight_and_sex'}
     slug, male, female = source
-    levels = male if sex=='male' else female
-    ratio = estimate/bodyweight
+    placed, target = climb(estimate/bodyweight,male if sex=='male' else female)
+    return {**placed,'next_e1rm_kg':round(bodyweight*target,2) if target else None,
+            'estimated_1rm_kg':round(estimate,2),'bodyweight_kg':bodyweight,'sex':sex,
+            'source_url':f'https://strengthlevel.com/strength-standards/{slug}/kg',**METHOD}
+
+
+def rank_reps(lift, reps, bodyweight, sex):
+    if sex not in ('male','female'): return {'status':'needs_bodyweight_and_sex'}
+    slug, male, female = REP_BENCHMARKS[lift]
+    placed, target = climb(reps,male if sex=='male' else female)
+    return {**placed,'next_reps':round(target,1) if target else None,'estimated_reps':round(reps,1),
+            'bodyweight_kg':bodyweight,'sex':sex,'source_url':f'https://strengthlevel.com/strength-standards/{slug}/kg',**METHOD}
+
+
+def climb(value, levels):
+    """Place a value on the published levels, and find what the next division takes."""
     anchors = [(0.,0),*zip(levels,[200,400,600,800,1000])]
     score = 1000.
     for (x,a),(y,b) in zip(anchors,anchors[1:]):
-        if ratio<=y:
-            score = a+(ratio-x)/(y-x)*(b-a)
+        if value<=y:
+            score = a+(value-x)/(y-x)*(b-a)
             break
     score = max(0,min(1000,score))
     floor, tier = next(t for t in reversed(TIERS) if score>=t[0])
     following = next(((n,t) for n,t in TIERS if n>score),None)
     target = None
     if following:
-        next_score = following[0]
         for (x,a),(y,b) in zip(anchors,anchors[1:]):
-            if a<=next_score<=b:
-                target = bodyweight*(x+(y-x)*(next_score-a)/(b-a));break
-    return {'status':'ranked','score':round(score),'tier':tier,'floor':floor,
-            'next_tier':following[1] if following else None,'next_e1rm_kg':round(target,2) if target else None,
-            'progress':round((score-floor)/((following[0]-floor) if following else (1000-floor)),3),
-            'estimated_1rm_kg':round(estimate,2),'bodyweight_kg':bodyweight, 'sex':sex,
-            'source_url':f'https://strengthlevel.com/strength-standards/{slug}/kg',**METHOD}
+            if a<=following[0]<=b:
+                target = x+(y-x)*(following[0]-a)/(b-a);break
+    return ({'status':'ranked','score':round(score),'tier':tier,'floor':floor,'next_tier':following[1] if following else None,
+             'progress':round((score-floor)/((following[0]-floor) if following else (1000-floor)),3)},target)
 
 
 def day_of(workout):
@@ -118,6 +150,7 @@ def overview(store, today=None):
     workouts = sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
     completed = [r for r in workouts if r['data']['status']=='completed' and day_of(r['data'])<=today]
     records, recent, candidates, cardio = {}, {}, {}, []
+    rep_best, rep_recent, rep_hard = {}, {}, set()
     exercise_records={}
     hard_recent=set()
     measurements = [r['data'] for r in grouped['measurement']]
@@ -138,6 +171,19 @@ def overview(store, today=None):
                     if load>window.get('best_load',{}).get('weight_kg',0): window['best_load']=fact
                     if load and load*item['reps']>window.get('best_volume',{}).get('kg_repetitions',0):
                         window['best_volume']={**fact,'kg_repetitions':round(load*item['reps'],3)}
+            lift = rep_lift(ex['name'])
+            reps = bodyweight_reps(item,bodyweight,False) if lift else None
+            if reps:
+                value = {'workout_id':w['id'],'date':day.isoformat(),'set_id':item['id'],'weight_kg':item.get('weight_kg'),
+                         'reps':item['reps'],'estimated_reps':round(reps,1)}
+                if lift not in rep_best or reps>rep_best[lift]['estimated_reps']: rep_best[lift]=value
+                if today-timedelta(days=28)<=day:
+                    if lift not in rep_recent or reps>rep_recent[lift]['estimated_reps']: rep_recent[lift]=value
+                    if bodyweight_reps(item,bodyweight):
+                        rep_hard.add(lift)
+                        result = rank_reps(lift,reps,bodyweight,athlete.get('sex'))
+                        if result['status']=='ranked' and (eid not in candidates or result['score']>candidates[eid]['score']):
+                            candidates[eid]={**result,'exercise_id':eid,'name':ex['name'],'muscles':ex['muscles'],'date':day.isoformat()}
             estimated = e1rm(item)
             if estimated:
                 value = {'workout_id':w['id'],'date':day.isoformat(),'set_id':item['id'],
@@ -166,6 +212,14 @@ def overview(store, today=None):
                 'needs_hard_set' if eid not in hard_recent else 'needs_profile' if athlete.get('sex') not in ('male','female') else 'needs_bodyweight')
         lift_ranks.append({**candidates.get(eid,{}),'exercise_name':catalog[eid]['name'] if eid else name,
                            'exercise_id':eid,'status':status,'recent_best':recent.get(eid),'historical_best':records.get(eid)})
+    for lift in REP_BENCHMARKS:
+        eids=[eid for eid,ex in catalog.items() if rep_lift(ex['name'])==lift]
+        best=max((candidates[eid] for eid in eids if eid in candidates),key=lambda c:c['score'],default=None)
+        status=('ranked' if best else 'no_recent_set' if lift not in rep_recent else
+                'needs_hard_set' if lift not in rep_hard else 'needs_profile')
+        lift_ranks.append({**(best or {}),'exercise_name':catalog[eids[0]]['name'] if eids else lift.title(),
+                           'exercise_id':best['exercise_id'] if best else eids[0] if eids else None,'status':status,
+                           'recent_best':rep_recent.get(lift),'historical_best':rep_best.get(lift)})
     sprints = []
     for item in grouped['sprint']:
         sprint = item['data']
@@ -226,7 +280,7 @@ def overview(store, today=None):
         'ranks':list(candidates.values()),'ranking_method':METHOD,
         'lift_ranks':lift_ranks,'tiers':[{'floor':floor,'name':name} for floor,name in TIERS],
         'aggregate_score':round(mean(v['score'] for v in candidates.values())) if candidates else None,
-        'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS),'window_days':28},
+        'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS)+len(REP_BENCHMARKS),'window_days':28},
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),

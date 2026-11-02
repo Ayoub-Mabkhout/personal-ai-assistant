@@ -332,6 +332,35 @@ class WorkoutTests(unittest.TestCase):
         self.assertIsNotNone(e1rm(dict(easy,rir=None),True))
         self.assertIsNotNone(e1rm(dict(easy,rir=2,rpe=4),True))
 
+    def test_pull_ups_and_push_ups_rank_on_bodyweight_reps(self):
+        from personal_assistant.workout.analytics import bodyweight_reps,rank_reps,rep_lift
+        self.assertEqual((rep_lift('Pull Up'),rep_lift('Push-Ups'),rep_lift('Pull Up (Assisted)')),('pull up','push up',None))
+        self.assertEqual(rank_reps('pull up',14,70,'male')['score'],600)
+        self.assertEqual(rank_reps('push up',40,70,'male')['score'],600)
+        plain=dict(completed=True,kind='working',reps=10,weight_kg=0)
+        self.assertEqual(bodyweight_reps(plain,70),10)
+        self.assertAlmostEqual(bodyweight_reps(dict(plain,weight_kg=7),70),(77*(1+10/30)/70-1)*30)
+        self.assertIsNone(bodyweight_reps(dict(plain,rir=5),70))
+
+    def test_a_weighted_pull_up_counts_toward_the_same_rank(self):
+        self.store.mutate([op('athlete','self',dict(sex='male')),op('exercise','pull',{'name':'Pull Up','muscles':['back']}),
+            op('measurement','w1',dict(measured_at='2026-01-01T08:00:00+00:00',kind='bodyweight',value=70,unit='kg'))])
+        self.store.mutate([self.lifted('one','2026-01-02',0,8,exercise='pull'),self.lifted('two','2026-01-03',14,8,exercise='pull')])
+        summary=overview(self.store,date(2026,1,4))
+        lift=[r for r in summary['lift_ranks'] if r['exercise_name']=='Pull Up'][0]
+        self.assertEqual(lift['status'],'ranked')
+        self.assertGreater(lift['estimated_reps'],14)
+        self.assertEqual(summary['rank_coverage']['supported_lifts'],6)
+        self.assertEqual([w['kind'] for w in self.wins('one')],['rank','overall'])
+        self.assertIn('rank',[w['kind'] for w in self.wins('two')])
+        push=[r for r in summary['lift_ranks'] if r['exercise_name']=='Push Up'][0]
+        self.assertEqual((push['status'],push['exercise_id']),('no_recent_set',None))
+
+    def test_most_reps_is_a_record_for_bodyweight_work(self):
+        self.store.mutate([op('exercise','pull',{'name':'Pull Up'}),self.lifted('one','2026-01-02',0,8,exercise='pull'),self.lifted('two','2026-01-03',0,10,exercise='pull')])
+        record=[w for w in self.wins('two') if w['kind']=='record'][0]
+        self.assertEqual((record['metric'],record['reps']),('most_reps',10))
+
     def test_ranks_climb_league_style_through_divisions(self):
         from personal_assistant.workout.analytics import TIERS
         names=dict(TIERS)
@@ -415,6 +444,30 @@ class WorkoutApiTests(unittest.TestCase):
         self.assertEqual(result['model'],'gpt-6-sol')
         self.assertNotEqual(result['assessed_at'],'2020-01-01T00:00:00Z')
         self.assertEqual(result['photo_ids'],['front'])
+
+    def test_coach_sees_when_photos_were_taken_and_what_was_already_analysed(self):
+        from personal_assistant.workout.specialist import run_once
+        store=self.app.state.workouts;app_client=self.client;headers=self.owner
+        class Client:
+            def call(self,path,payload=None,method=None):
+                response=app_client.request(method or ('POST' if payload is not None else 'GET'),
+                    path.removeprefix('/relay'),json=payload,headers=headers)
+                response.raise_for_status();return response.json()
+        raw=b'\xff\xd8\xffsynthetic';digest=hashlib.sha256(raw).hexdigest()
+        store.put_blob(digest,'image/jpeg',raw)
+        store.mutate([op('photo','front',dict(captured_at='2026-01-01T07:00:00Z',blob_id=digest,sprint_id='one')),
+                      op('composition','first',dict(assessed_at='2026-01-02T07:00:00Z',photo_ids=['front'],low_percent=12,high_percent=17,model='m',uncertainty='Rough.',source_question='q'))])
+        store.heartbeat();store.question('photo_again','Compare again',['front'],True)
+        seen={}
+        def invoke(config,config_file,state,job,images,workspace):
+            seen.update(job['photo_context'])
+            return dict(text='The same image as before.',memory_summary='',proposals=[],assessment_json='')
+        with patch('personal_assistant.workout.specialist.download_photos',return_value=[]):
+            self.assertTrue(run_once(Client(),{},Path('synthetic-config.json'),{},invoke))
+        self.assertEqual(seen['capture_days'],['2026-01-01'])
+        self.assertEqual(seen['photos'][0]['sprint_id'],'one')
+        self.assertEqual(seen['earlier_analyses'][0]['same_images_as_this_job'],['front'])
+        self.assertEqual(seen['earlier_analyses'][0]['assessed_at'],'2026-01-02T07:00:00Z')
 
     def test_authentication_and_atomic_phone_sync(self):
         self.assertEqual(self.client.get(self.prefix+'/overview').status_code,401)

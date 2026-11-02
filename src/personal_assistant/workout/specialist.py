@@ -43,6 +43,10 @@ Images may be used ONLY when photo IDs are explicitly approved on THIS job. Do n
 session images without new explicit selection. Visual body-fat estimates are rough nonclinical ranges,
 never precise measurements: minimum range width 3 percentage points, explain uncertainty, avoid an
 estimate if photos are inadequate. Compare like pose/conditions, separate flexed/pumped from relaxed.
+job.photo_context gives each approved photo's capture time, pose, state and sprint, plus every earlier
+estimate with when it ran and which images it used. Check these against now before describing change:
+photos from the same day cannot show change over time, and analysing the same image again is a repeat,
+not a new data point. Say so plainly rather than reporting no change. Measure change between capture dates.
 Return assessment_json empty when no explicitly approved analysis was requested or evidence is inadequate.
 If provided, assessment_json must match the composition schema and cite only current approved photo IDs.
 Never claim an edit saved: the owner must approve proposals through the app. Be concise and pragmatic.
@@ -136,11 +140,31 @@ def download_photos(client,job,root):
     return images
 
 
+def photo_context(client, job):
+    """When each photo was taken and what was already concluded from it, so time is never guessed from images."""
+    if not job['photos']: return None
+    def data(identifier):
+        entity=client.call('/relay/v1/workout/entities/photo/'+identifier)
+        return {} if entity['deleted'] else entity['data']
+    photos={identifier:data(identifier) for identifier in job['photos']}
+    blobs={item.get('blob_id') for item in photos.values()}
+    earlier=[]
+    for row in client.call('/relay/v1/workout/entities?kind=composition&limit=50')['items']:
+        used=[{'id':i,**{k:v for k,v in data(i).items() if k in ('captured_at','blob_id')}} for i in row['data']['photo_ids']]
+        earlier.append({'assessed_at':row['data']['assessed_at'],'low_percent':row['data']['low_percent'],'high_percent':row['data']['high_percent'],
+                        'captured_at':sorted(u['captured_at'] for u in used if u.get('captured_at')),
+                        'same_images_as_this_job':[u['id'] for u in used if u.get('blob_id') in blobs]})
+    return {'photos':[{'id':identifier,**{k:item.get(k) for k in ('captured_at','pose','state','sprint_id','conditions')}} for identifier,item in photos.items()],
+            'capture_days':sorted({item['captured_at'][:10] for item in photos.values() if item.get('captured_at')}),
+            'earlier_analyses':sorted(earlier,key=lambda e:e['assessed_at'])}
+
+
 def run_once(client, config, config_file, state, invoke=run_model):
     client.call('/relay/v1/workout/trainer/heartbeat',{'state':'ready'},'PUT')
     client.call('/relay/v1/workout/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
     job=client.call('/relay/v1/workout/trainer/claim',{},'POST')['job']
     if not job: return False
+    job['photo_context']=photo_context(client,job)
     stop=threading.Event()
     lost=threading.Event()
     def renew():

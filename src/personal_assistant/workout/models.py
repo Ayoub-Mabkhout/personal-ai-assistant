@@ -235,6 +235,7 @@ class Photo(Model):
     blob_id: str = Field(pattern=r'^[a-f0-9]{64}$')
     pose: Literal['front', 'side', 'back', 'other'] = 'front'
     state: Literal['relaxed', 'flexed', 'pumped'] = 'relaxed'
+    sprint_id: str | None = Field(default=None, max_length=100)
     conditions: str = Field(default='', max_length=2000)
     notes: str = Field(default='', max_length=2000)
 

@@ -1,10 +1,10 @@
 """What each finished session achieved: records against earlier sessions, and rank steps."""
 from datetime import timedelta
 from statistics import mean
-from .analytics import BENCHMARKS,TIERS,day_of,e1rm,rank,session_bodyweight
+from .analytics import BENCHMARKS,TIERS,bodyweight_reps,day_of,e1rm,rank,rank_reps,rep_lift,session_bodyweight
 
 WINDOW=timedelta(days=28)
-METRICS=('estimated_max','heaviest','set_volume','pace')
+METRICS=('estimated_max','heaviest','set_volume','most_reps','pace')
 
 
 def tier_of(score): return next(name for floor,name in reversed(TIERS) if score>=floor)
@@ -21,7 +21,10 @@ def best_sets(sets, catalog):
                 pace=s['seconds']/s['distance_m']*1000
                 if pace<best.get('pace',{'value':1e9})['value']: best['pace']={'value':pace,'distance_m':s['distance_m'],'seconds':s['seconds']}
             continue
-        if s.get('kind') not in ('working','failure') or not s.get('weight_kg') or not s.get('reps'): continue
+        if s.get('kind') not in ('working','failure') or not s.get('reps'): continue
+        if not s.get('weight_kg'):
+            if s['reps']>best.get('most_reps',{'value':0})['value']: best['most_reps']={'value':s['reps'],'reps':s['reps']}
+            continue
         fact={'weight_kg':s['weight_kg'],'reps':s['reps']}
         estimate=e1rm(s)
         for metric,value in (('estimated_max',estimate),('heaviest',s['weight_kg']),('set_volume',s['weight_kg']*s['reps'])):
@@ -73,10 +76,11 @@ def session_wins(rows, limit=40, target=None):
         bodyweight=session_bodyweight(data,day,grouped['measurement'])
         for s in data['sets']:
             name=catalog.get(s['exercise_id'],{}).get('name','')
-            estimate=e1rm(s,True)
-            if estimate and bodyweight and name.casefold() in BENCHMARKS:
-                result=rank(name,estimate,bodyweight,sex)
-                if result['status']=='ranked': scores.setdefault(s['exercise_id'],[]).append((day,result['score']))
+            estimate=e1rm(s,True);lift=rep_lift(name);reps=bodyweight_reps(s,bodyweight) if lift else None
+            result={}
+            if reps: result=rank_reps(lift,reps,bodyweight,sex)
+            elif estimate and bodyweight and name.casefold() in BENCHMARKS: result=rank(name,estimate,bodyweight,sex)
+            if result.get('status')=='ranked': scores.setdefault(s['exercise_id'],[]).append((day,result['score']))
         after=standing(day)
         for eid,score in after.items():
             old=before.get(eid)
@@ -97,7 +101,7 @@ def describe(win):
     """One plain line for the coach to acknowledge."""
     if win['kind']=='overall': return f"Overall rank reached {win['tier']}"
     if win['kind']=='rank': return f"{win['name']} reached {win['tier']}"
-    label={'estimated_max':'estimated max','heaviest':'heaviest set','set_volume':'best set','pace':'fastest pace'}[win['metric']]
-    amount=(f"{round(win['value'])} s/km" if win['metric']=='pace' else
+    label={'estimated_max':'estimated max','heaviest':'heaviest set','set_volume':'best set','most_reps':'most reps','pace':'fastest pace'}[win['metric']]
+    amount=(f"{round(win['value'])} s/km" if win['metric']=='pace' else f"{win['reps']}" if win['metric']=='most_reps' else
             f"{win['weight_kg']:g} kg × {win['reps']}" if win['metric']!='estimated_max' else f"{win['value']:g} kg")
     return f"{win['name']}: {'all-time' if win['scope']=='all_time' else 'best in 28 days,'} {label} {amount}"
