@@ -1,7 +1,7 @@
 """What each finished session achieved: records against earlier sessions, and rank steps."""
 from datetime import timedelta
 from statistics import mean
-from .analytics import BENCHMARKS,TIERS,bodyweight_reps,day_of,e1rm,rank,rank_reps,rep_lift,session_bodyweight
+from .analytics import BENCHMARKS,RANK_WINDOW,TIERS,bodyweight_reps,day_of,e1rm,rank,rank_reps,rep_lift,session_bodyweight
 
 WINDOW=timedelta(days=28)
 METRICS=('estimated_max','heaviest','set_volume','most_reps','pace')
@@ -49,10 +49,10 @@ def session_wins(rows, limit=40, target=None):
     workouts=sorted(grouped['workout'],key=lambda r:(r['data']['started_at'],r['id']))
     alltime,dated,scores,out={}, {}, {}, {}
     def standing(day):
-        """The best recent rank on each lift, by the same 28-day rule as the Ranks page."""
+        """The best recent rank on each lift, by the same six-month rule as the Ranks page."""
         current={}
         for eid,history in scores.items():
-            live=[s for d,s in history if day-WINDOW<=d<=day]
+            live=[s for d,s in history if day-RANK_WINDOW<=d<=day]
             if live: current[eid]=max(live)
         return current
     for row in workouts:

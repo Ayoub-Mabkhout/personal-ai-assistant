@@ -399,6 +399,20 @@ class WorkoutTests(unittest.TestCase):
         from zoneinfo import ZoneInfo
         self.assertEqual(local_today(rows),datetime.now(ZoneInfo('Pacific/Auckland')).date())
 
+    def test_a_rank_stands_for_six_months(self):
+        self.store.mutate([op('athlete','self',dict(sex='male')),op('exercise','bench',{'name':'Bench Press (Barbell)'}),
+            op('measurement','w1',dict(measured_at='2026-01-01T08:00:00+00:00',kind='bodyweight',value=70,unit='kg')),self.lifted('hard','2026-01-02',60,6)])
+        status=lambda day:overview(self.store,day)['lift_ranks'][0]['status']
+        self.assertEqual(status(date(2026,6,30)),'ranked')
+        self.assertEqual(status(date(2026,7,10)),'no_recent_set')
+        self.assertEqual(overview(self.store,date(2026,1,3))['rank_coverage']['window_days'],183)
+
+    def test_percentile_follows_the_published_levels(self):
+        from personal_assistant.workout.analytics import percentile
+        self.assertEqual([percentile(s) for s in (0,200,400,600,800,1000)],[0,5,20,50,80,95])
+        self.assertEqual(percentile(500),35)
+        self.assertEqual(rank('Bench Press (Barbell)',70,70,'male')['percentile'],20)
+
     def test_ranks_climb_league_style_through_divisions(self):
         from personal_assistant.workout.analytics import TIERS
         names=dict(TIERS)

@@ -5,13 +5,17 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import mean
 from zoneinfo import ZoneInfo
 
-# Small factual ratio tables, verified 2026-11-01. These are not percentile curves.
+# Small factual ratio tables, verified 2026-11-01.
 BENCHMARKS = {
     'bench press (barbell)': ('bench-press', [.50,1.,1.25,1.50,2.], [.30,.50,.75,1.10,1.45]),
     'squat (barbell)': ('squat', [.75,1.25,1.75,2.25,2.75], [.50,.75,1.25,1.75,2.25]),
     'deadlift (barbell)': ('deadlift', [1.,1.50,2.,2.50,3.25], [.75,1.,1.50,2.,2.50]),
     'overhead press (barbell)': ('shoulder-press', [.35,.55,.80,1.05,1.35], [.20,.35,.50,.70,.95]),
 }
+# A rank stands for six months: strength doesn't fade that fast, and a month away shouldn't erase it.
+RANK_WINDOW = timedelta(days=183)
+# Strength Level defines its five levels by the share of its community each one beats.
+PERCENTILES = [(0,0),(200,5),(400,20),(600,50),(800,80),(1000,95)]
 # Strength Level rep standards at its 70 kg row; a level under one rep is kept just below the next.
 REP_BENCHMARKS = {'pull up':('pull-ups',[1,7,14,22,31],[.5,1,5,11,18]),'push up':('push-ups',[5,20,40,64,89],[1,7,17,30,43])}
 REP_NAMES = {'pullup':'pull up','pullups':'pull up','pullupweighted':'pull up','weightedpullup':'pull up','pushup':'push up','pushups':'push up'}
@@ -20,7 +24,7 @@ RANKS = [(0,'Iron'),(200,'Bronze'),(300,'Silver'),(400,'Gold'),(500,'Platinum'),
 TIERS = [(low+(high-low)*step//4,f'{name} {4-step}') for (low,name),(high,_) in zip(RANKS,RANKS[1:]) for step in range(4)]+[(800,'Master'),(900,'Grandmaster'),(950,'Challenger')]
 METHOD = {'version':'strength-ratios-2026-11-02-v2','cohort':'self-selected Strength Level users',
           'method':'Epley for 2–10 reps; tested single unchanged. Linear score interpolation through published bodyweight-ratio levels at 200/400/600/800/1000.',
-          'limitations':'App-specific score, not Liftoff score or a demographic percentile. No age/height adjustment; self-reported lifts; approximate 1RM. Four named barbell lifts plus pull-ups and push-ups are supported; added load on those converts to estimated bodyweight reps.'}
+          'limitations':'App-specific score, not Liftoff score. Percentiles are approximate, interpolated between Strength Level\'s five published levels, and compare you with its self-selected community rather than the general population. No age/height adjustment; self-reported lifts; approximate 1RM. Four named barbell lifts plus pull-ups and push-ups are supported; added load on those converts to estimated bodyweight reps.'}
 
 
 def hard_set(item):
@@ -71,6 +75,13 @@ def rank_reps(lift, reps, bodyweight, sex):
             'bodyweight_kg':bodyweight,'sex':sex,'source_url':f'https://strengthlevel.com/strength-standards/{slug}/kg',**METHOD}
 
 
+def percentile(score):
+    """Roughly what share of the Strength Level community a score beats, between its published levels."""
+    for (a,x),(b,y) in zip(PERCENTILES,PERCENTILES[1:]):
+        if score<=b: return round(x+(score-a)/(b-a)*(y-x))
+    return PERCENTILES[-1][1]
+
+
 def climb(value, levels):
     """Place a value on the published levels, and find what the next division takes."""
     anchors = [(0.,0),*zip(levels,[200,400,600,800,1000])]
@@ -88,7 +99,7 @@ def climb(value, levels):
             if a<=following[0]<=b:
                 target = x+(y-x)*(following[0]-a)/(b-a);break
     return ({'status':'ranked','score':round(score),'tier':tier,'floor':floor,'next_tier':following[1] if following else None,
-             'progress':round((score-floor)/((following[0]-floor) if following else (1000-floor)),3)},target)
+             'percentile':percentile(score),'progress':round((score-floor)/((following[0]-floor) if following else (1000-floor)),3)},target)
 
 
 def day_of(workout):
@@ -200,7 +211,7 @@ def overview(store, today=None):
                 value = {'workout_id':w['id'],'date':day.isoformat(),'set_id':item['id'],'weight_kg':item.get('weight_kg'),
                          'reps':item['reps'],'estimated_reps':round(reps,1)}
                 if lift not in rep_best or reps>rep_best[lift]['estimated_reps']: rep_best[lift]=value
-                if today-timedelta(days=28)<=day:
+                if today-RANK_WINDOW<=day:
                     if lift not in rep_recent or reps>rep_recent[lift]['estimated_reps']: rep_recent[lift]=value
                     if bodyweight_reps(item,bodyweight):
                         rep_hard.add(lift)
@@ -213,7 +224,7 @@ def overview(store, today=None):
                          'weight_kg':item['weight_kg'],'reps':item['reps'],'estimated_1rm_kg':round(estimated,2),
                          'effort_confirmed':e1rm(item,True) is not None,'rir_assumed':item.get('rir') is None and item.get('rpe') is None}
                 if eid not in records or estimated>records[eid]['estimated_1rm_kg']: records[eid]=value
-                if today-timedelta(days=28)<=day:
+                if today-RANK_WINDOW<=day:
                     if eid not in recent or estimated>recent[eid]['estimated_1rm_kg']: recent[eid]=value
                     if e1rm(item,True): hard_recent.add(eid)
                     if e1rm(item,True) and bodyweight:
@@ -304,7 +315,7 @@ def overview(store, today=None):
         'ranks':list(candidates.values()),'ranking_method':METHOD,
         'lift_ranks':lift_ranks,'tiers':[{'floor':floor,'name':name} for floor,name in TIERS],
         'aggregate_score':round(mean(v['score'] for v in candidates.values())) if candidates else None,
-        'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS)+len(REP_BENCHMARKS),'window_days':28},
+        'rank_coverage':{'ranked_lifts':len(candidates),'supported_lifts':len(BENCHMARKS)+len(REP_BENCHMARKS),'window_days':RANK_WINDOW.days},
         'muscle_scores':{k:round(mean(v)) for k,v in muscle_ranks.items()},'achievements':achievements,
         'cardio':cardio,'cardio_personal_records':list(cardio_records.values()),
         'bodyweight':weight_trend(measurements,today),'sprints':sprints,'trainer':store.status(),
