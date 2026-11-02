@@ -11,9 +11,10 @@ BENCHMARKS = {
     'deadlift (barbell)': ('deadlift', [1.,1.50,2.,2.50,3.25], [.75,1.,1.50,2.,2.50]),
     'overhead press (barbell)': ('shoulder-press', [.35,.55,.80,1.05,1.35], [.20,.35,.50,.70,.95]),
 }
-TIERS = [(0,'Wood'),(200,'Bronze'),(300,'Silver'),(400,'Gold'),(500,'Platinum'),
-         (600,'Diamond'),(700,'Champion'),(800,'Titan'),(900,'Olympian')]
-METHOD = {'version':'strength-ratios-2026-11-01-v1','cohort':'self-selected Strength Level users',
+# A League-style ladder: seven ranks of four divisions, climbing from 4 to 1, then three apex ranks.
+RANKS = [(0,'Iron'),(200,'Bronze'),(300,'Silver'),(400,'Gold'),(500,'Platinum'),(600,'Emerald'),(700,'Diamond'),(800,'Master')]
+TIERS = [(low+(high-low)*step//4,f'{name} {4-step}') for (low,name),(high,_) in zip(RANKS,RANKS[1:]) for step in range(4)]+[(800,'Master'),(900,'Grandmaster'),(950,'Challenger')]
+METHOD = {'version':'strength-ratios-2026-11-02-v2','cohort':'self-selected Strength Level users',
           'method':'Epley for 2–10 reps; tested single unchanged. Linear score interpolation through published bodyweight-ratio levels at 200/400/600/800/1000.',
           'limitations':'App-specific score, not Liftoff score or a demographic percentile. No age/height adjustment; self-reported lifts; approximate 1RM. Only four named barbell lifts supported.'}
 
@@ -22,8 +23,9 @@ def e1rm(item, hard_only=False):
     if not item.get('completed') or item.get('kind') not in ('working','failure'): return None
     weight, reps = item.get('weight_kg'), item.get('reps')
     if not weight or not reps or not 1<=reps<=10: return None
-    hard = (item.get('kind')=='failure' or (item.get('rir') is not None and item['rir']<=2)
-            or (item.get('rpe') is not None and item['rpe']>=8) or (item.get('rir') is None and item.get('rpe') is None))
+    # An entered RIR outranks any imported RPE; neither present assumes the set was hard.
+    hard = (item.get('kind')=='failure' or (item['rir']<=2 if item.get('rir') is not None
+            else item['rpe']>=8 if item.get('rpe') is not None else True))
     if hard_only and not hard: return None
     return weight if reps==1 else weight*(1+reps/30)
 

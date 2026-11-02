@@ -12,14 +12,18 @@ import java.util.*;
 /** Drawn pieces of Train: tier crests, the ridge of camps, the muscle map, simple line charts and the shared full-height sheet. */
 final class WorkoutViews {
     private WorkoutViews(){}
-    static final String[] TIERS={"Wood","Bronze","Silver","Gold","Platinum","Diamond","Champion","Titan","Olympian"};
-    static final int[] FLOORS={0,200,300,400,500,600,700,800,900};
-    private static final int[][] COLORS={{0xFFB98552,0xFF6B4326,0xFFE0B98C},{0xFFD98A4E,0xFF7E4318,0xFFF6C196},{0xFFC9D3E6,0xFF6F7C96,0xFFFFFFFF},{0xFFFFC233,0xFFB96D08,0xFFFFEC9C},{0xFF7DE3FF,0xFF2A7FB8,0xFFE2FAFF},{0xFF5B9BFF,0xFF2A3FC4,0xFFBFE0FF},{0xFFFF5FA2,0xFFA81A5E,0xFFFFC4DE},{0xFFB66DFF,0xFF5A1FB8,0xFFE7CCFF},{0xFFFFE27A,0xFFE0562E,0xFFFFFFFF}};
-    static int tier(String name){for(int i=0;i<TIERS.length;i++)if(TIERS[i].equalsIgnoreCase(name))return i;return 0;}
+    static final String[] TIERS={"Iron","Bronze","Silver","Gold","Platinum","Emerald","Diamond","Master","Grandmaster","Challenger"};
+    static final int[] FLOORS={0,200,300,400,500,600,700,800,900,950};
+    private static final int FIRST_APEX=7;
+    private static final int[][] COLORS={{0xFFA6ABB4,0xFF565B64,0xFFDADDE2},{0xFFD98A4E,0xFF7E4318,0xFFF6C196},{0xFFC9D3E6,0xFF6F7C96,0xFFFFFFFF},{0xFFFFC233,0xFFB96D08,0xFFFFEC9C},{0xFF7DE3FF,0xFF2A7FB8,0xFFE2FAFF},{0xFF3FD58F,0xFF137A52,0xFFC4F7DE},{0xFF5B9BFF,0xFF2A3FC4,0xFFBFE0FF},{0xFFB66DFF,0xFF5A1FB8,0xFFE7CCFF},{0xFFFF5F7E,0xFFA81A3E,0xFFFFC4D2},{0xFFFFE27A,0xFFE0562E,0xFFFFFFFF}};
+    /** The rank in a name such as Gold 2. */
+    static int tier(String name){for(int i=0;i<TIERS.length;i++)if(name.equalsIgnoreCase(TIERS[i])||name.toLowerCase(Locale.ROOT).startsWith(TIERS[i].toLowerCase(Locale.ROOT)+" "))return i;return 0;}
+    /** Rank and division, which climb from 4 to 1; the apex ranks have no divisions. */
+    static String label(int score){int t=tierOf(score);if(t>=FIRST_APEX)return TIERS[t];return TIERS[t]+" "+(4-(score-FLOORS[t])*4/(FLOORS[t+1]-FLOORS[t]));}
     static int tierOf(int score){int t=0;for(int i=0;i<FLOORS.length;i++)if(score>=FLOORS[i])t=i;return t;}
     static int color(int tier,boolean dark){return dark||tier!=2?COLORS[tier][tier==3&&!dark?1:0]:COLORS[tier][1];}
 
-    /** A nine-step heraldic crest on a 120×134 grid: a shield gains a crown, then wings, a star and a second pair of wings. */
+    /** A ten-step heraldic crest on a 120×134 grid: a shield gains a crown, then wings, a star and a second pair of wings. */
     static final class Crest extends View {
         final int[] c;final boolean locked;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final int tier;
         Crest(Context context,int tier,boolean locked){super(context);this.tier=tier;this.locked=locked;c=COLORS[tier];setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
@@ -33,15 +37,15 @@ final class WorkoutViews {
             if(tier>=4)poly(k,c[2],60,40,65,54,80,55,68,64,72,79,60,70,48,79,52,64,40,55,55,54);else poly(k,c[2],60,44,74,60,60,76,46,60);k.restore();}
     }
 
-    /** The nine camps up a dusk ridge; camps above the current rank are dimmed. */
+    /** The ten camps up a dusk ridge; camps above the current rank are dimmed. */
     static final class Ridge extends View {
-        static final float[][] CAMPS={{.08f,.84f},{.20f,.70f},{.30f,.78f},{.43f,.58f},{.53f,.64f},{.63f,.42f},{.71f,.48f},{.81f,.28f},{.91f,.14f}};
-        final AppUi ui;final int current;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Bitmap[] marks=new Bitmap[9];
+        static final float[][] CAMPS={{.06f,.86f},{.15f,.74f},{.24f,.76f},{.34f,.66f},{.43f,.58f},{.53f,.64f},{.63f,.42f},{.71f,.48f},{.81f,.28f},{.91f,.14f}};
+        final AppUi ui;final int current;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Bitmap[] marks=new Bitmap[CAMPS.length];
         Ridge(AppUi ui,int current){super(ui.context);this.ui=ui;this.current=current;}
         private void hill(Canvas c,int color,float... v){Path a=new Path();a.moveTo(0,getHeight());for(int i=0;i<v.length;i+=2)a.lineTo(v[i]*getWidth(),v[i+1]*getHeight());a.lineTo(getWidth(),getHeight());a.close();p.setColor(color);p.setShader(null);c.drawPath(a,p);}
         @Override protected void onDraw(Canvas c){int w=getWidth(),h=getHeight();p.setShader(new LinearGradient(0,0,0,h,new int[]{0xFF1A1248,0xFF5A2A9A,0xFFC95F8E},new float[]{0,.65f,1},Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,p);p.setShader(null);
             hill(c,0xFF2A1460,0,.9f,.2f,.68f,.3f,.76f,.43f,.54f,.53f,.62f,.63f,.38f,.71f,.46f,.91f,.08f,1,.24f);hill(c,ui.dark?ui.background:0xFF1D1729,0,.98f,.3f,.88f,.6f,.94f,1,.78f);
-            for(int i=0;i<9;i++){boolean here=i==current;int cw=ui.dp(here?36:20),ch=ui.dp(here?40:23);if(marks[i]==null){Crest crest=new Crest(getContext(),i,i>current);crest.layout(0,0,cw,ch);Bitmap b=Bitmap.createBitmap(cw,ch,Bitmap.Config.ARGB_8888);crest.draw(new Canvas(b));marks[i]=b;}c.drawBitmap(marks[i],CAMPS[i][0]*w-cw/2f,CAMPS[i][1]*h-ch/2f,null);}}
+            for(int i=0;i<CAMPS.length;i++){boolean here=i==current;int cw=ui.dp(here?36:20),ch=ui.dp(here?40:23);if(marks[i]==null){Crest crest=new Crest(getContext(),i,i>current);crest.layout(0,0,cw,ch);Bitmap b=Bitmap.createBitmap(cw,ch,Bitmap.Config.ARGB_8888);crest.draw(new Canvas(b));marks[i]=b;}c.drawBitmap(marks[i],CAMPS[i][0]*w-cw/2f,CAMPS[i][1]*h-ch/2f,null);}}
     }
 
     /** A geometric figure whose regions take the tier colour of each trained muscle group. */

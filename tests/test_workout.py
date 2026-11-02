@@ -326,6 +326,22 @@ class WorkoutTests(unittest.TestCase):
         text=[r['question'] for r in rows if r['id']=='brief_workout_two'][0]
         self.assertIn('Bench Press (Barbell)',text);self.assertIn('estimated max',text)
 
+    def test_entered_rir_outranks_imported_rpe_for_a_hard_set(self):
+        easy=dict(completed=True,kind='working',weight_kg=60,reps=5,rir=5,rpe=9)
+        self.assertIsNone(e1rm(easy,True))
+        self.assertIsNotNone(e1rm(dict(easy,rir=None),True))
+        self.assertIsNotNone(e1rm(dict(easy,rir=2,rpe=4),True))
+
+    def test_ranks_climb_league_style_through_divisions(self):
+        from personal_assistant.workout.analytics import TIERS
+        names=dict(TIERS)
+        self.assertEqual((names[0],names[150],names[200],names[300],names[375],names[400]),('Iron 4','Iron 1','Bronze 4','Silver 4','Silver 1','Gold 4'))
+        self.assertEqual((names[775],names[800],names[900],names[950]),('Diamond 1','Master','Grandmaster','Challenger'))
+        self.assertEqual(len(TIERS),31)
+        result=rank('Bench Press (Barbell)',60,70,'male')
+        self.assertRegex(result['tier'],r'^[A-Z][a-z]+ [1-4]$')
+        floors=[floor for floor,_ in TIERS];self.assertEqual(floors,sorted(set(floors)))
+
     def test_automatic_brief_needs_owner_opt_in_and_deduplicates(self):
         from datetime import datetime,timezone
         self.now=datetime(2026,1,1,tzinfo=timezone.utc).timestamp()
