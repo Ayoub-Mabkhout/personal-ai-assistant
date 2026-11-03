@@ -71,6 +71,7 @@ async function start(account){
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')screen.refresh()});
   setInterval(()=>{if(document.visibilityState==='visible')store.sync()},60000);
   if(params.has('reminder')){const id=params.get('reminder');clean('reminder');screen.reminder(id)}
-  navigator.serviceWorker?.addEventListener('message',e=>{if(e.data?.reminder)screen.reminder(e.data.reminder)});
+  if(params.has('friend')){const id=params.get('friend');clean('friend');screen.friend(id,'ranks')}
+  navigator.serviceWorker?.addEventListener('message',e=>{if(e.data?.reminder)screen.reminder(e.data.reminder);if(e.data?.friend)screen.friend(e.data.friend,'ranks')});
 }
 boot();

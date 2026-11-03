@@ -35,7 +35,7 @@ export function render(){
   parts.push(el('div',{class:'tiles'},sprintTile(),rankTile(o),weightTile(o),runTile(o)));
   parts.push(el('nav',{class:'doors','aria-label':'Train sections'},
     door('history','History',HUE.amber,()=>history.open()),door('recipe','Templates',HUE.teal,()=>plan.templates()),door('barbell','Exercises',HUE.violet,()=>plan.pick(id=>history.exercise(id),{title:'Exercises'})),
-    door('body','Body',HUE.pink,()=>body.open()),door('star','Standings',HUE.orange,standings),door('settings','Profile',HUE.blue,profile)));
+    door('body','Body',HUE.pink,()=>body.open()),door('star','Friends',HUE.orange,standings),door('settings','Profile',HUE.blue,profile)));
   let state=loading?'Updating…':problem;if(store.waiting()>0&&!loading&&!problem)state=plural(store.waiting(),'change')+' waiting to sync';
   if(state)parts.push(el('p',{class:'sync-state'+(problem?' warn':''),text:state,attrs:{role:'status'}}));
   root.replaceChildren(...parts.filter(Boolean));
@@ -204,10 +204,14 @@ export function profile(){
 }
 function toggle(title,note,on){const input=el('input',{type:'checkbox',class:'switch',checked:on,attrs:{role:'switch'}});
   return {el:el('label',{class:'toggle'},el('span',{class:'grow'},el('strong',{text:title}),note?el('small',{text:note}):null),input),on:()=>input.checked,input}}
+/** What friends can see, and whether their rank-ups notify you. Each switch saves on its own. */
 function sharing(){
-  const t=toggle('Share my progress','Others on the standings can see your sprints, workout count and lift and volume trends. Notes, photos and coach chats stay private.',!!me?.share_progress);
-  t.input.onchange=async()=>{try{me=await api('me',{method:'PATCH',body:{share_progress:t.input.checked}});toast(me.share_progress?'Sharing your progress':'Progress is private')}catch{t.input.checked=!t.input.checked;toast('Connect to change this.')}};
-  return card(el('h3',{class:'card-title',text:'Standings'}),t.el);
+  const c=card(el('h3',{class:'card-title',text:'Friends'}));
+  const item=(key,title,note,done)=>{const t=toggle(title,note,!!me?.[key]);t.input.onchange=async()=>{try{me={...me,...await api('me',{method:'PATCH',body:{[key]:t.input.checked}})};done?.(t.input.checked)}catch{t.input.checked=!t.input.checked;toast('Connect to change this.')}};return t.el};
+  c.append(item('share_progress','Share my progress','Friends can open your sprint, workout count, ranks and lift and volume trends. Notes, photos and coach chats stay private.',on=>toast(on?'Sharing your progress':'Progress is private')),
+    item('share_schedule','Share my workout schedule','Friends see your planned sessions and whether you made them. Needs progress sharing.'),
+    item('rank_alerts','Competitive notifications','A notification when a friend ranks up. Off by default.',on=>{if(on)enablePush(el('p'))}));
+  return c;
 }
 /** Private reminders before scheduled sessions: push on this device, an opt-in blunt tone, and an optional photo of your own. */
 function reminders(){
@@ -260,24 +264,58 @@ export async function reminder(id){
   catch{p.body.replaceChildren(el('p',{class:'hint',text:"Couldn't load this reminder."}))}
 }
 
-/** One shared board: everyone's lifting and running rank. Progress opens only for people who share it. */
+/** Friends: everyone in Train with their lifting and running rank and current sprint. A friend opens only when they share. */
 export async function standings(){
-  const p=page('Standings');const list=el('div',{class:'stack'},el('p',{class:'hint',text:'Loading…'}));p.body.append(list);
+  const p=page('Friends');const list=el('div',{class:'stack'},el('p',{class:'hint',text:'Loading…'}));p.body.append(list);
   try{const {items}=await api('standings');const order=[...items].sort((a,b)=>(b.lifting_score??-1)-(a.lifting_score??-1));
     list.replaceChildren(...order.map((m,i)=>{const mine=m.id===me?.id,lt=tierOf(m.lifting_score||0),rt=tierOf(m.running_score||0);
       const lift=el('span',{class:'stand-rank'},crest(lt,m.lifting_score==null,30),el('small',{text:m.lifting_score==null?'Unranked':tierLabel(m.lifting_score)}));
       const run=el('span',{class:'stand-rank'},crest(rt,m.running_score==null,30),el('small',{text:m.running_score==null?'Unranked':tierLabel(m.running_score)}));
-      const open=mine||m.share_progress;const b=el(open?'button':'div',{class:'standing'+(mine?' mine':''),...(open?{type:'button'}:{})},el('span',{class:'place',text:String(i+1)}),
-        el('span',{class:'grow'},el('strong',{text:m.name+(mine?' (you)':'')}),el('small',{text:open?'View progress':'Progress private'})),lift,run);
-      if(open)b.onclick=()=>shared(m.id,m.name);return b}),el('p',{class:'hint small',text:'Lifting, then running. Turn on sharing in Profile to show your progress here.'}))}
-  catch{list.replaceChildren(el('p',{class:'hint',text:'Connect to see the standings.'}))}
+      const s=m.current_sprint,open=mine||m.share_progress;
+      const note=s?s.name+' · '+(s.completed??0)+(s.target_sessions?'/'+s.target_sessions:''):open?'No sprint running':'Keeps progress private';
+      const words=el('span',{class:'grow'},el('strong',{text:m.name+(mine?' (you)':'')}),el('small',{text:note}));
+      if(s?.target_sessions)words.append(plan.progressBar((s.completed||0)/s.target_sessions));
+      const b=el(open?'button':'div',{class:'standing'+(mine?' mine':''),...(open?{type:'button'}:{})},el('span',{class:'place',text:String(i+1)}),words,lift,run);
+      if(open)b.onclick=()=>friend(m.id,'sprint',m.name);return b}),el('p',{class:'hint small',text:'Ranked by lifting. Turn on sharing in Profile so friends can open your sprint and ranks.'}))}
+  catch{list.replaceChildren(el('p',{class:'hint',text:'Connect to see your friends.'}))}
 }
-async function shared(id,name){
-  const p=page(name);try{const d=await api('profiles/'+encodeURIComponent(id));
-    p.body.append(el('div',{class:'stats'},stat(String(d.completed_workouts),'workouts'),stat(String((d.sprints||[]).length),'sprints')));
-    const vol=d.progress?.volume||[];if(vol.length>1){const c=chart({height:170,gap:21,format:v=>Math.round(v).toLocaleString(),label:'Volume per session'});c.line(vol.map(x=>[epochDay(x.date),units.loadValue(x.value)]),'var(--aurora-3)',2,'Volume');p.body.append(card(el('h3',{class:'card-title',text:'Volume per session'}),c.framed()))}
-    const hues=[HUE.pink,HUE.blue,HUE.green,HUE.amber,HUE.violet,HUE.teal];
-    (d.progress?.lifts||[]).filter(l=>l.e1rm_series.length>1).forEach((l,i)=>{const c=chart({height:160,gap:45,format:v=>num(v)+' '+units.loadLabel(),label:l.name+' estimated max'});c.line(l.e1rm_series.map(x=>[epochDay(x.date),units.loadValue(x.value)]),hues[i%hues.length],2,'Estimated');p.body.append(card(el('h3',{class:'card-title',text:l.name}),c.framed()))});
-    if(d.sprints?.length)p.body.append(label('Sprints'),...d.sprints.slice().reverse().map(s=>card(el('strong',{text:s.name}),el('small',{class:'hint',text:s.phase+' · '+s.start+' to '+s.end}),pair('Workouts',s.completed+(s.target_sessions?' of '+s.target_sessions:'')))));
-  }catch(e){p.body.append(el('p',{class:'hint',text:e instanceof ApiError&&e.status===404?'This athlete keeps their progress private.':'Connect to see this.'}))}
+const STATUS={completed:['Done','var(--success)'],missed:['Missed','var(--danger)'],skipped:['Skipped','var(--muted)'],active:['Training now','var(--accent)'],upcoming:['Upcoming','var(--muted)']};
+/** One friend, in two tabs: their sprint and schedule, and their ranks. A rank-up notification opens Ranks directly. */
+export async function friend(id,tab='sprint',name){
+  const p=page(name||'Friend');const tabs=el('div',{class:'segmented',attrs:{role:'tablist'}}),body=el('div',{class:'stack'},el('p',{class:'hint',text:'Loading…'}));p.body.append(tabs,body);
+  let d;try{d=await api('profiles/'+encodeURIComponent(id))}
+  catch(e){tabs.remove();body.replaceChildren(el('p',{class:'hint',text:e instanceof ApiError&&e.status===404?'This friend keeps their progress private.':'Connect to see this.'}));return}
+  p.heading.textContent=d.name;
+  const show=key=>{tab=key;tabs.replaceChildren(...[['sprint','Sprint'],['ranks','Ranks']].map(([k,t])=>{const b=el('button',{type:'button',class:'seg'+(k===tab?' on':''),text:t,attrs:{role:'tab','aria-selected':String(k===tab)}});b.onclick=()=>show(k);return b}));
+    body.replaceChildren(...(tab==='ranks'?friendRanks(d):friendSprint(d)))};
+  show(tab);
+}
+function friendSprint(d){
+  const out=[el('div',{class:'stats'},stat(String(d.completed_workouts??0),'workouts'),stat(String((d.sprints||[]).length),'sprints'))],s=d.current_sprint;
+  if(s)out.push(card(el('p',{class:'label',text:'Current sprint'}),el('h3',{class:'card-title big',text:s.name}),el('p',{class:'strong-line',text:(s.completed??0)+(s.target_sessions?' of '+s.target_sessions:'')+' workouts'}),s.target_sessions?plan.progressBar((s.completed||0)/s.target_sessions):null));
+  else out.push(el('p',{class:'hint',text:'No sprint running.'}));
+  const sched=(d.schedule||[]).slice().sort((a,b)=>String(a.starts_at||a.date).localeCompare(String(b.starts_at||b.date)));
+  if(sched.length){const c=card(el('p',{class:'label',text:'Schedule'}));for(const x of sched){const [word,color]=STATUS[x.status]||[x.status,'var(--muted)'];const at=x.starts_at?new Date(x.starts_at):new Date(x.date+'T12:00:00');
+      const tag=el('strong',{class:'sched-status',text:word});tag.style.color=color;
+      c.append(el('div',{class:'sched-row'},el('span',{class:'grow'},el('strong',{text:x.name||'Session'}),el('small',{text:at.toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'})+(x.starts_at?' · '+at.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'')})),tag))}
+    out.push(c)}
+  const vol=d.progress?.volume||[];if(vol.length>1){const c=chart({height:170,gap:21,format:v=>Math.round(v).toLocaleString(),label:'Volume per session'});c.line(vol.map(x=>[epochDay(x.date),units.loadValue(x.value)]),'var(--aurora-3)',2,'Volume');out.push(card(el('h3',{class:'card-title',text:'Volume per session'}),c.framed()))}
+  const past=(d.sprints||[]).slice().reverse().filter(x=>x.status!=='active');
+  if(past.length)out.push(label('Past sprints'),...past.map(x=>card(el('strong',{text:x.name}),el('small',{class:'hint',text:x.phase+' · '+x.start+' to '+x.end}),pair('Workouts',x.completed+(x.target_sessions?' of '+x.target_sessions:'')))));
+  return out;
+}
+function friendRanks(d){
+  const r=d.ranks||{},score=r.lifting_score,ranked=score!=null,out=[];
+  out.push(el('div',{class:'ridge-card'},ridge(ranked?tierOf(score):-1),el('div',{class:'ridge-label'},el('small',{text:'Overall rank'}),el('strong',{text:ranked?tierLabel(score):'Unranked'}))));
+  const run=r.running,runTier=run?.tier||(run?.score!=null?tierLabel(run.score):null);
+  if(run){const t=runTier?tierIndex(runTier):0,n=el('strong',{class:'rank-name',text:runTier||'Unranked'});if(runTier)n.style.color=tierColor(t);
+    out.push(el('div',{class:'card run-rank'},crest(t,!runTier,48),el('div',{class:'grow'},el('small',{class:'label',text:'Running'}),n,run.percentile!=null?el('small',{text:'Faster than about '+run.percentile+'% of runners'}):null)))}
+  const lifts=card(el('p',{class:'label',text:'Main lifts'}));
+  for(const l of r.lifts||[]){const tier=l.tier||(l.score!=null?tierLabel(l.score):null),t=tier?tierIndex(tier):2,name=(l.exercise_name||l.name||'').replace(/ \(barbell\)/i,'');
+    const tag=tier?el('strong',{class:'lift-tier',text:tier}):null;if(tag)tag.style.color=tierColor(t);
+    lifts.append(el('div',{class:'lift-row'},crest(t,!tier,36),el('span',{class:'grow'},el('strong',{text:name}),l.percentile!=null?el('small',{text:'Stronger than about '+l.percentile+'% of lifters'}):tier?null:el('small',{text:'Not ranked yet'})),tag))}
+  if(!(r.lifts||[]).length)lifts.append(el('p',{class:'hint',text:'No ranked lifts yet.'}));out.push(lifts);
+  const hues=[HUE.pink,HUE.blue,HUE.green,HUE.amber,HUE.violet,HUE.teal];
+  (d.progress?.lifts||[]).filter(l=>l.e1rm_series.length>1).forEach((l,i)=>{const c=chart({height:160,gap:45,format:v=>num(v)+' '+units.loadLabel(),label:l.name+' estimated max'});c.line(l.e1rm_series.map(x=>[epochDay(x.date),units.loadValue(x.value)]),hues[i%hues.length],2,'Estimated');out.push(card(el('h3',{class:'card-title',text:l.name}),c.framed()))});
+  return out;
 }

@@ -1,5 +1,5 @@
 // Static app shell only. API responses, photos and anything under /train/api never enter this cache.
-const CACHE='train-static-v1',ROOT=new URL('./',self.location).pathname;
+const CACHE='train-static-v2',ROOT=new URL('./',self.location).pathname;
 const FILES=['','index.html','app.js','style.css','onest.ttf','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png',
   'js/core.js','js/glyphs.js','js/api.js','js/store.js','js/units.js','js/art.js','js/chart.js','js/calendar.js','js/nav.js','js/sprints.js',
   'js/settings.js','js/setup.js','js/live.js','js/history.js','js/plan.js','js/coach.js','js/body.js','js/screen.js'];
@@ -22,10 +22,10 @@ self.addEventListener('push',event=>{
 self.addEventListener('notificationclick',event=>{
   event.notification.close();
   const target=new URL(event.notification.data?.url||ROOT,self.location.origin);if(target.origin!==self.location.origin||!target.pathname.startsWith(ROOT))target.href=new URL(ROOT,self.location.origin).href;
-  const reminder=target.searchParams.get('reminder');
+  const reminder=target.searchParams.get('reminder'),friend=target.searchParams.get('friend');
   event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{
     const open=list.find(c=>new URL(c.url).pathname.startsWith(ROOT));
-    if(open){if(reminder)open.postMessage({reminder});return open.focus()}
+    if(open){if(reminder)open.postMessage({reminder});if(friend)open.postMessage({friend});return open.focus()}
     return self.clients.openWindow(target.href);
   }));
 });
