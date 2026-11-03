@@ -45,11 +45,11 @@ workout API is available at `/train/api` through a Secure, HttpOnly browser cook
 clients should keep their draft and retry outbox in IndexedDB keyed by the authenticated
 `/me` ID. Keep API responses out of the service worker cache.
 
-Generate a one-use link with `scripts/workout.py invite`. Use `invite --user owner` to
-connect the original Companion workout history or `invite --user ID` to reconnect an
-existing member on another device. `scripts/workout.py users` lists enrolled IDs. Open the
-link in the phone's browser, enter a name and add Iron League to the Home Screen. Treat each invite
-link as a credential. It expires after seven days or on redemption.
+Open `/train/` and enter a display name to create a profile. The browser keeps its
+session in a cookie. To connect existing workout history on another browser, use
+`scripts/workout.py invite --user owner` for Companion history or `invite --user ID`
+for another profile. `scripts/workout.py users` lists profile IDs. Keep profile
+links private. Each expires after seven days or on redemption.
 
 New members enter their age and body stats after choosing a name, choose whether to
 enable Diss mode and Scheduled sprints, then open the coach to plan a first sprint.

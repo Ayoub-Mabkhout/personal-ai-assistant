@@ -4,7 +4,7 @@ The [Iron League repository](https://github.com/Ayoub-Mabkhout/iron-league) cont
 
 ## Structure
 
-- `app.js` boots: `GET me`, the join screen for an invite link, first-run setup when `setup_complete` is false, then the
+- `app.js` boots: `GET me`, the display-name form for a new browser, first-run setup when `setup_complete` is false, then the
   dashboard over the member's on-device store.
 - `js/store.js` ports the Android `WorkoutStore`: revisioned entities and an ordered outbox with stable mutation IDs in
   IndexedDB, keyed by the member ID. Drafts of the live session and of a past-workout correction live there too.

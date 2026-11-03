@@ -36,14 +36,17 @@ class TrainWebTest(unittest.TestCase):
         return client
 
     def enroll(self, user_id=None):
-        invite = self.admin.post('/v1/train/invites', headers=ADMIN, json={'user_id': user_id}).json()['invite']
+        body = {'name': 'Same name'}
+        if user_id:
+            body['invite'] = self.admin.post('/v1/train/invites', headers=ADMIN, json={'user_id': user_id}).json()['invite']
         client = self.client()
-        joined = client.post(TRAIN+'/join', json={'name': 'Same name', 'invite': invite})
+        joined = client.post(TRAIN+'/join', json=body)
         self.assertEqual(joined.status_code, 200, joined.text)
         self.assertIn('HttpOnly', joined.headers['set-cookie'])
         self.assertIn('Secure', joined.headers['set-cookie'])
         self.assertEqual(joined.headers['cache-control'], 'private, no-store')
-        self.assertEqual(self.admin.post(TRAIN+'/join', json={'name': 'Other', 'invite': invite}).status_code, 403)
+        if user_id:
+            self.assertEqual(self.admin.post(TRAIN+'/join', json={'name': 'Other', 'invite': body['invite']}).status_code, 403)
         return client, joined.json()['id']
 
     def test_same_ids_keep_mutations_history_media_and_coaches_separate(self):

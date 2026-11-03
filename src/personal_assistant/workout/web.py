@@ -1,4 +1,4 @@
-"""Invite-only Iron League accounts and a limited projection for other athletes."""
+"""Iron League browser accounts and a limited projection for other athletes."""
 
 import hashlib
 import secrets
@@ -77,19 +77,22 @@ class Accounts:
                        (digest(token), user_id, self.clock() + 7 * 86400))
         return {'invite': token}
 
-    def join(self, name, invite):
+    def join(self, name, invite=None):
         name = ' '.join(name.split())
         if not name or not all(char.isprintable() for char in name):
             raise ValueError('Enter a display name')
         session = secrets.token_urlsafe(32)
         with self.workouts.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            invite_hash = digest(invite)
-            row = db.execute('SELECT * FROM train_invites WHERE hash=? AND expires>?',
-                             (invite_hash, self.clock())).fetchone()
-            if not row:
-                raise HTTPException(403, 'This invite is invalid or has expired.')
-            user_id = row['user_id'] or uuid4().hex
+            user_id = uuid4().hex
+            if invite is not None:
+                invite_hash = digest(invite)
+                row = db.execute('SELECT * FROM train_invites WHERE hash=? AND expires>?',
+                                 (invite_hash, self.clock())).fetchone()
+                if not row:
+                    raise HTTPException(403, 'This profile link is invalid or has expired.')
+                user_id = row['user_id'] or user_id
+                db.execute('DELETE FROM train_invites WHERE hash=?', (invite_hash,))
             created = db.execute('INSERT OR IGNORE INTO train_users(id,name,setup_complete) VALUES(?,?,?)',
                                  (user_id, name, user_id == OWNER)).rowcount
             if user_id == OWNER:
@@ -100,7 +103,6 @@ class Accounts:
                      'mutation_id': identity('train-seed', label), 'data': exercise(label)}
                     for label in STARTER_EXERCISES
                 ], actor='starter_catalog', db=db)
-            db.execute('DELETE FROM train_invites WHERE hash=?', (invite_hash,))
             db.execute('DELETE FROM train_sessions WHERE expires<=?', (self.clock(),))
             db.execute('INSERT INTO train_sessions VALUES(?,?,?)',
                        (digest(session), user_id, self.clock() + SESSION_SECONDS))
@@ -142,7 +144,7 @@ class Accounts:
 
 class Join(Model):
     name: str = Field(min_length=1, max_length=80)
-    invite: str = Field(min_length=43, max_length=43)
+    invite: str | None = Field(default=None, min_length=43, max_length=43)
 
 
 class Invite(Model):
