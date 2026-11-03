@@ -99,6 +99,42 @@ class TrainWebTest(unittest.TestCase):
         self.assertEqual(len(other.get(TRAIN+'/standings').json()['items']), 2)
         self.assertIn('Train fixture', self.admin.get('/train/').text)
 
+    def test_onboarding_preferences_and_coach_exercise_proposal(self):
+        client, user_id = self.enroll()
+        other, _ = self.enroll()
+        self.assertFalse(client.get(TRAIN+'/me').json()['setup_complete'])
+        self.assertTrue(client.patch(TRAIN+'/me', json={'setup_complete': True}).json()['setup_complete'])
+        self.assertFalse(other.get(TRAIN+'/me').json()['setup_complete'])
+        settings = TRAIN+'/reminders'
+        self.assertFalse(client.get(settings).json()['roast'])
+        self.assertFalse(client.get(settings).json()['scheduled_sprints'])
+        sprint = {'kind':'sprint', 'id':'first-sprint', 'base_revision':0, 'mutation_id':'first-sprint',
+                  'data':{'name':'First sprint', 'phase':'build', 'start':'2026-11-03',
+                          'scheduled':[{'date':'2026-11-04', 'id':'day-one', 'starts_at':'2026-11-04T18:00:00+01:00',
+                                        'template_id':'new-template'}]}}
+        self.assertEqual(client.post(TRAIN+'/sync', json={'operations':[sprint]}).status_code, 409)
+        client.patch(settings, json={'scheduled_sprints': True})
+        self.assertFalse(other.get(settings).json()['scheduled_sprints'])
+        worker = f'/v1/train/users/{user_id}/workout/trainer'
+        self.admin.put(worker+'/heartbeat', headers=ADMIN, json={'state':'ready'}).raise_for_status()
+        client.post(TRAIN+'/trainer/questions', json={'id':'setup-question', 'text':'Plan my first sprint'}).raise_for_status()
+        job = self.admin.post(worker+'/claim', headers=ADMIN).json()['job']
+        proposals = [
+            {'kind':'exercise', 'id':'new-exercise', 'mutation_id':'new-exercise', 'base_revision':0,
+             'data':{'name':'Cable Fly'}},
+            {'kind':'template', 'id':'new-template', 'mutation_id':'new-template', 'base_revision':0,
+             'data':{'name':'First workout', 'exercises':[{'exercise_id':'new-exercise'}]}},
+            sprint,
+        ]
+        self.admin.put(worker+'/setup-question/answer', headers=ADMIN,
+                       json={'token':job['token'], 'text':'Plan ready.', 'proposals':proposals}).raise_for_status()
+        self.assertEqual(client.get(TRAIN+'/entities/exercise/new-exercise').status_code, 404)
+        client.post(TRAIN+'/trainer/setup-question/approve').raise_for_status()
+        self.assertEqual(client.get(TRAIN+'/entities/exercise/new-exercise').json()['data']['name'], 'Cable Fly')
+        self.assertEqual(other.get(TRAIN+'/entities/exercise/new-exercise').status_code, 404)
+        client.patch(settings, json={'scheduled_sprints': False})
+        self.assertEqual(client.get(TRAIN+'/entities/sprint/first-sprint').status_code, 200)
+
     def test_old_database_keeps_owner_revision_and_import_columns(self):
         path = self.root/'legacy.sqlite3'
         with closing(sqlite3.connect(path)) as db:

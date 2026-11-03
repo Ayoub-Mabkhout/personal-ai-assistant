@@ -43,6 +43,7 @@ class ScheduledTrainTest(unittest.TestCase):
         self.sub = Subscription(endpoint='https://fcm.googleapis.com/fcm/send/synthetic',
                                 keys={'auth': b64(bytes(16)), 'p256dh': b64(point)})
         self.reminders.subscribe('athlete', self.sub)
+        self.reminders.settings('athlete', {'scheduled_sprints': True})
 
     def record(self, kind, identifier, data, revision=0):
         return self.store.mutate([{'kind': kind, 'id': identifier, 'base_revision': revision,

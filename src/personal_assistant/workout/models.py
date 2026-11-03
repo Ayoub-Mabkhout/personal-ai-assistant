@@ -11,6 +11,7 @@ class Model(BaseModel):
 
 class Athlete(Model):
     name: str = Field(default='', max_length=120)
+    age_years: int | None = Field(default=None, ge=1, le=120)
     height_cm: float | None = Field(default=None, gt=0, le=300)
     birth_date: date | None = None
     sex: Literal['male', 'female', 'unspecified'] = 'unspecified'

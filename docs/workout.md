@@ -51,6 +51,12 @@ existing member on another device. `scripts/workout.py users` lists enrolled IDs
 link in the phone's browser, enter a name and add Train to the Home Screen. Treat each invite
 link as a credential. It expires after seven days or on redemption.
 
+New members enter their age and body stats after choosing a name, choose whether to
+enable Diss mode and Scheduled sprints, then open the coach to plan a first sprint.
+Both preferences start off and can be changed independently in Settings. Turning off
+Scheduled sprints pauses reminders and retains existing sprint records. The coach can
+propose missing exercises in the same approval as templates and a sprint.
+
 All members appear on one signed-in standings page with separate lifting and running
 scores. Turn on progress sharing to expose sprint summaries, workout counts and lift and
 volume trends. Notes, coach conversations, original imports and photos are private.

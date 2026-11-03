@@ -15,7 +15,7 @@ from .scheduled import LEAD, MISSED_AFTER, timed_slots
 from .store import brief_text, encoded
 from .web_push import decode, endpoint_origin
 
-DEFAULTS = {'enabled': False, 'roast': False, 'photo_id': None}
+DEFAULTS = {'enabled': False, 'roast': False, 'photo_id': None, 'scheduled_sprints': False}
 
 
 def fallback(name, roast, streak):
@@ -33,6 +33,7 @@ def fallback(name, roast, streak):
 class Preferences(Model):
     enabled: bool | None = None
     roast: bool | None = None
+    scheduled_sprints: bool | None = None
     photo_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,100}$')
 
 
@@ -69,10 +70,12 @@ class TrainReminders:
 
     @staticmethod
     def preferences(db, user_id):
-        row = db.execute('SELECT enabled,roast,photo_id FROM train_reminder_preferences WHERE user_id=?', (user_id,)).fetchone()
+        row = db.execute('SELECT enabled,roast,photo_id,scheduled_sprints FROM train_reminder_preferences WHERE user_id=?',
+                         (user_id,)).fetchone()
         if not row:
             return DEFAULTS.copy()
-        return {'enabled': bool(row['enabled']), 'roast': bool(row['roast']), 'photo_id': row['photo_id']}
+        return {'enabled': bool(row['enabled']), 'roast': bool(row['roast']), 'photo_id': row['photo_id'],
+                'scheduled_sprints': bool(row['scheduled_sprints'])}
 
     @staticmethod
     def photo(db, user_id, photo_id):
@@ -94,8 +97,9 @@ class TrainReminders:
                         values[key] = value
                 if updates.get('photo_id') and not self.photo(db, user_id, values['photo_id']):
                     raise Missing('Choose one of your own Train photos.')
-                db.execute('INSERT OR REPLACE INTO train_reminder_preferences VALUES(?,?,?,?)',
-                           (user_id, values['enabled'], values['roast'], values['photo_id']))
+                db.execute('''INSERT OR REPLACE INTO train_reminder_preferences
+                    (user_id,enabled,roast,photo_id,scheduled_sprints) VALUES(?,?,?,?,?)''',
+                    (user_id, values['enabled'], values['roast'], values['photo_id'], values['scheduled_sprints']))
             return values
 
     def subscribe(self, user_id, subscription):
@@ -140,7 +144,7 @@ class TrainReminders:
         with store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             preferences = self.preferences(db, store.user_id)
-            if not preferences['enabled']:
+            if not preferences['enabled'] or not preferences['scheduled_sprints']:
                 return eligible
             rows = [store.row(row) for row in db.execute("""SELECT * FROM entities
                 WHERE user_id=? AND deleted=0 AND kind IN ('sprint','workout','template')""", (store.user_id,))]
@@ -202,7 +206,8 @@ class TrainReminders:
     def tick(self):
         now = self.workouts.clock()
         with self.workouts.db() as db:
-            users = [row['user_id'] for row in db.execute('''SELECT user_id FROM train_reminder_preferences p WHERE enabled=1
+            users = [row['user_id'] for row in db.execute('''SELECT user_id FROM train_reminder_preferences p
+                WHERE enabled=1 AND scheduled_sprints=1
                 AND EXISTS (SELECT 1 FROM train_push_subscriptions s WHERE s.user_id=p.user_id)''')]
         eligible = set()
         for user_id in users:
@@ -218,7 +223,7 @@ class TrainReminders:
                 JOIN train_reminder_history h USING(user_id,id)
                 JOIN train_push_subscriptions s USING(user_id,endpoint)
                 JOIN train_reminder_preferences p USING(user_id)
-                WHERE d.sent=0 AND d.next_attempt<=? AND h.starts>? AND p.enabled=1 AND p.roast=h.roast
+                WHERE d.sent=0 AND d.next_attempt<=? AND h.starts>? AND p.enabled=1 AND p.scheduled_sprints=1 AND p.roast=h.roast
                 ORDER BY h.starts''', (now, now)).fetchall()
             rows = [row for row in rows if (row['user_id'], row['id']) in eligible][:4]
             attempts = [(row, self.payload(db, row)) for row in rows]

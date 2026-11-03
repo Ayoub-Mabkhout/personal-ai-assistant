@@ -74,6 +74,11 @@ class Workouts:
             if (old['revision'] if old else 0) != op['base_revision']:
                 raise Conflict('Stale workout revision: '+op['kind']+'/'+op['id'])
             data = {} if op['deleted'] else validate(op['kind'], op['data'])
+            if op['kind'] == 'sprint' and data.get('scheduled'):
+                previous = json.loads(old['data']).get('scheduled', []) if old and not old['deleted'] else []
+                timed = any(slot.get('starts_at') for slot in data['scheduled'])
+                if (self.user_id != OWNER or timed) and data['scheduled'] != previous and not self.scheduled_sprints_enabled(db):
+                    raise Conflict('Enable scheduled sprints in Train settings before adding or changing a schedule.')
             if op['kind'] == 'photo' and not op['deleted']:
                 if not db.execute('SELECT 1 FROM blobs WHERE user_id=? AND id=?', (self.user_id, data['blob_id'])).fetchone():
                     raise ValueError('Upload the photo first')
@@ -96,6 +101,14 @@ class Workouts:
                 if not db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND deleted=0 AND json_extract(data,'$.blob_id')=?", (self.user_id, blob)).fetchone():
                     db.execute('DELETE FROM blobs WHERE user_id=? AND id=?', (self.user_id, blob))
         return results
+
+    def scheduled_sprints_enabled(self, db=None):
+        if db is None:
+            with self.db() as conn:
+                return self.scheduled_sprints_enabled(conn)
+        row = db.execute('SELECT scheduled_sprints FROM train_reminder_preferences WHERE user_id=?',
+                         (self.user_id,)).fetchone()
+        return bool(row and row['scheduled_sprints'])
 
     @staticmethod
     def row(row):

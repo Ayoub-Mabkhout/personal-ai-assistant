@@ -35,6 +35,10 @@ def public_account(row):
     return {'id': row['id'], 'name': row['name'], 'share_progress': bool(row['share_progress'])}
 
 
+def own_account(row):
+    return {**public_account(row), 'setup_complete': bool(row['setup_complete'])}
+
+
 class Accounts:
     def __init__(self, workouts):
         self.workouts = workouts
@@ -42,12 +46,16 @@ class Accounts:
         with workouts.db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS train_users(
-                    id TEXT PRIMARY KEY, name TEXT NOT NULL, share_progress INTEGER NOT NULL DEFAULT 0);
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, share_progress INTEGER NOT NULL DEFAULT 0,
+                    setup_complete INTEGER NOT NULL DEFAULT 1);
                 CREATE TABLE IF NOT EXISTS train_invites(
                     hash TEXT PRIMARY KEY, user_id TEXT, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS train_sessions(
                     hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires REAL NOT NULL);
             """)
+            db.execute('BEGIN IMMEDIATE')
+            if 'setup_complete' not in {row['name'] for row in db.execute('PRAGMA table_info(train_users)')}:
+                db.execute('ALTER TABLE train_users ADD COLUMN setup_complete INTEGER NOT NULL DEFAULT 1')
 
     def invite(self, user_id):
         token = secrets.token_urlsafe(32)
@@ -74,8 +82,8 @@ class Accounts:
             if not row:
                 raise HTTPException(403, 'This invite is invalid or has expired.')
             user_id = row['user_id'] or uuid4().hex
-            created = db.execute('INSERT OR IGNORE INTO train_users(id,name) VALUES(?,?)',
-                                 (user_id, name)).rowcount
+            created = db.execute('INSERT OR IGNORE INTO train_users(id,name,setup_complete) VALUES(?,?,?)',
+                                 (user_id, name, user_id == OWNER)).rowcount
             if created and user_id != OWNER:
                 self.workouts.for_user(user_id).mutate([
                     {'kind': 'exercise', 'id': identity('train-exercise', label), 'base_revision': 0,
@@ -86,7 +94,7 @@ class Accounts:
             db.execute('DELETE FROM train_sessions WHERE expires<=?', (self.clock(),))
             db.execute('INSERT INTO train_sessions VALUES(?,?,?)',
                        (digest(session), user_id, self.clock() + SESSION_SECONDS))
-            return public_account(db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone()), session
+            return own_account(db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone()), session
 
     def authenticate(self, session):
         if not session or len(session) != 43:
@@ -98,7 +106,7 @@ class Accounts:
             ).fetchone()
         if not row:
             raise HTTPException(401, 'Join Train to continue.')
-        return public_account(row)
+        return own_account(row)
 
     def profile(self, user_id):
         with self.workouts.db() as db:
@@ -107,10 +115,11 @@ class Accounts:
             raise Missing('Train profile not found')
         return public_account(row)
 
-    def share(self, user_id, enabled):
+    def update(self, user_id, sharing, setup_complete):
         with self.workouts.db() as db:
-            db.execute('UPDATE train_users SET share_progress=? WHERE id=?', (enabled, user_id))
-        return self.profile(user_id)
+            db.execute('''UPDATE train_users SET share_progress=coalesce(?,share_progress),
+                setup_complete=max(setup_complete,?) WHERE id=?''', (sharing, setup_complete, user_id))
+            return own_account(db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone())
 
     def roster(self):
         with self.workouts.db() as db:
@@ -126,8 +135,9 @@ class Invite(Model):
     user_id: str | None = None
 
 
-class Sharing(Model):
-    share_progress: bool
+class AccountUpdate(Model):
+    share_progress: bool | None = None
+    setup_complete: bool = False
 
 
 def same_origin(request: Request):
@@ -196,8 +206,8 @@ def mount_train(app, workouts, owner_auth, assets, push=None):
         return user
 
     @browser.patch('/me')
-    def share(body: Sharing, user=Depends(account)):
-        return accounts.share(user['id'], body.share_progress)
+    def update_account(body: AccountUpdate, user=Depends(account)):
+        return accounts.update(user['id'], body.share_progress, body.setup_complete)
 
     @browser.get('/standings')
     def standings(user=Depends(account)):

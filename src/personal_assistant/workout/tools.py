@@ -55,7 +55,7 @@ def serve(config, source=sys.stdin, target=sys.stdout, *, user_id=None):
                     value=client.call(base+path)
                     if view=='overview':
                         value={k:value.get(k) for k in ('completed_workouts','body_metrics','body_rank','next_workout','sprints',
-                            'lift_ranks','aggregate_score','trainer','next_session_brief')}
+                            'lift_ranks','aggregate_score','trainer','next_session_brief','scheduled_sprints')}
                         # Full exercise histories remain available through paged entity reads.
                         # A dashboard payload must not fill an agent context with every chart point.
                         value['detail_access']='Read exact workout/template/sprint entities only when needed.'

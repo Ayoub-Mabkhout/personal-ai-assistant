@@ -80,7 +80,8 @@ def install(router, get_store, *, browser=False):
     def sync(body: Sync, store=Depends(get_store)): return {'results':store.mutate([m.model_dump() for m in body.operations])}
 
     @router.get('/overview')
-    def summary(store=Depends(get_store)): return overview(store)
+    def summary(store=Depends(get_store)):
+        return {**overview(store), 'scheduled_sprints': store.scheduled_sprints_enabled()}
 
     @router.post('/sprints/{identifier}/extend')
     def extend_sprint(identifier: str,body: Extension, store=Depends(get_store)):
