@@ -155,6 +155,7 @@ class Accounts:
 class Join(Model):
     name: str = Field(min_length=1, max_length=80)
     invite: str | None = Field(default=None, min_length=43, max_length=43)
+    switch_profile: bool = False
 
 
 class Invite(Model):
@@ -254,7 +255,7 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
 
     @browser.post('/join')
     def join(body: Join, request: Request, response: Response):
-        if request.cookies.get(COOKIE):
+        if request.cookies.get(COOKIE) and not body.switch_profile:
             try:
                 account(request)
             except HTTPException as error:

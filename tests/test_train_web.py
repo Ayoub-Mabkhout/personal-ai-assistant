@@ -59,6 +59,11 @@ class TrainWebTest(unittest.TestCase):
         self.assertTrue(second.get(TRAIN+'/me').json()['setup_complete'])
         self.enroll('owner', name='Companion Owner')
         self.assertEqual(self.admin.post(TRAIN+'/join', json={'name': 'companion owner'}).status_code, 403)
+        link = self.admin.post('/v1/train/invites', headers=ADMIN, json={'user_id': 'owner'}).json()['invite']
+        switched = first.post(TRAIN+'/join', json={'name': 'Companion Owner', 'invite': link, 'switch_profile': True})
+        self.assertEqual(switched.status_code, 200)
+        self.assertEqual(first.get(TRAIN+'/me').json()['id'], 'owner')
+        self.assertEqual(second.get(TRAIN+'/me').json()['id'], identifier)
 
     def test_same_ids_keep_mutations_history_media_and_coaches_separate(self):
         first, first_id = self.enroll()
