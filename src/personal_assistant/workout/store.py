@@ -33,6 +33,7 @@ class Workouts:
     def __init__(self, path, clock=time.time):
         self.path, self.clock = Path(path), clock
         self.user_id = OWNER
+        self.competition = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             initialize(db)
@@ -91,7 +92,11 @@ class Workouts:
             result = dict(kind=op['kind'], id=op['id'], revision=revision, deleted=op['deleted'], data=data, updated=now)
             if op['kind'] == 'workout':
                 if op['deleted']: db.execute("DELETE FROM trainer WHERE user_id=? AND id=? AND state='queued'",(self.user_id, 'brief_workout_'+op['id']))
-                else: self.enqueue_workout_brief(db,op['id'],data,old,revision)
+                else:
+                    self.enqueue_workout_brief(db,op['id'],data,old,revision)
+                    if self.competition:
+                        from .competition import record_rank_ups
+                        record_rank_ups(db,self,op['id'],data,old)
             if op['kind'] == 'sprint' and not op['deleted'] and data.get('status') == 'completed': self.enqueue_sprint_brief(db,op['id'],data)
             db.execute('INSERT INTO mutations VALUES(?,?,?,?)', (self.user_id, op['mutation_id'], request, encoded(result)))
             results.append(result)

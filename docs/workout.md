@@ -60,6 +60,11 @@ propose missing exercises in the same approval as templates and a sprint.
 All members appear on one signed-in standings page with separate lifting and running
 scores. Turn on progress sharing to expose sprint summaries, workout counts and lift and
 volume trends. Notes, coach conversations, original imports and photos are private.
+Friends can open a shared sprint and rank breakdown in the web app and in paired
+Companion. Schedule sharing has its own switch. A timed slot shows as missed after
+the same grace period used for reminders. Competitive notifications are opt-in
+and describe the set or run that earned a new rank. Tap an alert to see that
+athlete's ranks.
 
 Train uses the existing workout SQLite database. The schema upgrade copies existing
 records, mutations, revisions, imports, photos and coach history into the owner partition.

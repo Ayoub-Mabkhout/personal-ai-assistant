@@ -15,6 +15,7 @@ from .analytics import overview
 from .api import install, install_worker
 from .imports import exercise, identity
 from .models import Model
+from .scheduled import MISSED_AFTER, timed_slots
 from .schema import OWNER
 
 COOKIE = 'train_session'
@@ -36,7 +37,8 @@ def public_account(row):
 
 
 def own_account(row):
-    return {**public_account(row), 'setup_complete': bool(row['setup_complete'])}
+    return {**public_account(row), 'setup_complete': bool(row['setup_complete']),
+            'rank_alerts': bool(row['rank_alerts']), 'share_schedule': bool(row['share_schedule'])}
 
 
 class Accounts:
@@ -47,15 +49,21 @@ class Accounts:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS train_users(
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, share_progress INTEGER NOT NULL DEFAULT 0,
-                    setup_complete INTEGER NOT NULL DEFAULT 1);
+                    setup_complete INTEGER NOT NULL DEFAULT 1, rank_alerts INTEGER NOT NULL DEFAULT 0,
+                    share_schedule INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS train_invites(
                     hash TEXT PRIMARY KEY, user_id TEXT, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS train_sessions(
                     hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires REAL NOT NULL);
             """)
             db.execute('BEGIN IMMEDIATE')
-            if 'setup_complete' not in {row['name'] for row in db.execute('PRAGMA table_info(train_users)')}:
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(train_users)')}
+            if 'setup_complete' not in columns:
                 db.execute('ALTER TABLE train_users ADD COLUMN setup_complete INTEGER NOT NULL DEFAULT 1')
+            if 'rank_alerts' not in columns:
+                db.execute('ALTER TABLE train_users ADD COLUMN rank_alerts INTEGER NOT NULL DEFAULT 0')
+            if 'share_schedule' not in columns:
+                db.execute('ALTER TABLE train_users ADD COLUMN share_schedule INTEGER NOT NULL DEFAULT 0')
 
     def invite(self, user_id):
         token = secrets.token_urlsafe(32)
@@ -84,6 +92,8 @@ class Accounts:
             user_id = row['user_id'] or uuid4().hex
             created = db.execute('INSERT OR IGNORE INTO train_users(id,name,setup_complete) VALUES(?,?,?)',
                                  (user_id, name, user_id == OWNER)).rowcount
+            if user_id == OWNER:
+                db.execute("UPDATE train_users SET name=? WHERE id=? AND name=''", (name, OWNER))
             if created and user_id != OWNER:
                 self.workouts.for_user(user_id).mutate([
                     {'kind': 'exercise', 'id': identity('train-exercise', label), 'base_revision': 0,
@@ -108,22 +118,26 @@ class Accounts:
             raise HTTPException(401, 'Join Train to continue.')
         return own_account(row)
 
-    def profile(self, user_id):
+    def profile(self, user_id, *, own=False):
         with self.workouts.db() as db:
             row = db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone()
         if not row:
             raise Missing('Train profile not found')
-        return public_account(row)
+        return own_account(row) if own else public_account(row)
 
-    def update(self, user_id, sharing, setup_complete):
+    def update(self, user_id, body):
         with self.workouts.db() as db:
+            if user_id == OWNER:
+                db.execute("INSERT OR IGNORE INTO train_users(id,name) VALUES(?,'')", (OWNER,))
             db.execute('''UPDATE train_users SET share_progress=coalesce(?,share_progress),
-                setup_complete=max(setup_complete,?) WHERE id=?''', (sharing, setup_complete, user_id))
+                setup_complete=max(setup_complete,?), rank_alerts=coalesce(?,rank_alerts),
+                share_schedule=coalesce(?,share_schedule) WHERE id=?''',
+                       (body.share_progress, body.setup_complete, body.rank_alerts, body.share_schedule, user_id))
             return own_account(db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone())
 
     def roster(self):
         with self.workouts.db() as db:
-            return [public_account(row) for row in db.execute('SELECT * FROM train_users ORDER BY id')]
+            return [public_account(row) for row in db.execute("SELECT * FROM train_users WHERE name!='' ORDER BY id")]
 
 
 class Join(Model):
@@ -138,6 +152,8 @@ class Invite(Model):
 class AccountUpdate(Model):
     share_progress: bool | None = None
     setup_complete: bool = False
+    rank_alerts: bool | None = None
+    share_schedule: bool | None = None
 
 
 def same_origin(request: Request):
@@ -154,12 +170,48 @@ def same_origin(request: Request):
             raise HTTPException(403, 'Open Train directly to make changes.')
 
 
-def shared_profile(account, stats):
-    sprint_keys = ('id', 'name', 'phase', 'status', 'start', 'end', 'completed', 'target_sessions')
+SPRINT_KEYS = ('id', 'name', 'phase', 'status', 'start', 'end', 'completed', 'target_sessions')
+RANK_KEYS = ('status', 'tier', 'score', 'percentile', 'exercise_name', 'next_tier', 'progress')
+
+
+def current_sprint(stats):
+    for sprint in stats['sprint_history']:
+        if sprint['status'] == 'active' and not sprint['ended']:
+            return {key: sprint[key] for key in SPRINT_KEYS}
+    return None
+
+
+def shared_schedule(store, sprint):
+    rows = [row for row in store.export()['entities'] if not row['deleted']]
+    names = {row['id']:row['data']['name'] for row in rows if row['kind']=='template'}
+    workouts = [row for row in rows if row['kind']=='workout']
+    current = next((row for row in rows if row['kind']=='sprint' and row['id']==sprint['id']), None)
+    result = []
+    for starts, slot, state in timed_slots(current, workouts) if current else ():
+        if state == 'pending':
+            state = 'missed' if store.clock() >= starts + MISSED_AFTER else 'upcoming'
+        elif state == 'paused':
+            state = 'active'
+        elif state == 'skipped' and starts <= store.clock():
+            state = 'missed'
+        elif state == 'rest':
+            state = 'skipped'
+        result.append({'id':slot['id'], 'name':names.get(slot.get('template_id'), 'Workout'),
+                       'date':slot['date'], 'starts_at':slot['starts_at'], 'status':state})
+    return result
+
+
+def shared_profile(account, stats, store, share_schedule):
+    sprint = current_sprint(stats)
+    rank_fields = lambda rank: {key:rank[key] for key in RANK_KEYS if key in rank}
     return {
         **account,
         'completed_workouts': stats['completed_workouts'],
-        'sprints': [{key: sprint[key] for key in sprint_keys} for sprint in stats['sprint_history']],
+        'sprints': [{key: item[key] for key in SPRINT_KEYS} for item in stats['sprint_history']],
+        'current_sprint': sprint,
+        'schedule': shared_schedule(store, sprint) if sprint and share_schedule and store.scheduled_sprints_enabled() else [],
+        'ranks': {'lifting_score':stats['aggregate_score'], 'running':rank_fields(stats['running']['rank']),
+                  'lifts':[rank_fields(rank) for rank in stats['lift_ranks']]},
         'progress': {
             'volume': [{'date': row['date'], 'value': row['total_volume_kg_reps']} for row in stats['workout_metrics'][-90:]],
             'lifts': [{'name': row['name'],
@@ -169,10 +221,12 @@ def shared_profile(account, stats):
     }
 
 
-def mount_train(app, workouts, owner_auth, assets, push=None):
+def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobile_events=None):
+    from .competition import Competition
     from .reminder import TrainReminders, install_reminders
     accounts = Accounts(workouts)
     reminders = TrainReminders(workouts, push)
+    competition = Competition(workouts, push, mobile_events)
     browser = APIRouter(prefix='/train/api', dependencies=[Depends(same_origin)])
     owner = APIRouter(prefix='/v1/train', dependencies=[Depends(owner_auth)])
     coach = APIRouter(prefix='/v1/train/users/{user_id}/workout', dependencies=[Depends(owner_auth)])
@@ -207,23 +261,32 @@ def mount_train(app, workouts, owner_auth, assets, push=None):
 
     @browser.patch('/me')
     def update_account(body: AccountUpdate, user=Depends(account)):
-        return accounts.update(user['id'], body.share_progress, body.setup_complete)
+        return accounts.update(user['id'], body)
 
     @browser.get('/standings')
     def standings(user=Depends(account)):
+        return standings_data()
+
+    def standings_data():
         items = []
         for member in accounts.roster():
             stats = overview(workouts.for_user(member['id']))
             items.append({**member, 'lifting_score': stats['aggregate_score'],
-                          'running_score': stats['running']['rank'].get('score')})
+                          'running_score': stats['running']['rank'].get('score'),
+                          'current_sprint': current_sprint(stats) if member['share_progress'] else None})
         return {'items': items}
 
     @browser.get('/profiles/{user_id}')
     def profile(user_id: str, user=Depends(account)):
-        member = accounts.profile(user_id)
-        if user_id != user['id'] and not member['share_progress']:
+        return profile_data(user_id, user['id'])
+
+    def profile_data(user_id, viewer):
+        member = accounts.profile(user_id, own=True)
+        if user_id != viewer and not member['share_progress']:
             raise Missing('This athlete keeps their progress private.')
-        return shared_profile(member, overview(workouts.for_user(user_id)))
+        scoped = workouts.for_user(user_id)
+        shared = {key:member[key] for key in ('id','name','share_progress')}
+        return shared_profile(shared, overview(scoped), scoped, member['share_schedule'] or user_id==viewer)
 
     @owner.post('/invites')
     def invite(body: Invite):
@@ -239,6 +302,29 @@ def mount_train(app, workouts, owner_auth, assets, push=None):
     install_worker(coach, coach_store)
     for router in (browser, owner, coach):
         app.include_router(router)
+    if device:
+        native = APIRouter(prefix='/groceries/v1/mobile/workout/friends', dependencies=[Depends(device)])
+
+        @native.get('')
+        def native_standings():
+            return standings_data()
+
+        @native.get('/me')
+        def native_me():
+            try:
+                return accounts.profile(OWNER, own=True)
+            except Missing:
+                return {'rank_alerts':False,'share_progress':False,'share_schedule':False}
+
+        @native.post('/me')
+        def native_update(body: AccountUpdate):
+            return accounts.update(OWNER, body)
+
+        @native.get('/{user_id}')
+        def native_profile(user_id: str):
+            return profile_data(user_id, OWNER)
+
+        app.include_router(native)
     if Path(assets).is_dir():
         app.mount('/train', StaticFiles(directory=assets, html=True), name='train')
-    return reminders
+    return reminders, competition

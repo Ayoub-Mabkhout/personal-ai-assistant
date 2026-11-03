@@ -47,7 +47,7 @@ final class NativeNotifications {
         if(events.length()>0)NativeTasks.changed(c);
         Cloud.prefs(c).edit().putBoolean("push_more",more).commit();
     }
-    static String channel(String type){return type.equals("reminder")?"calendar_reminders":type.equals("alarm")?"phone_actions":type.equals("file")?"files":"task_updates";}
+    static String channel(String type){return type.equals("train_rank")?"train_competition":type.equals("reminder")?"calendar_reminders":type.equals("alarm")?"phone_actions":type.equals("file")?"files":"task_updates";}
     static boolean blocked(Context c,JSONObject body){
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         if(!manager.areNotificationsEnabled())return true;
@@ -58,6 +58,7 @@ final class NativeNotifications {
         NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from tasks running on your laptop");
         NotificationStyle.channel(manager,"calendar_reminders","Calendar reminders",NotificationManager.IMPORTANCE_HIGH,"Upcoming events from your assistant's calendar");
         NotificationStyle.channel(manager,"phone_actions","Phone actions",NotificationManager.IMPORTANCE_HIGH,"Alarms and other requests your assistant sends to this phone");
+        NotificationStyle.channel(manager,"train_competition","Train rank-ups",NotificationManager.IMPORTANCE_DEFAULT,"Rank-ups shared by your Train friends");
         NotificationStyle.channel(manager,"files","Files",NotificationManager.IMPORTANCE_HIGH,"Files you asked your assistant to send to this phone");
     }
     /** Glyph and medallion tone for a task state. */
@@ -79,6 +80,7 @@ final class NativeNotifications {
         channels(manager);
         String kind=body.optString("task_kind","agent"),task=body.optString("task_id");
         Intent open=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra("task_kind",kind).putExtra("task_id",task).putExtra("push_event_id",identifier);
+        if(type.equals("train_rank"))open.putExtra("train_friend_id",body.optString("friend_id"));
         if(type.equals("alarm"))open.setAction(Intent.ACTION_VIEW).setData(android.net.Uri.parse("personalassistant://sync"));
         PendingIntent pending=PendingIntent.getActivity(c,identifier.hashCode(),open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         boolean active=body.optBoolean("active",false);
@@ -96,7 +98,8 @@ final class NativeNotifications {
             String[] lines=message.split("\n");
             if(lines.length>1&&!lines[0].trim().isEmpty()){headline=lines[0].trim();StringBuilder rest=new StringBuilder();for(int i=1;i<lines.length;i++)if(!lines[i].trim().isEmpty())rest.append(rest.length()==0?"":" · ").append(lines[i].trim());text=expanded=rest.toString();}
             boolean birthday="birthday".equals(body.optString("kind"));label=birthday?"Birthday":"Calendar";glyph=birthday?"cake":"calendar";tone=birthday?NotificationStyle.ATTENTION:NotificationStyle.PROGRESS;
-        }else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
+        }else if(type.equals("train_rank")){label="Train";glyph="star";tone=NotificationStyle.BRAND;}
+        else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
         boolean hidden=!body.optString("visibility").equals("public");
         Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(headline)
             .setContentText(text).setStyle(new Notification.BigTextStyle().bigText(expanded)).setSubText(label).setLargeIcon(NotificationStyle.icon(c,glyph,tone))
@@ -104,7 +107,7 @@ final class NativeNotifications {
             .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).setShowWhen(true);
         if(type.equals("reminder"))notification.setCategory(Notification.CATEGORY_EVENT);else if(active)notification.setCategory(Notification.CATEGORY_PROGRESS);
         // The lock screen shows only the kind of update, never the request, result or event.
-        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
+        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":type.equals("train_rank")?"Train rank-up":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
         if(body.optString("state").equals("running"))notification.setProgress(0,0,true);
         if(!task.isEmpty()){
             notification.addAction(new Notification.Action.Builder(null,"Details",pending).build());

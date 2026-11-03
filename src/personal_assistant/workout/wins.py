@@ -74,13 +74,18 @@ def session_wins(rows, limit=40, target=None):
                 if metric not in prior or better(metric,fact['value'],prior[metric]): alltime.setdefault(eid,{})[metric]=fact['value']
             dated.setdefault(eid,[]).append((day,facts))
         bodyweight=session_bodyweight(data,day,grouped['measurement'])
+        evidence={}
         for s in data['sets']:
             name=catalog.get(s['exercise_id'],{}).get('name','')
             estimate=e1rm(s,True);lift=rep_lift(name);reps=bodyweight_reps(s,bodyweight) if lift else None
             result={}
             if reps: result=rank_reps(lift,reps,bodyweight,sex)
             elif estimate and bodyweight and name.casefold() in BENCHMARKS: result=rank(name,estimate,bodyweight,sex)
-            if result.get('status')=='ranked': scores.setdefault(s['exercise_id'],[]).append((day,result['score']))
+            if result.get('status')=='ranked':
+                eid=s['exercise_id']
+                scores.setdefault(eid,[]).append((day,result['score']))
+                if result['score']>evidence.get(eid,{}).get('score',-1):
+                    evidence[eid]={'score':result['score'],'weight_kg':s.get('weight_kg'),'reps':s['reps']}
         held=[s for d,s in paces if day-RANK_WINDOW<=d<=day]
         for s in data['sets']:
             if s.get('completed') and s.get('kind')=='working' and s.get('distance_m') and s.get('seconds'):
@@ -88,13 +93,14 @@ def session_wins(rows, limit=40, target=None):
                 if placed:
                     old=max(held,default=None)
                     if placed['score']>(old if old is not None else -1) and tier_of(placed['score'])!=(tier_of(old) if old is not None else None):
-                        wins.append({'kind':'rank','exercise_id':s['exercise_id'],'name':'Running','tier':tier_of(placed['score']),'score':placed['score'],'previous_tier':tier_of(old) if old is not None else None})
+                        wins.append({'kind':'rank','exercise_id':s['exercise_id'],'name':'Running','tier':tier_of(placed['score']),'score':placed['score'],'previous_tier':tier_of(old) if old is not None else None,
+                                     'distance_m':s['distance_m'],'seconds':s['seconds']})
                     held.append(placed['score']);paces.append((day,placed['score']))
         after=standing(day)
         for eid,score in after.items():
             old=before.get(eid)
             if tier_of(score)!=(tier_of(old) if old is not None else None) and score>(old if old is not None else -1):
-                wins.append({'kind':'rank','exercise_id':eid,'name':catalog[eid]['name'],'tier':tier_of(score),'score':score,
+                wins.append({'kind':'rank','exercise_id':eid,'name':catalog[eid]['name'],'tier':tier_of(score),**evidence[eid],
                              'previous_tier':tier_of(old) if old is not None else None})
         if after:
             total,was=round(mean(after.values())),round(mean(before.values())) if before else None

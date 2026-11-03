@@ -17,9 +17,9 @@ import java.util.*;
  * All numbers come from the relay's overview or the on-phone cache; nothing is estimated here, and missing inputs say so.
  */
 final class WorkoutScreen {
-    final MainActivity a;final AppUi ui;final LinearLayout page;final WorkoutHistory history;final WorkoutPlan plan;final WorkoutCoach coach;WorkoutLive live,historyEdit;boolean loading;String problem="";
+    final MainActivity a;final AppUi ui;final LinearLayout page;final WorkoutHistory history;final WorkoutPlan plan;final WorkoutCoach coach;final WorkoutFriends friends;WorkoutLive live,historyEdit;boolean loading;String problem="";
     static final DateTimeFormatter DAY=DateTimeFormatter.ofPattern("EEEE d MMMM"),SHORT=DateTimeFormatter.ofPattern("EEE d MMM");
-    WorkoutScreen(MainActivity a,AppUi ui,LinearLayout page){this.a=a;this.ui=ui;this.page=page;history=new WorkoutHistory(this);plan=new WorkoutPlan(this);coach=new WorkoutCoach(this);render();}
+    WorkoutScreen(MainActivity a,AppUi ui,LinearLayout page){this.a=a;this.ui=ui;this.page=page;history=new WorkoutHistory(this);plan=new WorkoutPlan(this);coach=new WorkoutCoach(this);friends=new WorkoutFriends(this);render();}
     void refresh(){render();if(loading||!a.paired())return;loading=true;new Thread(()->{String message=WorkoutStore.sync(a);a.runOnUiThread(()->{loading=false;problem=message;if(!a.isFinishing())render();});}).start();}
     void liveClosed(){live=null;render();refresh();}
     /** A theme change waits for the workout, so the session on screen isn't torn down at sunset. */
@@ -35,6 +35,7 @@ final class WorkoutScreen {
         LinearLayout one=ui.row();one.addView(sprintTile(),even(0,4));one.addView(rankTile(o),even(4,0));page.addView(one,WorkoutViews.gap(ui,8));
         LinearLayout two=ui.row();two.addView(weightTile(o),even(0,4));two.addView(runTile(o),even(4,0));page.addView(two,WorkoutViews.gap(ui,14));
         Object[][] doors={{"history","History",AppUi.AMBER,(Runnable)history::open},{"recipe","Templates",AppUi.TEAL,(Runnable)plan::templates},{"barbell","Exercises",AppUi.VIOLET,(Runnable)history::exercises},{"body","Body",AppUi.PINK,(Runnable)this::body},{"settings","Profile",AppUi.BLUE,(Runnable)this::profile}};LinearLayout row=ui.row();row.setGravity(Gravity.TOP);for(Object[] d:doors)row.addView(door((String)d[0],(String)d[1],ui.hue((Integer)d[2]),(Runnable)d[3]),new LinearLayout.LayoutParams(0,-2,1));page.addView(row,WorkoutViews.gap(ui,8));
+        page.addView(WorkoutViews.row(ui,"Friends","Standings, sprints and rank-ups",friends::open),WorkoutViews.gap(ui,8));
         String state=loading?"Updating…":problem;if(WorkoutStore.waiting(a)>0&&!loading&&problem.isEmpty())state=WorkoutStore.waiting(a)+" waiting to sync";if(!state.isEmpty())page.addView(ui.type(state,12.5f,17,500,0,problem.isEmpty()?ui.muted:ui.warning),MainParts.params(ui,-1,-2,4,4,0,0));}
     /** Online or Offline, like Voice's connection chip. Tapping opens the coach. */
     View coachChip(){JSONObject t=overview().optJSONObject("trainer");boolean on=t!=null&&t.optBoolean("available");AppUi.StatusChip c=ui.statusChip(on?"Coach online":"Coach offline",on?"success":"neutral");c.setTag("coach_status");c.setOnClickListener(v->coach.open(new JSONObject(),null));return c;}

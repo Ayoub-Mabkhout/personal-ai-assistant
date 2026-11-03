@@ -273,11 +273,14 @@ class TrainReminders:
                     db.execute('UPDATE train_reminder_delivery SET sent=1 WHERE user_id=? AND id=? AND endpoint=?',
                                (row['user_id'], row['id'], row['endpoint']))
 
-    def start(self):
+    def start(self, competition=None):
         def run():
             while not self.stop.is_set():
                 try:
-                    self.tick()
+                    if self.provider:
+                        self.tick()
+                    if competition:
+                        competition.tick()
                 except Exception as error:
                     logging.warning('Train reminder check failed (%s).', type(error).__name__)
                 self.stop.wait(15)

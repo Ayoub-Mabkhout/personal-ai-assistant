@@ -132,6 +132,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         reminder_store=ReminderStore(Path(path).with_name('reminders.sqlite3'),**({'clock':clock} if clock else {}))
         reminder_pump=ReminderPump(reminder_store,sender,visibility=notifications.get('visibility','private'))
     train_reminders = None
+    train_competition = None
     @asynccontextmanager
     async def lifespan(app):
         if pump: pump.start()
@@ -140,7 +141,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         if release_pump: release_pump.start()
         if native_pump: native_pump.start()
         if retailer_check: retailer_check.start()
-        if train_reminders and train_push: train_reminders.start()
+        if train_reminders and (train_push or mobile_events): train_reminders.start(train_competition)
         try: yield
         finally:
             if pump: pump.close()
@@ -149,7 +150,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             if release_pump: release_pump.close()
             if native_pump: native_pump.close()
             if retailer_check: retailer_check.close()
-            if train_reminders and train_push: train_reminders.close()
+            if train_reminders and (train_push or mobile_events): train_reminders.close()
     app = FastAPI(title='Personal assistant relay', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
     app.state.notification_pump=pump
     app.state.reminder_pump=reminder_pump
@@ -236,8 +237,11 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         app.include_router(routes)
     if train_assets is not None:
         from personal_assistant.workout.web import mount_train
-        train_reminders = mount_train(app, workouts, submit, train_assets, train_push)
+        train_reminders, train_competition = mount_train(
+            app, workouts, submit, train_assets, train_push,
+            device_auth(groceries_api.devices) if groceries else None, mobile_events)
         app.state.train_reminders = train_reminders
+        app.state.train_competition = train_competition
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))

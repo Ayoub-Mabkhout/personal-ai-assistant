@@ -1,5 +1,7 @@
 from contextlib import closing
+from datetime import datetime, timezone
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -156,3 +158,45 @@ class TrainWebTest(unittest.TestCase):
                                 'mutation_id':'new-guest-change','data':{'name':'Guest'}}])[0]
         self.assertGreater(result['revision'], 23)
         self.assertEqual(Workouts(path).get('exercise','old')['data']['name'], 'Old')
+
+    def test_competition_uses_rank_earning_set_and_sends_only_to_subscribers(self):
+        athlete, athlete_id = self.enroll()
+        viewer, viewer_id = self.enroll('owner')
+        _, silent_id = self.enroll()
+        athlete.patch(TRAIN+'/me', json={'share_progress':True,'rank_alerts':True}).raise_for_status()
+        viewer.patch(TRAIN+'/me', json={'rank_alerts':True}).raise_for_status()
+        engine = self.app.state.train_competition
+        sent = []
+        from types import SimpleNamespace
+        engine.push = SimpleNamespace(send=lambda subscription, payload, ttl:
+                                      sent.append((subscription['endpoint'], json.loads(payload))) or 201)
+        with engine.workouts.db() as db:
+            db.executemany('INSERT INTO train_push_subscriptions VALUES(?,?,?)', [
+                (f'synthetic-{user}', user, json.dumps({'endpoint': f'synthetic-{user}'}))
+                for user in (athlete_id, viewer_id, silent_id)
+            ])
+        now = datetime.now(timezone.utc).isoformat()
+        operation = lambda kind, identifier, data: {
+            'kind':kind, 'id':identifier, 'data':data, 'base_revision':0, 'mutation_id':'new-'+identifier,
+        }
+        ops = [
+            operation('athlete','self',{'sex':'male'}),
+            operation('exercise','bench',{'name':'Bench Press (Barbell)'}),
+            operation('workout','finished',{'name':'Bench', 'started_at':now, 'status':'completed',
+                'bodyweight_kg':75, 'source':{'companion':{}}, 'sets':[
+                    {'id':'easy','exercise_id':'bench','weight_kg':100,'reps':2,'rir':5},
+                    {'id':'hard','exercise_id':'bench','weight_kg':60,'reps':6,'rir':1},
+                ]}),
+        ]
+        athlete.post(TRAIN+'/sync', json={'operations':ops}).raise_for_status()
+        athlete.post(TRAIN+'/sync', json={'operations':ops}).raise_for_status()
+        engine.tick()
+        engine.tick()
+        self.assertEqual(len(sent), 1)
+        endpoint, payload = sent[0]
+        self.assertEqual(endpoint, f'synthetic-{viewer_id}')
+        self.assertIn('Bench Press (Barbell) with 60 kg × 6', payload['body'])
+        self.assertEqual(payload['url'], '/train/?friend='+athlete_id)
+        profile = viewer.get(TRAIN+'/profiles/'+athlete_id).json()
+        self.assertEqual(profile['ranks']['lifts'][0]['status'], 'ranked')
+        self.assertNotIn('recent_best', profile['ranks']['lifts'][0])
