@@ -293,9 +293,10 @@ export async function friend(id,tab='sprint',name){
   catch(e){tabs.remove();body.replaceChildren(el('p',{class:'hint',text:e instanceof ApiError&&e.status===404?'This friend keeps their progress private.':'Connect to see this.'}));return}
   p.heading.textContent=d.name;
   const show=key=>{tab=key;tabs.replaceChildren(...[['sprint','Sprint'],['ranks','Ranks']].map(([k,t])=>{const b=el('button',{type:'button',class:'seg'+(k===tab?' on':''),text:t,attrs:{role:'tab','aria-selected':String(k===tab)}});b.onclick=()=>show(k);return b}));
-    body.replaceChildren(...(tab==='ranks'?friendRanks(d):friendSprint(d)))};
+    body.replaceChildren(...(tab==='ranks'?friendRanks(d):friendSprint(d)));p.body.scrollTop=0};
   show(tab);
 }
+const fmtDay=iso=>iso?new Date(iso+'T12:00:00Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}):'';
 function friendSprint(d){
   const out=[el('div',{class:'stats'},stat(String(d.completed_workouts??0),'workouts'),stat(String((d.sprints||[]).length),'sprints'))],s=d.current_sprint;
   if(s)out.push(card(el('p',{class:'label',text:'Current sprint'}),el('h3',{class:'card-title big',text:s.name}),el('p',{class:'strong-line',text:(s.completed??0)+(s.target_sessions?' of '+s.target_sessions:'')+' workouts'}),s.target_sessions?plan.progressBar((s.completed||0)/s.target_sessions):null));
@@ -307,7 +308,7 @@ function friendSprint(d){
     out.push(c)}
   const vol=d.progress?.volume||[];if(vol.length>1){const c=chart({height:170,gap:21,format:v=>Math.round(v).toLocaleString(),label:'Volume per session'});c.line(vol.map(x=>[epochDay(x.date),units.loadValue(x.value)]),'var(--aurora-3)',2,'Volume');out.push(card(el('h3',{class:'card-title',text:'Volume per session'}),c.framed()))}
   const past=(d.sprints||[]).slice().reverse().filter(x=>x.status!=='active');
-  if(past.length)out.push(label('Past sprints'),...past.map(x=>card(el('strong',{text:x.name}),el('small',{class:'hint',text:x.phase+' · '+x.start+' to '+x.end}),pair('Workouts',x.completed+(x.target_sessions?' of '+x.target_sessions:'')))));
+  if(past.length)out.push(label('Past sprints'),...past.map(x=>card(el('strong',{text:x.name}),el('small',{class:'hint',text:x.phase+' · '+fmtDay(x.start)+' – '+fmtDay(x.end)}),pair('Workouts',x.completed+(x.target_sessions?' of '+x.target_sessions:'')))));
   return out;
 }
 function friendRanks(d){
