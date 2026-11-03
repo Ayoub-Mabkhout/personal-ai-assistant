@@ -209,7 +209,7 @@ def main():
             joiner.patch('/train/api/reminders', json={'scheduled_sprints': True}, headers={'Cookie': session}).raise_for_status()
             seed(admin, member['id'], rng, today, strength)
             if share:
-                joiner.patch('/train/api/me', json={'share_progress': True}, headers={'Cookie': session}).raise_for_status()
+                joiner.patch('/train/api/me', json={'share_progress': True, 'share_schedule': True}, headers={'Cookie': session}).raise_for_status()
             members.append(member)
         link = admin.post('/v1/train/invites', json={'user_id': members[0]['id']}).json()['invite']
         print(f'Join as Sam: {origin}/train/?invite={link}', flush=True)
