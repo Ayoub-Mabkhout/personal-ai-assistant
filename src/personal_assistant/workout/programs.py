@@ -48,14 +48,14 @@ def extend(store,identifier,end,base_revision,mutation_id):
     from .store import encoded
     with store.db() as db:
         db.execute('BEGIN IMMEDIATE')
-        old=db.execute('SELECT * FROM mutations WHERE id=?',(mutation_id,)).fetchone()
+        old=db.execute('SELECT * FROM mutations WHERE user_id=? AND id=?',(store.user_id, mutation_id)).fetchone()
         if old:
             import json
             request=json.loads(old['request'])
             if request['kind']=='sprint' and request['id']==identifier and request['base_revision']==base_revision and request['data']['end']==end.isoformat():
                 return json.loads(old['result'])
             raise Conflict('Extension mutation already used')
-        row=db.execute("SELECT * FROM entities WHERE kind='sprint' AND id=? AND deleted=0",(identifier,)).fetchone()
+        row=db.execute("SELECT * FROM entities WHERE user_id=? AND kind='sprint' AND id=? AND deleted=0",(store.user_id, identifier)).fetchone()
         if not row: raise Missing('Sprint not found')
         import json
         data=json.loads(row['data'])

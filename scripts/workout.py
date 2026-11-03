@@ -15,6 +15,9 @@ def main():
         p=commands.add_parser(name);p.add_argument('file',type=Path)
         p.add_argument('--timezone',default='UTC');p.add_argument('--commit',action='store_true')
     commands.add_parser('status')
+    p=commands.add_parser('invite', help='Create a private one-use Train link')
+    p.add_argument('--user', help='Existing Train user ID, or owner to link Companion history')
+    commands.add_parser('users', help='List enrolled Train members')
     p=commands.add_parser('export');p.add_argument('output',type=Path)
     args=parser.parse_args()
     config=json.loads(args.config.read_text(encoding='utf-8-sig'))
@@ -27,6 +30,11 @@ def main():
         request=Request(client.origin+'/relay/v1/workout/imports/'+args.command[7:]+'?'+query,data=raw,
                         headers={'Authorization':'Bearer '+token,'Content-Type':'text/csv'},method='POST')
         with client.opener.open(request,timeout=120) as response: result=json.load(response)
+    elif args.command=='invite':
+        invite = client.call('/relay/v1/train/invites', {'user_id': args.user}, 'POST')['invite']
+        result = {'url': client.origin+'/train/?'+urlencode({'invite': invite})}
+    elif args.command=='users':
+        result = client.call('/relay/v1/train/users')
     elif args.command=='export':
         result=client.call('/relay/v1/workout/export')
         args.output.parent.mkdir(parents=True,exist_ok=True)

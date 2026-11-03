@@ -55,84 +55,93 @@ def routers(store, submit, device=None):
     owner = APIRouter(prefix='/v1/workout',dependencies=[Depends(submit)])
     phone = APIRouter(prefix='/groceries/v1/mobile/workout',dependencies=[Depends(device)]) if device else None
 
-    def install(router):
-        @router.get('/changes')
-        def changes(after: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200)):
-            return store.changes(after,limit)
+    def get_store(): return store
 
-        @router.get('/entities')
-        def entities(kind: str | None=None,offset: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200)):
-            return store.list(kind,offset,limit)
+    install(owner, get_store)
+    if phone: install(phone, get_store)
 
-        @router.get('/entities/{kind}/{identifier}')
-        def entity(kind: str,identifier: str): return store.get(kind,identifier)
+    install_worker(owner, get_store)
+    return [owner,phone] if phone else [owner]
 
-        @router.post('/sync')
-        def sync(body: Sync): return {'results':store.mutate([m.model_dump() for m in body.operations])}
 
-        @router.get('/overview')
-        def summary(): return overview(store)
+def install(router, get_store, *, browser=False):
+    @router.get('/changes')
+    def changes(after: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200), store=Depends(get_store)):
+        return store.changes(after,limit)
 
-        @router.post('/sprints/{identifier}/extend')
-        def extend_sprint(identifier: str,body: Extension):
-            from .programs import extend
-            return extend(store,identifier,body.end,body.base_revision,body.mutation_id)
+    @router.get('/entities')
+    def entities(kind: str | None=None,offset: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200), store=Depends(get_store)):
+        return store.list(kind,offset,limit)
 
-        @router.get('/export')
-        def export(): return store.export()
+    @router.get('/entities/{kind}/{identifier}')
+    def entity(kind: str,identifier: str, store=Depends(get_store)): return store.get(kind,identifier)
 
-        @router.post('/imports/{format}')
-        async def import_file(format: str,request: Request,commit: bool=False,timezone: str='UTC'):
-            return reconcile(store,await bounded(request,32*1024*1024),format,timezone,commit)
+    @router.post('/sync')
+    def sync(body: Sync, store=Depends(get_store)): return {'results':store.mutate([m.model_dump() for m in body.operations])}
 
-        @router.get('/imports/{digest}/original')
-        def original(digest: str):
-            return Response(store.original_import(digest),media_type='text/csv',
-                            headers={'Content-Disposition':'attachment; filename="workout-source.csv"','Cache-Control':'private, no-store'})
+    @router.get('/overview')
+    def summary(store=Depends(get_store)): return overview(store)
 
-        @router.put('/photos/{identity}')
-        async def put_photo(identity: str,request: Request):
-            if not re.fullmatch(r'[a-f0-9]{64}',identity): raise HTTPException(422,'Invalid photo checksum')
-            return store.put_blob(identity,request.headers.get('content-type','').split(';')[0],await bounded(request,8*1024*1024))
+    @router.post('/sprints/{identifier}/extend')
+    def extend_sprint(identifier: str,body: Extension, store=Depends(get_store)):
+        from .programs import extend
+        return extend(store,identifier,body.end,body.base_revision,body.mutation_id)
 
-        @router.get('/photos/{identity}')
-        def get_photo(identity: str):
-            mime,body = store.blob(identity)
-            return Response(body,media_type=mime,headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+    @router.get('/export')
+    def export(store=Depends(get_store)): return store.export()
 
-        @router.get('/trainer/conversation')
-        def conversation(limit: int=Query(default=100,ge=1,le=200),before: float | None=None):
-            return {'items':store.conversation(limit,before),'status':store.status()}
+    @router.post('/imports/{format}')
+    async def import_file(format: str,request: Request,commit: bool=False,timezone: str='UTC', store=Depends(get_store)):
+        return reconcile(store,await bounded(request,32*1024*1024),format,timezone,commit)
 
-        @router.post('/trainer/questions')
-        def question(body: Question):
-            return store.question(body.id,body.text,body.photos,body.photo_approval,body.context)
+    @router.get('/imports/{digest}/original')
+    def original(digest: str, store=Depends(get_store)):
+        return Response(store.original_import(digest),media_type='text/csv',
+                        headers={'Content-Disposition':'attachment; filename="workout-source.csv"','Cache-Control':'private, no-store'})
 
-        @router.post('/trainer/{identifier}/approve')
-        def approve(identifier: str): return store.approve(identifier)
+    @router.put('/photos/{identity}')
+    async def put_photo(identity: str,request: Request, store=Depends(get_store)):
+        if not re.fullmatch(r'[a-f0-9]{64}',identity): raise HTTPException(422,'Invalid photo checksum')
+        return store.put_blob(identity,request.headers.get('content-type','').split(';')[0],await bounded(request,8*1024*1024))
 
-    install(owner)
-    if phone: install(phone)
+    @router.get('/photos/{identity}')
+    def get_photo(identity: str, store=Depends(get_store)):
+        mime,body = store.blob(identity)
+        return Response(body,media_type=mime,headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 
+    @router.get('/trainer/conversation')
+    def conversation(limit: int=Query(default=100,ge=1,le=200),before: float | None=None, store=Depends(get_store)):
+        return {'items':store.conversation(limit,before),'status':store.status()}
+
+    @router.post('/trainer/questions')
+    def question(body: Question, store=Depends(get_store)):
+        context = body.context
+        if browser:
+            context = {key: context[key] for key in ('current_workout_id', 'sprint_id', 'template_id') if key in context}
+        return store.question(body.id,body.text,body.photos,body.photo_approval,context)
+
+    @router.post('/trainer/{identifier}/approve')
+    def approve(identifier: str, store=Depends(get_store)): return store.approve(identifier)
+
+
+def install_worker(owner, get_store):
     @owner.put('/trainer/heartbeat')
-    def heartbeat(body: Ready):
+    def heartbeat(body: Ready, store=Depends(get_store)):
         store.heartbeat(body.state,body.detail)
         return store.status()
 
     @owner.post('/trainer/claim')
-    def claim(): return {'job':store.claim()}
+    def claim(store=Depends(get_store)): return {'job':store.claim()}
 
     @owner.post('/trainer/prepare-brief')
-    def prepare_brief(timezone: str='UTC'): return store.prepare_brief(timezone)
+    def prepare_brief(timezone: str='UTC', store=Depends(get_store)): return store.prepare_brief(timezone)
 
     @owner.post('/trainer/{identifier}/renew')
-    def renew(identifier: str,body: Lease):
+    def renew(identifier: str,body: Lease, store=Depends(get_store)):
         store.renew(identifier,body.token)
         return {'ok':True}
 
     @owner.put('/trainer/{identifier}/answer')
-    def answer(identifier: str,body: Answer):
+    def answer(identifier: str,body: Answer, store=Depends(get_store)):
         store.finish(identifier,body.token,body.text,[p.model_dump() for p in body.proposals],body.state,body.assessment)
         return {'ok':True}
-
-    return [owner,phone] if phone else [owner]

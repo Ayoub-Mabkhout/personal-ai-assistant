@@ -20,21 +20,32 @@ class BodyLimit:
         self.app, self.limit = app, limit
 
     async def __call__(self, scope, receive, send):
+        path = scope.get('path', '')
+        if scope['type'] == 'http' and path.startswith(('/train/', '/v1/train/')):
+            original_send = send
+            async def send(message):
+                if message['type'] == 'http.response.start':
+                    from starlette.datastructures import MutableHeaders
+                    headers = MutableHeaders(scope=message)
+                    headers['referrer-policy'] = 'no-referrer'
+                    if path.startswith(('/train/api/', '/v1/train/')):
+                        headers['cache-control'] = 'private, no-store'
+                await original_send(message)
         if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
                                                                        or scope.get('path','').startswith('/v1/files/')
                                                                        or scope.get('path','').startswith('/groceries/v1/mobile/task-attachments/')
                                                                        or scope.get('path','').startswith('/v1/agent/tasks/')
-                                                                       or '/workout/photos/' in scope.get('path',''))
-                                      or (scope.get('method')=='POST' and '/workout/imports/' in scope.get('path',''))):
+                                                                       or '/workout/photos/' in path
+                                                                       or path.startswith('/train/api/photos/'))
+                                      or (scope.get('method')=='POST' and ('/workout/imports/' in path or path.startswith('/train/api/imports/')))):
             # Streamed uploads enforce their own declared, bounded size.
             return await self.app(scope, receive, send)
         body = bytearray()
-        path=scope.get('path','')
         limit = 4*1024*1024 if path=='/groceries/v1/mobile/voice' else (5*1024*1024 if path=='/v1/calendar/reminders/snapshot' else 2*1024*1024 if path=='/v1/banking/summary' else (
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
         if path.startswith('/groceries/v1/mobile/termux/'):
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
-        if path.endswith('/workout/sync'):
+        if path.endswith('/workout/sync') or path == '/train/api/sync':
             limit=2*1024*1024
         while True:
             message = await receive()
@@ -95,7 +106,7 @@ class Result(BaseModel):
     result: dict
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
@@ -220,6 +231,9 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.state.workouts=workouts
     for routes in workout_routers(workouts,submit,device_auth(groceries_api.devices) if groceries else None):
         app.include_router(routes)
+    if train_assets is not None:
+        from personal_assistant.workout.web import mount_train
+        mount_train(app, workouts, submit, train_assets)
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))
@@ -368,4 +382,6 @@ def from_environment():
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
                       mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
                       owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'),
-                      file_drops=file_drop_settings())
+                      file_drops=file_drop_settings(),
+                      train_assets=os.environ.get('ASSISTANT_TRAIN_ASSETS') or (
+                          '/app/apps/train-web' if Path('/app/apps/train-web/index.html').is_file() else None))

@@ -38,6 +38,34 @@ Strong imports preserve exact original bytes/hash, dates, notes, warmup/drop/fai
 
 Phone endpoints use `/groceries/v1/mobile/workout` and existing pairing; owner endpoints use `/relay/v1/workout`. Entity kinds and DTOs are in models.py. `/changes` pages revision history; `/sync` atomically accepts stable mutation IDs/base revisions.409 keeps offline edits for review. `/entities`, `/overview`, `/export` and `/imports` preserve existing contracts.
 
+## Standalone Train
+
+The relay serves the installable web app at `/train/` when its assets are present. The same
+workout API is available at `/train/api` through a Secure, HttpOnly browser cookie. Browser
+clients should keep their draft and retry outbox in IndexedDB keyed by the authenticated
+`/me` ID. Keep API responses out of the service worker cache.
+
+Generate a one-use link with `scripts/workout.py invite`. Use `invite --user owner` to
+connect the original Companion workout history or `invite --user ID` to reconnect an
+existing member on another device. `scripts/workout.py users` lists enrolled IDs. Open the
+link in the phone's browser, enter a name and add Train to the Home Screen. Treat each invite
+link as a credential. It expires after seven days or on redemption.
+
+All members appear on one signed-in standings page with separate lifting and running
+scores. Turn on progress sharing to expose sprint summaries, workout counts and lift and
+volume trends. Notes, coach conversations, original imports and photos are private.
+
+Train uses the existing workout SQLite database. The schema upgrade copies existing
+records, mutations, revisions, imports, photos and coach history into the owner partition.
+Back up the live database with SQLite's backup API before deploying. Restore that backup
+before starting an older relay, since the older code expects the single-owner schema.
+
+Set `workout_member_coaches` in protected laptop settings to start the member coach pool.
+It discovers enrolled members through the protected relay and keeps a separate session,
+narrative and traces for each. Member model calls run one at a time. The owner coach
+continues through its existing worker. Use `ASSISTANT_TRAIN_ASSETS` to point a development
+relay at a local web asset directory.
+
 Private progress-photo uploads are bounded8MiB JPEG/PNG/WebP with SHA256 IDs and authenticated downloads. Each analysis question names selected photos and explicitly approves those photos. The job carries each photo's capture time, pose, state and sprint plus every earlier estimate, so the coach can tell a repeat analysis or same-day photos from real change over time. The runner assigns trusted model/time/source-question metadata rather than trusting model-authored identifiers. Estimates are broad nonclinical ranges with uncertainty; later analyses need fresh approval. Active-store original bytes are removed when their last photo reference is deleted; backup/provider retention is separate.
 
 The laptop supervisor enables workout_specialist using protected worker config and a private workout_profile_file/workout_runtime_dir outside synced/public storage. It stores the CLI session, narrative and private failure traces. Native Codex compaction preserves the session; aggregate multi-tool token usage is not treated as current context length. MCP dashboard reads are compact, with paged exact records for details. Real model questions share this session.

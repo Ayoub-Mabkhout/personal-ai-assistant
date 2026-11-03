@@ -9,8 +9,17 @@ from ..relay.client import OwnerClient
 from .models import MODELS
 
 
-def serve(config, source=sys.stdin, target=sys.stdout):
+def workout_path(user_id=None):
+    if user_id is None:
+        return '/relay/v1/workout'
+    if not re.fullmatch(r'[a-f0-9]{32}', user_id):
+        raise ValueError('Invalid Train member ID')
+    return '/relay/v1/train/users/'+user_id+'/workout'
+
+
+def serve(config, source=sys.stdin, target=sys.stdout, *, user_id=None):
     client = OwnerClient(config)
+    base = workout_path(user_id)
     tools = [dict(name='workout_read',description='Read actual workout context. overview is aggregate evidence; entities pages all history; entity reads exact record/revision. No writes.',
         inputSchema={'type':'object','properties':{'view':{'type':'string','enum':['overview','entities','entity']},
             'kind':{'type':'string','enum':list(MODELS)},'id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'offset':{'type':'integer'},'limit':{'type':'integer'}},
@@ -43,7 +52,7 @@ def serve(config, source=sys.stdin, target=sys.stdout):
                             raise ValueError('Read a known workout entity with a valid ID')
                         path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
                     else: raise ValueError('Invalid view')
-                    value=client.call('/relay/v1/workout'+path)
+                    value=client.call(base+path)
                     if view=='overview':
                         value={k:value.get(k) for k in ('completed_workouts','body_metrics','body_rank','next_workout','sprints',
                             'lift_ranks','aggregate_score','trainer','next_session_brief')}
@@ -65,8 +74,9 @@ def main():
     sys.stdin.reconfigure(encoding='utf-8');sys.stdout.reconfigure(encoding='utf-8')
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',type=Path,required=True)
+    parser.add_argument('--user')
     args=parser.parse_args()
-    serve(json.loads(args.config.read_text(encoding='utf-8-sig')))
+    serve(json.loads(args.config.read_text(encoding='utf-8-sig')), user_id=args.user)
 
 
 if __name__=='__main__': main()

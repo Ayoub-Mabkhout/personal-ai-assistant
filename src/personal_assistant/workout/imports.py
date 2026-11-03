@@ -147,11 +147,11 @@ def reconcile(store, raw, format='strong', timezone='UTC', commit=False):
     report.update(sha256=digest,new=0,existing=0,conflicts=[],committed=False)
     with store.db() as db:
         db.execute('BEGIN IMMEDIATE')
-        previous = db.execute('SELECT report FROM imports WHERE hash=?',(digest,)).fetchone()
+        previous = db.execute('SELECT report FROM imports WHERE user_id=? AND hash=?',(store.user_id, digest)).fetchone()
         if previous: return {**json.loads(previous['report']),'already_imported':True}
         operations = []
         for kind,key,data in records:
-            old = db.execute('SELECT * FROM entities WHERE kind=? AND id=?',(kind,key)).fetchone()
+            old = db.execute('SELECT * FROM entities WHERE user_id=? AND kind=? AND id=?',(store.user_id, kind, key)).fetchone()
             if old:
                 report['existing'] += 1
                 # User corrections are never overwritten by another export.
@@ -163,6 +163,6 @@ def reconcile(store, raw, format='strong', timezone='UTC', commit=False):
         if commit:
             store.mutate(operations,'import:'+digest,db)
             report['committed'] = True
-            db.execute('INSERT INTO imports(hash,report,raw,at,original) VALUES(?,?,?,?,?)',
-                       (digest,encoded(report),raw.decode('utf-8-sig'),store.clock(),raw))
+            db.execute('INSERT INTO imports(user_id,hash,report,raw,at,original) VALUES(?,?,?,?,?,?)',
+                       (store.user_id, digest, encoded(report), raw.decode('utf-8-sig'), store.clock(), raw))
     return report

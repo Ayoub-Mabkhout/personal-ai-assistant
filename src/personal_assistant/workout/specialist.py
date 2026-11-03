@@ -14,6 +14,8 @@ from urllib.request import Request
 from urllib.parse import urlencode
 from ..relay.client import OwnerClient
 from ..worker.runtime import Singleton
+from .schema import OWNER
+from .tools import workout_path
 
 INSTRUCTIONS = '''You are the owner's persistent workout specialist. Use workout_read MCP tools to read
 actual workouts, exercises, bodyweight, recovery and sprints; search/page related records when needed.
@@ -74,6 +76,8 @@ def run_model(config, config_file, state, job, images, workspace):
     settings = {'command':sys.executable,'args':['-m','personal_assistant.workout.tools','--config',str(config_file)],
                 'env.PYTHONPATH':str(Path(__file__).resolve().parents[2]),'required':True,
                 'startup_timeout_sec':20,'tool_timeout_sec':30,'default_tools_approval_mode':'approve'}
+    if config.get('workout_user_id'):
+        settings['args'] += ['--user', config['workout_user_id']]
     for key,value in settings.items(): args += ['-c','mcp_servers.workout.'+key+'='+json.dumps(value)]
     args += ['exec']+(['resume',state['session']] if state.get('session') else [])
     args += ['--ignore-user-config','--skip-git-repo-check','--json','--output-schema',str(schema_file),
@@ -122,14 +126,14 @@ def run_model(config, config_file, state, job, images, workspace):
     return result
 
 
-def download_photos(client,job,root):
+def download_photos(client,job,root,base='/relay/v1/workout'):
     images=[]
     for identifier in job['photos']:
-        entity=client.call('/relay/v1/workout/entities/photo/'+identifier)
+        entity=client.call(base+'/entities/photo/'+identifier)
         if entity['deleted']: raise ValueError('Approved photo was deleted')
         digest=entity['data']['blob_id']
         token=client.token_file.read_text(encoding='utf-8-sig').strip()
-        request=Request(client.origin+'/relay/v1/workout/photos/'+digest,headers={'Authorization':'Bearer '+token})
+        request=Request(client.origin+base+'/photos/'+digest,headers={'Authorization':'Bearer '+token})
         with client.opener.open(request,timeout=30) as response:
             body=response.read(8*1024*1024+1)
             mime=response.headers.get_content_type()
@@ -140,16 +144,16 @@ def download_photos(client,job,root):
     return images
 
 
-def photo_context(client, job):
+def photo_context(client, job, base='/relay/v1/workout'):
     """When each photo was taken and what was already concluded from it, so time is never guessed from images."""
     if not job['photos']: return None
     def data(identifier):
-        entity=client.call('/relay/v1/workout/entities/photo/'+identifier)
+        entity=client.call(base+'/entities/photo/'+identifier)
         return {} if entity['deleted'] else entity['data']
     photos={identifier:data(identifier) for identifier in job['photos']}
     blobs={item.get('blob_id') for item in photos.values()}
     earlier=[]
-    for row in client.call('/relay/v1/workout/entities?kind=composition&limit=50')['items']:
+    for row in client.call(base+'/entities?kind=composition&limit=50')['items']:
         used=[{'id':i,**{k:v for k,v in data(i).items() if k in ('captured_at','blob_id')}} for i in row['data']['photo_ids']]
         earlier.append({'assessed_at':row['data']['assessed_at'],'low_percent':row['data']['low_percent'],'high_percent':row['data']['high_percent'],
                         'captured_at':sorted(u['captured_at'] for u in used if u.get('captured_at')),
@@ -160,24 +164,25 @@ def photo_context(client, job):
 
 
 def run_once(client, config, config_file, state, invoke=run_model):
-    client.call('/relay/v1/workout/trainer/heartbeat',{'state':'ready'},'PUT')
-    client.call('/relay/v1/workout/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
-    job=client.call('/relay/v1/workout/trainer/claim',{},'POST')['job']
+    base = workout_path(config.get('workout_user_id'))
+    client.call(base+'/trainer/heartbeat',{'state':'ready'},'PUT')
+    client.call(base+'/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
+    job=client.call(base+'/trainer/claim',{},'POST')['job']
     if not job: return False
-    job['photo_context']=photo_context(client,job)
     stop=threading.Event()
     lost=threading.Event()
     def renew():
         while not stop.wait(25):
             try:
-                client.call('/relay/v1/workout/trainer/'+job['id']+'/renew',{'token':job['token']},'POST')
-                client.call('/relay/v1/workout/trainer/heartbeat',{'state':'busy'},'PUT')
+                client.call(base+'/trainer/'+job['id']+'/renew',{'token':job['token']},'POST')
+                client.call(base+'/trainer/heartbeat',{'state':'busy'},'PUT')
             except Exception: lost.set();return
     thread=threading.Thread(target=renew,daemon=True);thread.start()
     try:
+        job['photo_context']=photo_context(client,job,base)
         with tempfile.TemporaryDirectory(prefix='workout-specialist-') as directory:
             root=Path(directory)
-            images=download_photos(client,job,root)
+            images=download_photos(client,job,root,base)
             result=invoke(config,config_file,state,job,images,root)
         if lost.is_set(): raise RuntimeError('Trainer lease lost')
         proposals=[{'mutation_id':hashlib.sha256((job['id']+':'+str(i)).encode()).hexdigest(),
@@ -189,7 +194,7 @@ def run_once(client, config, config_file, state, invoke=run_model):
                               assessed_at=datetime.now(timezone.utc).isoformat())
         reasons='\n'.join(p['reason'] for p in result['proposals'] if p.get('reason'))
         text=result['text']+('\n\nProposed changes: '+reasons if reasons else '')
-        client.call('/relay/v1/workout/trainer/'+job['id']+'/answer',
+        client.call(base+'/trainer/'+job['id']+'/answer',
                     {'token':job['token'],'text':text,'proposals':proposals,'assessment':assessment},'PUT')
         state['memory']=result['memory_summary'][:16000]
         return True
@@ -200,20 +205,15 @@ def run_once(client, config, config_file, state, invoke=run_model):
         if hasattr(error,'read'): detail+='\n'+error.read().decode('utf-8','replace')[:12000]
         (trace/(job['id']+'.failure.txt')).write_text(detail,encoding='utf-8')
         if not lost.is_set():
-            client.call('/relay/v1/workout/trainer/'+job['id']+'/answer',{'token':job['token'],
+            client.call(base+'/trainer/'+job['id']+'/answer',{'token':job['token'],
                 'text':'The workout specialist could not complete this request. No plan changes were applied. Retry when Codex is available.',
                 'proposals':[],'state':'failed'},'PUT')
-        client.call('/relay/v1/workout/trainer/heartbeat',{'state':'blocked','detail':'Codex request failed'},'PUT')
+        client.call(base+'/trainer/heartbeat',{'state':'blocked','detail':'Codex request failed'},'PUT')
         raise
     finally: stop.set();thread.join(timeout=1)
 
 
-def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config',type=Path,required=True)
-    parser.add_argument('--once',action='store_true')
-    args=parser.parse_args()
-    config=json.loads(args.config.read_text(encoding='utf-8-sig'))
+def run_coach(config, config_file, once=False, invoke=run_model):
     runtime=Path(config.get('workout_runtime_dir',str(Path.home()/'.personal-assistant/workout')))
     runtime.mkdir(parents=True,exist_ok=True)
     state_file=runtime/'specialist.json'
@@ -222,12 +222,59 @@ def main():
     with Singleton(runtime/'specialist.lock'):
         while True:
             failed=False
-            try: run_once(client,config,args.config,state)
+            try: run_once(client,config,config_file,state,invoke)
             except Exception as error:
                 print(type(error).__name__+': workout specialist unavailable',flush=True);failed=True
             temp=state_file.with_suffix('.tmp');temp.write_text(json.dumps(state,ensure_ascii=False),encoding='utf-8');os.replace(temp,state_file)
-            if args.once: break
+            if once: break
             threading.Event().wait(120 if failed else 5)
+
+
+def run_member_coaches(config, config_file):
+    client = OwnerClient(config)
+    runtime = Path(config.get('workout_runtime_dir', str(Path.home()/'.personal-assistant/workout'))) / 'members'
+    runtime.mkdir(parents=True, exist_ok=True)
+    model_slot = threading.Lock()
+    coaches = {}
+
+    def invoke(*args):
+        with model_slot:
+            return run_model(*args)
+
+    with Singleton(runtime/'pool.lock'):
+        while True:
+            try:
+                members = client.call('/relay/v1/train/users')['items']
+                for member in members:
+                    user_id = member['id']
+                    if user_id == OWNER:
+                        continue
+                    workout_path(user_id)  # Validate before using the ID in a local path.
+                    if user_id in coaches and coaches[user_id].is_alive():
+                        continue
+                    settings = {key: value for key, value in config.items() if key != 'workout_profile_file'}
+                    settings.update(workout_user_id=user_id, workout_runtime_dir=str(runtime/user_id), timezone='UTC')
+                    coach = threading.Thread(target=run_coach, args=(settings, config_file),
+                                             kwargs={'invoke': invoke}, daemon=True)
+                    coach.start()
+                    coaches[user_id] = coach
+            except (OSError, ValueError, KeyError) as error:
+                print(type(error).__name__+': Train member roster unavailable', flush=True)
+            threading.Event().wait(15)
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config',type=Path,required=True)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--once',action='store_true')
+    mode.add_argument('--members',action='store_true')
+    args=parser.parse_args()
+    config=json.loads(args.config.read_text(encoding='utf-8-sig'))
+    if args.members:
+        run_member_coaches(config, args.config)
+    else:
+        run_coach(config, args.config, once=args.once)
 
 
 if __name__=='__main__': main()

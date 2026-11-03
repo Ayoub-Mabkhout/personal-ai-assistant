@@ -38,6 +38,9 @@ def main():
             '--config',str(args.config),'watch','--interval',str(config.get('banking_interval_seconds',21600))]
     if config.get('workout_specialist'):
         commands['workout']=[config['python'],'-m','personal_assistant.workout.specialist','--config',str(args.config)]
+    if config.get('workout_member_coaches'):
+        commands['train-coaches']=[config['python'],'-m','personal_assistant.workout.specialist',
+            '--config',str(args.config),'--members']
     if config.get('mail_automation_config'):
         commands['mail-automation']=[config['python'],str(Path(config['repository'])/'scripts/mail_automation.py'),
             '--config',config['mail_automation_config'],'--loop']
