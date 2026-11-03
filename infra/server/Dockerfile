@@ -1,5 +1,13 @@
-# syntax=docker/dockerfile:1
-FROM library/python@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
+ARG PYTHON_IMAGE=library/python@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
+FROM ${PYTHON_IMAGE} AS iron-league
+# Pin the source revision and check the archive before extracting the static files.
+ADD https://codeload.github.com/Ayoub-Mabkhout/iron-league/tar.gz/1aa6536bfa15bdfee495c5cc557852b5082d0500 /tmp/iron-league.tar.gz
+RUN echo '1ce0221892119967ae6100c915e1081d2501847905c44cd9dd8eb7ab3deba95a  /tmp/iron-league.tar.gz' | sha256sum -c - \
+    && mkdir /web \
+    && tar -xzf /tmp/iron-league.tar.gz -C /web --strip-components=2 iron-league-1aa6536bfa15bdfee495c5cc557852b5082d0500/web \
+    && test -s /web/index.html
+
+FROM ${PYTHON_IMAGE}
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements-server.lock ./
@@ -9,10 +17,8 @@ COPY src ./src
 COPY apps/groceries ./apps/groceries
 COPY apps/tasks ./apps/tasks
 COPY apps/shared ./apps/shared
-# Iron League frontend. Pin the Git revision so a relay rebuild uses the same assets.
-ADD https://github.com/Ayoub-Mabkhout/iron-league.git#1aa6536bfa15bdfee495c5cc557852b5082d0500:web /app/apps/train-web/
-RUN test -s apps/train-web/index.html \
-    && pip install --no-cache-dir --no-deps . \
+COPY --from=iron-league /web/ ./apps/train-web/
+RUN pip install --no-cache-dir --no-deps . \
     && groupadd --gid 10001 assistant \
     && useradd --uid 10001 --gid 10001 --no-create-home assistant \
     && mkdir /data && chown assistant:assistant /data
