@@ -30,6 +30,9 @@ class BodyLimit:
                     headers['referrer-policy'] = 'no-referrer'
                     if path.startswith(('/train/api/', '/v1/train/')):
                         headers['cache-control'] = 'private, no-store'
+                    else:
+                        # The web app revalidates on every load, so a deploy reaches phones without clearing caches.
+                        headers['cache-control'] = 'no-cache'
                 await original_send(message)
         if scope['type'] != 'http' or (scope.get('method')=='PUT' and (scope.get('path')=='/companion/v1/releases/artifact'
                                                                        or scope.get('path','').startswith('/v1/files/')

@@ -123,7 +123,9 @@ class TrainWebTest(unittest.TestCase):
         owner.patch(TRAIN+'/me', json={'share_progress': False})
         self.assertEqual(other.get(profile).status_code, 404)
         self.assertEqual(len(other.get(TRAIN+'/standings').json()['items']), 2)
-        self.assertIn('Train fixture', self.admin.get('/train/').text)
+        page = self.admin.get('/train/')
+        self.assertIn('Train fixture', page.text)
+        self.assertEqual(page.headers['cache-control'], 'no-cache')
 
     def test_onboarding_preferences_and_coach_exercise_proposal(self):
         client, user_id = self.enroll()
