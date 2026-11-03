@@ -39,6 +39,14 @@ def next_workout(entities,today=None):
                     'date':None,
                     'target_sessions':progress['target_sessions'],'deadline':progress['deadline'],
                     'deadline_passed':progress['deadline_passed']}
+        from .scheduled import timed_slots
+        for position, (_, slot, state) in enumerate(timed_slots(sprint, workouts)):
+            if state == 'pending' and slot['date'] >= today.isoformat():
+                return {'template_id': slot.get('template_id'), 'position': position,
+                        'sprint_id': sprint['id'], 'sequence_number': position+1, 'date': slot['date'],
+                        'starts_at': slot['starts_at'], 'scheduled_session_id': slot['id'],
+                        'target_sessions': progress['target_sessions'], 'deadline': progress['deadline'],
+                        'deadline_passed': progress['deadline_passed']}
     return None
 
 

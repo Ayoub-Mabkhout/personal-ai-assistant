@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["tzdata==2026.4", "PyYAML==6.0.3"]
 
 [project.optional-dependencies]
-server = ["fastapi==0.142.2", "uvicorn==0.54.0", "websockets==16.0", "cryptography==50.0.2", "audioop-lts==0.2.2; python_version >= '3.13'"]
+server = ["fastapi==0.142.2", "uvicorn==0.54.0", "websockets==16.0", "cryptography==50.0.2", "http-ece==1.2.1", "py-vapid==1.9.6", "audioop-lts==0.2.2; python_version >= '3.13'"]
 test = ["httpx==0.28.1", "PyYAML==6.0.3"]
 
 [project.scripts]

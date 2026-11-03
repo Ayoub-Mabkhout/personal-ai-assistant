@@ -193,7 +193,9 @@ class Workouts:
         if not 1 <= limit <= 200: raise ValueError('Invalid conversation limit')
         if db is None:
             with self.db() as conn: return self.conversation(limit,before,conn)
-        rows = db.execute('SELECT * FROM trainer WHERE user_id=? AND (? IS NULL OR created<?) ORDER BY created DESC,rowid DESC LIMIT ?',
+        rows = db.execute("""SELECT * FROM trainer WHERE user_id=? AND (? IS NULL OR created<?)
+            AND coalesce(json_extract(context,'$.purpose'),'')!='scheduled_reminder'
+            ORDER BY created DESC,rowid DESC LIMIT ?""",
                           (self.user_id, before, before, limit)).fetchall()
         return [{k: json.loads(r[k]) if k in ('photos','context','proposals') and r[k] else r[k]
                  for k in ('id','question','photos','context','created','state','answer','answered_at','proposals','approved')} for r in reversed(rows)]
@@ -201,12 +203,25 @@ class Workouts:
     def claim(self):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            db.execute("""DELETE FROM trainer WHERE user_id=? AND state IN ('queued','running')
+                AND json_extract(context,'$.purpose')='scheduled_reminder'
+                AND json_extract(context,'$.expires_at')<=?
+                AND (state='queued' OR lease_until<=?)""", (self.user_id, self.clock(), self.clock()))
             if db.execute("SELECT 1 FROM trainer WHERE user_id=? AND state='running' AND lease_until>?",(self.user_id, self.clock())).fetchone(): return None
-            row = db.execute("SELECT * FROM trainer WHERE user_id=? AND ((state='queued' AND coalesce(json_extract(context,'$.not_before'),0)<=?) OR (state='running' AND lease_until<=?)) ORDER BY created,rowid LIMIT 1",(self.user_id, self.clock(), self.clock())).fetchone()
+            row = db.execute("""SELECT * FROM trainer WHERE user_id=?
+                AND ((state='queued' AND coalesce(json_extract(context,'$.not_before'),0)<=?)
+                     OR (state='running' AND lease_until<=?))
+                ORDER BY CASE WHEN json_extract(context,'$.purpose')='scheduled_reminder' THEN 0 ELSE 1 END,
+                         created,rowid LIMIT 1""", (self.user_id, self.clock(), self.clock())).fetchone()
             if not row: return None
             token = secrets.token_urlsafe(24)
+            context = json.loads(row['context'])
+            if context.get('shortfalls'):
+                prefs = db.execute('SELECT roast FROM train_reminder_preferences WHERE user_id=?', (self.user_id,)).fetchone()
+                if not prefs or not prefs['roast']:
+                    context.pop('shortfalls')
             db.execute("UPDATE trainer SET state='running',token=?,lease_until=? WHERE user_id=? AND id=?",(token, self.clock()+120, self.user_id, row['id']))
-            return dict(id=row['id'],question=row['question'],photos=json.loads(row['photos']),context=json.loads(row['context']),token=token)
+            return dict(id=row['id'],question=row['question'],photos=json.loads(row['photos']),context=context,token=token)
 
     def renew(self, identifier, token):
         with self.db() as db:
@@ -231,6 +246,8 @@ class Workouts:
             job = db.execute("SELECT * FROM trainer WHERE user_id=? AND id=? AND token=? AND state='running' AND lease_until>?",(self.user_id, identifier, token, self.clock())).fetchone()
             if not job: raise Conflict('Trainer lease lost')
             context=json.loads(job['context'])
+            if context.get('purpose') == 'scheduled_reminder' and (validated or assessment):
+                raise ValueError('Reminder jobs can only write notification text')
             if state=='failed' and (context.get('workout_id') or context.get('purpose')=='sprint_brief') and context.get('attempts',0)<12:
                 # A limit or outage shouldn't lose the brief: try again later, about six hours in all.
                 context.update(attempts=context.get('attempts',0)+1,not_before=self.clock()+1800)
@@ -291,7 +308,15 @@ class Workouts:
         if data.get('status')!='completed' or 'companion' not in data.get('source',{}): return
         if old and not old['deleted'] and json.loads(old['data']).get('status')=='completed': return
         profile=db.execute("SELECT data FROM entities WHERE user_id=? AND kind='athlete' AND deleted=0 ORDER BY updated DESC LIMIT 1", (self.user_id,)).fetchone()
-        if not profile or not json.loads(profile['data']).get('auto_coach_briefs'): return
+        roast = db.execute('SELECT roast FROM train_reminder_preferences WHERE user_id=?', (self.user_id,)).fetchone()
+        deficits = []
+        if roast and roast['roast'] and data.get('template_id'):
+            template = db.execute("SELECT data FROM entities WHERE user_id=? AND kind='template' AND id=? AND deleted=0",
+                                  (self.user_id, data['template_id'])).fetchone()
+            if template:
+                from .scheduled import shortfalls
+                deficits = shortfalls(json.loads(template['data']), data)
+        if not deficits and (not profile or not json.loads(profile['data']).get('auto_coach_briefs')): return
         from .wins import describe,session_wins
         rows=[self.row(r) for r in db.execute("SELECT * FROM entities WHERE user_id=? AND kind IN ('athlete','exercise','measurement','workout') AND deleted=0", (self.user_id,))]
         wins=[describe(w) for w in session_wins(rows,target=identifier)]
@@ -300,7 +325,7 @@ class Workouts:
                   +(' Open by acknowledging what they achieved: '+'; '.join(wins[:3])+'.' if wins else ''))
         db.execute('INSERT OR IGNORE INTO trainer(user_id,id,question,photos,context,created,state) VALUES(?,?,?,?,?,?,?)',
             (self.user_id, 'brief_workout_'+identifier, question, '[]', encoded({'purpose':'next_session_brief','automatic':True,'workout_id':identifier,
-             'session_id':'workout:'+identifier,'revision':revision}), self.clock(), 'queued'))
+             'session_id':'workout:'+identifier,'revision':revision,'shortfalls':deficits}), self.clock(), 'queued'))
 
     def enqueue_sprint_brief(self, db, identifier, data):
         """A finished sprint gets one short review of its own, written when the coach is next free."""
@@ -363,7 +388,7 @@ class Workouts:
             from .programs import next_workout
             next_item=next_workout(rows,date.fromisoformat(today))
             if next_item:
-                sprint_id=next_item['sprint_id'];template_id=next_item['template_id'];when=today
+                sprint_id=next_item['sprint_id'];template_id=next_item['template_id'];when=next_item.get('date') or today
                 session_id=sprint_id+':'+str(next_item['sequence_number'])+':'+template_id
             else:
                 choices=[]

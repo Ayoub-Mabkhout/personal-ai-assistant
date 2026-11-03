@@ -66,6 +66,32 @@ narrative and traces for each. Member model calls run one at a time. The owner c
 continues through its existing worker. Use `ASSISTANT_TRAIN_ASSETS` to point a development
 relay at a local web asset directory.
 
+### Scheduled workouts and reminders
+
+Sprints can use dated sessions instead of a repeating cycle. A timed entry in
+`scheduled` carries a stable `id`, a local `date`, a `starts_at` timestamp with UTC
+offset and an optional `template_id`. A workout started from it retains the sprint,
+date and `source.companion.scheduled_session_id`. Legacy date-only entries are valid.
+
+The relay checks the schedule every 15 seconds and sends a push 30 minutes before
+the workout. An unstarted slot counts as missed after three hours, an explicit skip
+counts immediately after its scheduled time, and completing a slot resets the
+streak. The athlete can opt in to vulgar reminders and choose one of their own
+private photos. The coach can write the copy in advance. The relay uses its own
+fallback if the coach has no answer when the reminder is due. Where the system
+notification omits the photo, opening the reminder displays it in Train.
+
+The same opt-in enables a blunt post-workout brief when logged working sets fall
+short of template targets. The comparison uses completed sets and logged values,
+including counts, reps, load, distance and time, with warmups excluded.
+
+To enable browser push on the relay, create a persistent P-256 private PEM in
+`/data/train-web-push.pem` and put the VAPID contact URI in
+`/data/train-web-push-subject.txt`. Restrict the private key to the relay service
+user and retain it across releases. `ASSISTANT_TRAIN_PUSH_KEY` overrides the PEM
+path. The web app prompts each athlete for notification permission. On iPhone,
+open the installed Home Screen app to grant permission.
+
 Private progress-photo uploads are bounded8MiB JPEG/PNG/WebP with SHA256 IDs and authenticated downloads. Each analysis question names selected photos and explicitly approves those photos. The job carries each photo's capture time, pose, state and sprint plus every earlier estimate, so the coach can tell a repeat analysis or same-day photos from real change over time. The runner assigns trusted model/time/source-question metadata rather than trusting model-authored identifiers. Estimates are broad nonclinical ranges with uncertainty; later analyses need fresh approval. Active-store original bytes are removed when their last photo reference is deleted; backup/provider retention is separate.
 
 The laptop supervisor enables workout_specialist using protected worker config and a private workout_profile_file/workout_runtime_dir outside synced/public storage. It stores the CLI session, narrative and private failure traces. Native Codex compaction preserves the session; aggregate multi-tool token usage is not treated as current context length. MCP dashboard reads are compact, with paged exact records for details. Real model questions share this session.

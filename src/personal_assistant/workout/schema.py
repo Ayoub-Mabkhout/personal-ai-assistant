@@ -33,3 +33,5 @@ def initialize(db):
             db.execute(f'DROP TABLE legacy_{table}')
     db.execute('CREATE INDEX IF NOT EXISTS workout_changes_user_revision ON changes(user_id,revision)')
     db.execute('CREATE INDEX IF NOT EXISTS workout_trainer_user_created ON trainer(user_id,created)')
+    db.execute("""CREATE TABLE IF NOT EXISTS train_reminder_preferences(
+        user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, roast INTEGER NOT NULL, photo_id TEXT)""")

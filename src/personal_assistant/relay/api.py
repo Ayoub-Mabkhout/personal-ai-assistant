@@ -106,7 +106,7 @@ class Result(BaseModel):
     result: dict
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
@@ -131,6 +131,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         from .reminders import ReminderStore,ReminderPump
         reminder_store=ReminderStore(Path(path).with_name('reminders.sqlite3'),**({'clock':clock} if clock else {}))
         reminder_pump=ReminderPump(reminder_store,sender,visibility=notifications.get('visibility','private'))
+    train_reminders = None
     @asynccontextmanager
     async def lifespan(app):
         if pump: pump.start()
@@ -139,6 +140,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         if release_pump: release_pump.start()
         if native_pump: native_pump.start()
         if retailer_check: retailer_check.start()
+        if train_reminders and train_push: train_reminders.start()
         try: yield
         finally:
             if pump: pump.close()
@@ -147,6 +149,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
             if release_pump: release_pump.close()
             if native_pump: native_pump.close()
             if retailer_check: retailer_check.close()
+            if train_reminders and train_push: train_reminders.close()
     app = FastAPI(title='Personal assistant relay', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
     app.state.notification_pump=pump
     app.state.reminder_pump=reminder_pump
@@ -233,7 +236,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         app.include_router(routes)
     if train_assets is not None:
         from personal_assistant.workout.web import mount_train
-        mount_train(app, workouts, submit, train_assets)
+        train_reminders = mount_train(app, workouts, submit, train_assets, train_push)
+        app.state.train_reminders = train_reminders
     if reminder_pump:
         from .reminders import reminder_router
         app.include_router(reminder_router(reminder_store,submit,worker))
@@ -376,12 +380,18 @@ def from_environment():
         task_links=TaskLinks.load(Path(os.environ.get('ASSISTANT_QUEUE_DB','/data/queue.sqlite3')).with_name('task-links.key'))
     voice_path=Path(os.environ.get('ASSISTANT_VOICE_CONFIG','/data/voice.json'))
     voice=json.loads(voice_path.read_text()) if voice_path.is_file() else None
+    train_push = None
+    train_key = Path(os.environ.get('ASSISTANT_TRAIN_PUSH_KEY', '/data/train-web-push.pem'))
+    if train_key.is_file():
+        from personal_assistant.workout.web_push import WebPush
+        subject_file = train_key.with_name('train-web-push-subject.txt')
+        train_push = WebPush(train_key, subject_file.read_text(encoding='utf-8').strip())
     return create_app(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3'),
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
                       mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
                       owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'),
-                      file_drops=file_drop_settings(),
+                      file_drops=file_drop_settings(), train_push=train_push,
                       train_assets=os.environ.get('ASSISTANT_TRAIN_ASSETS') or (
                           '/app/apps/train-web' if Path('/app/apps/train-web/index.html').is_file() else None))

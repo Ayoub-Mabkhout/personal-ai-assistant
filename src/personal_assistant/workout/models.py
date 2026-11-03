@@ -1,5 +1,6 @@
 """Version-one wire format. Metric source values are never doubled for dumbbells."""
 from datetime import datetime, date
+import re
 from typing import Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -190,11 +191,27 @@ class Sprint(Model):
         if self.end is None: self.end=add_months(self.start,4)
         if self.target_sessions is None: self.target_sessions=len(self.cycle) or len(self.scheduled) or 1
         if self.end < self.start: raise ValueError('Sprint end precedes start')
+        timed_ids = set()
         for item in self.scheduled:
-            if set(item) - {'date', 'template_id', 'notes'} or 'date' not in item:
-                raise ValueError('Scheduled sessions need date, optional template_id and notes')
-            if not self.start <= date.fromisoformat(item['date']) <= self.end:
+            if set(item) - {'id', 'date', 'starts_at', 'template_id', 'notes'} or not isinstance(item.get('date'), str):
+                raise ValueError('Scheduled sessions need a date')
+            day = date.fromisoformat(item['date'])
+            if not self.start <= day <= self.end:
                 raise ValueError('Scheduled session is outside sprint')
+            if 'starts_at' in item or 'id' in item:
+                identifier = item.get('id')
+                if not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', identifier) or identifier in timed_ids:
+                    raise ValueError('Timed sessions need a unique slot ID')
+                starts = item.get('starts_at')
+                if not isinstance(starts, str) or 'T' not in starts:
+                    raise ValueError('Timed sessions need a local time with a UTC offset')
+                when = datetime.fromisoformat(starts)
+                if when.utcoffset() is None or when.date() != day:
+                    raise ValueError('Timed sessions need a UTC offset and matching local date')
+                template = item.get('template_id')
+                if template is not None and (not isinstance(template, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', template)):
+                    raise ValueError('Invalid scheduled workout template')
+                timed_ids.add(identifier)
         return self
 
 

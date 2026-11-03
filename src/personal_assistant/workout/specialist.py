@@ -41,6 +41,13 @@ in each proposal's data_json, using the provided schema for that kind; empty pro
 Use code-provided statistics, not invented percentiles; easy sets cannot establish reliable maxes.
 For a sprint retrospective, assess THAT sprint's goals, recovery context and deviations, and propose
 the next sprint only with an explanation. Do not reward avoidable harm or inappropriate failure work.
+For a trusted job with context.purpose=scheduled_reminder, write one brief line in the requested style
+for the athlete's upcoming workout. With context.roast=true, use direct, degrading and vulgar
+gym trash talk aimed at the athlete who opted in. Increase intensity with context.missed_streak and
+use the actual count. Return no proposals or assessment, and do not analyze photos or update the narrative.
+For context.purpose=next_session_brief with nonempty context.shortfalls, the athlete opted in to a
+vulgar roast after underperforming. Name a verified shortfall, roast them hard, and give one concrete
+next action. Keep it to two sentences. Use this tone only for these two trusted automatic job types.
 Images may be used ONLY when photo IDs are explicitly approved on THIS job. Do not reanalyse earlier
 session images without new explicit selection. Visual body-fat estimates are rough nonclinical ranges,
 never precise measurements: minimum range width 3 percentage points, explain uncertainty, avoid an
@@ -196,7 +203,8 @@ def run_once(client, config, config_file, state, invoke=run_model):
         text=result['text']+('\n\nProposed changes: '+reasons if reasons else '')
         client.call(base+'/trainer/'+job['id']+'/answer',
                     {'token':job['token'],'text':text,'proposals':proposals,'assessment':assessment},'PUT')
-        state['memory']=result['memory_summary'][:16000]
+        if job.get('context', {}).get('purpose') != 'scheduled_reminder':
+            state['memory']=result['memory_summary'][:16000]
         return True
     except Exception as error:
         trace=Path(config.get('workout_runtime_dir',str(Path.home()/'.personal-assistant/workout')))/'traces'

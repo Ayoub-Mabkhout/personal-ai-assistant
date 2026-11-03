@@ -159,8 +159,10 @@ def shared_profile(account, stats):
     }
 
 
-def mount_train(app, workouts, owner_auth, assets):
+def mount_train(app, workouts, owner_auth, assets, push=None):
+    from .reminder import TrainReminders, install_reminders
     accounts = Accounts(workouts)
+    reminders = TrainReminders(workouts, push)
     browser = APIRouter(prefix='/train/api', dependencies=[Depends(same_origin)])
     owner = APIRouter(prefix='/v1/train', dependencies=[Depends(owner_auth)])
     coach = APIRouter(prefix='/v1/train/users/{user_id}/workout', dependencies=[Depends(owner_auth)])
@@ -222,9 +224,11 @@ def mount_train(app, workouts, owner_auth, assets):
         return {'items': accounts.roster()}
 
     install(browser, browser_store, browser=True)
+    install_reminders(browser, reminders, account)
     install(coach, coach_store)
     install_worker(coach, coach_store)
     for router in (browser, owner, coach):
         app.include_router(router)
     if Path(assets).is_dir():
         app.mount('/train', StaticFiles(directory=assets, html=True), name='train')
+    return reminders
