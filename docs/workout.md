@@ -82,8 +82,10 @@ date and `source.companion.scheduled_session_id`. Legacy date-only entries are v
 The relay checks the schedule every 15 seconds and sends a push 30 minutes before
 the workout. An unstarted slot counts as missed after three hours, an explicit skip
 counts immediately after its scheduled time, and completing a slot resets the
-streak. The athlete can opt in to vulgar reminders and choose one of their own
-private photos. The coach can write the copy in advance. The relay uses its own
+streak. The athlete can opt in to vulgar reminders, then separately allow Train
+to rotate through up to 12 of their private photos, one per reminder. Turning off
+either option stops photo attachments and keeps their selection. The coach can
+write the copy in advance. The relay uses its own
 fallback if the coach has no answer when the reminder is due. Where the system
 notification omits the photo, opening the reminder displays it in Train.
 

@@ -62,7 +62,8 @@ class ScheduledTrainTest(unittest.TestCase):
         digest = hashlib.sha256(raw).hexdigest()
         self.store.put_blob(digest, 'image/jpeg', raw)
         self.record('photo', 'photo', {'blob_id': digest, 'captured_at': '2026-11-04T16:00:00Z'})
-        self.reminders.settings('athlete', {'enabled': True, 'roast': True, 'photo_id': 'photo'})
+        self.reminders.settings('athlete', {'enabled': True, 'roast': True, 'photos_enabled': True,
+                                           'photo_ids': ['photo']})
         self.reminders.tick()
         self.assertEqual(self.provider.sent, [])
         self.now += 300
@@ -79,6 +80,30 @@ class ScheduledTrainTest(unittest.TestCase):
             self.reminders.history('another-athlete', payload['id'])
         self.reminders.settings('athlete', {'roast': False})
         self.assertIsNone(self.reminders.history('athlete', payload['id'])['image'])
+
+    def test_reminder_photo_opt_in_is_separate_and_rotates_selected_uploads(self):
+        self.record('sprint', 'sprint', self.plan())
+        paths = []
+        for identifier in ('photo-one', 'photo-two'):
+            raw = b'\xff\xd8\xff' + identifier.encode()
+            digest = hashlib.sha256(raw).hexdigest()
+            self.store.put_blob(digest, 'image/jpeg', raw)
+            self.record('photo', identifier, {'blob_id': digest, 'captured_at': '2026-11-03T16:00:00Z'})
+            paths.append('/train/api/photos/'+digest)
+        ids = ['photo-one', 'photo-two']
+        self.reminders.settings('athlete', {'enabled': True, 'roast': True, 'photo_ids': ids})
+        self.now += 300 - 2 * 86400
+        self.reminders.tick()
+        self.assertIsNone(self.provider.sent[-1][1]['image'])
+        self.reminders.settings('athlete', {'photos_enabled': True})
+        for expected in paths:
+            self.now += 86400
+            self.reminders.tick()
+            self.assertEqual(self.provider.sent[-1][1]['image'], expected)
+        self.reminders.settings('athlete', {'photos_enabled': False})
+        self.assertEqual(self.reminders.settings('athlete')['photo_ids'], ids)
+        for _, payload, _ in self.provider.sent:
+            self.assertIsNone(self.reminders.history('athlete', payload['id'])['image'])
 
     def test_ready_coach_supplies_message_and_cancelled_slot_does_not_retry(self):
         plan = self.plan()

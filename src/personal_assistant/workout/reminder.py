@@ -4,6 +4,7 @@ from hashlib import sha256
 import json
 import logging
 from threading import Event, Thread
+from typing import Annotated
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import Depends, HTTPException, Query
@@ -15,7 +16,7 @@ from .scheduled import LEAD, MISSED_AFTER, timed_slots
 from .store import brief_text, encoded
 from .web_push import decode, endpoint_origin
 
-DEFAULTS = {'enabled': False, 'roast': False, 'photo_id': None, 'scheduled_sprints': False}
+PhotoId = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,100}$')]
 
 
 def fallback(name, roast, streak):
@@ -34,7 +35,9 @@ class Preferences(Model):
     enabled: bool | None = None
     roast: bool | None = None
     scheduled_sprints: bool | None = None
-    photo_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,100}$')
+    photos_enabled: bool | None = None
+    photo_ids: list[PhotoId] | None = Field(default=None, max_length=12)
+    photo_id: PhotoId | None = None
 
 
 class Keys(Model):
@@ -70,12 +73,16 @@ class TrainReminders:
 
     @staticmethod
     def preferences(db, user_id):
-        row = db.execute('SELECT enabled,roast,photo_id,scheduled_sprints FROM train_reminder_preferences WHERE user_id=?',
+        row = db.execute('''SELECT enabled,roast,scheduled_sprints,photos_enabled,photo_ids
+            FROM train_reminder_preferences WHERE user_id=?''',
                          (user_id,)).fetchone()
         if not row:
-            return DEFAULTS.copy()
-        return {'enabled': bool(row['enabled']), 'roast': bool(row['roast']), 'photo_id': row['photo_id'],
-                'scheduled_sprints': bool(row['scheduled_sprints'])}
+            return {'enabled': False, 'roast': False, 'scheduled_sprints': False,
+                    'photos_enabled': False, 'photo_ids': [], 'photo_id': None}
+        photos = json.loads(row['photo_ids'])
+        return {'enabled': bool(row['enabled']), 'roast': bool(row['roast']),
+                'scheduled_sprints': bool(row['scheduled_sprints']), 'photos_enabled': bool(row['photos_enabled']),
+                'photo_ids': photos, 'photo_id': photos[0] if photos else None}
 
     @staticmethod
     def photo(db, user_id, photo_id):
@@ -92,14 +99,20 @@ class TrainReminders:
                 db.execute('BEGIN IMMEDIATE')
             values = self.preferences(db, user_id)
             if updates:
-                for key, value in updates.items():
-                    if value is not None or key == 'photo_id':
-                        values[key] = value
-                if updates.get('photo_id') and not self.photo(db, user_id, values['photo_id']):
-                    raise Missing('Choose one of your own Train photos.')
+                values.update({key: value for key, value in updates.items() if value is not None and key != 'photo_id'})
+                if 'photo_id' in updates and 'photo_ids' not in updates:
+                    values['photo_ids'] = [updates['photo_id']] if updates['photo_id'] else []
+                if 'photo_id' in updates or updates.get('photo_ids') is not None:
+                    values['photo_ids'] = list(dict.fromkeys(values['photo_ids']))
+                    if any(not self.photo(db, user_id, photo) for photo in values['photo_ids']):
+                        raise Missing('Choose your own Train photos.')
+                if updates.get('photos_enabled') and not values['roast']:
+                    raise Conflict('Enable Diss mode before enabling reminder photos.')
+                values['photo_id'] = next(iter(values['photo_ids']), None)
                 db.execute('''INSERT OR REPLACE INTO train_reminder_preferences
-                    (user_id,enabled,roast,photo_id,scheduled_sprints) VALUES(?,?,?,?,?)''',
-                    (user_id, values['enabled'], values['roast'], values['photo_id'], values['scheduled_sprints']))
+                    (user_id,enabled,roast,scheduled_sprints,photos_enabled,photo_ids) VALUES(?,?,?,?,?,?)''',
+                    (user_id, values['enabled'], values['roast'], values['scheduled_sprints'],
+                     values['photos_enabled'], encoded(values['photo_ids'])))
             return values
 
     def subscribe(self, user_id, subscription):
@@ -134,7 +147,7 @@ class TrainReminders:
         identifier = row['id']
         preferences = self.preferences(db, row['user_id'])
         image = None
-        if preferences['roast'] and preferences['photo_id'] == row['photo_id']:
+        if preferences['roast'] and preferences['photos_enabled'] and row['photo_id'] in preferences['photo_ids']:
             image = self.photo(db, row['user_id'], row['photo_id'])
         return {'id': identifier, 'title': row['title'], 'body': row['body'], 'tag': identifier,
                 'url': '/train/?reminder=' + identifier, 'image': image}
@@ -191,11 +204,24 @@ class TrainReminders:
             if context.get('roast') == preferences['roast'] and context.get('missed_streak') == streak:
                 generated = brief_text(answer['answer'], 220, 2)
         body = generated or fallback(name, preferences['roast'], streak)
+        photo_id = self.next_photo(db, user_id, preferences)
         db.execute('INSERT INTO train_reminder_history VALUES(?,?,?,?,?,?,?)',
                    (user_id, identifier, starts, 'Workout in 30 minutes', body,
-                    preferences['photo_id'] if preferences['roast'] else None, preferences['roast']))
+                    photo_id, preferences['roast']))
         self.queue_delivery(db, user_id, identifier, now)
         return identifier
+
+    def next_photo(self, db, user_id, preferences):
+        if not preferences['roast'] or not preferences['photos_enabled']:
+            return None
+        photos = [photo for photo in preferences['photo_ids'] if self.photo(db, user_id, photo)]
+        if not photos:
+            return None
+        previous = db.execute('''SELECT photo_id FROM train_reminder_history WHERE user_id=? AND photo_id IS NOT NULL
+            ORDER BY starts DESC,rowid DESC LIMIT 1''', (user_id,)).fetchone()
+        if previous and previous['photo_id'] in photos:
+            return photos[(photos.index(previous['photo_id']) + 1) % len(photos)]
+        return photos[0]
 
     @staticmethod
     def queue_delivery(db, user_id, identifier, now):
