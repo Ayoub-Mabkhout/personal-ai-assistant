@@ -210,6 +210,16 @@ def run_once(client, config, config_file, state, invoke=run_model):
         proposals=[{'mutation_id':hashlib.sha256((job['id']+':'+str(i)).encode()).hexdigest(),
                     'kind':p['kind'],'id':p['id'],'base_revision':p['base_revision'],'deleted':p.get('deleted',False),'data':json.loads(p['data_json'])}
                    for i,p in enumerate(result['proposals'])]
+        for proposal in proposals:
+            if proposal['kind'] != 'sprint':
+                continue
+            for slot in proposal['data'].get('scheduled', []):
+                if not isinstance(slot, dict):
+                    continue
+                if 'local_date' in slot and ('date' not in slot or slot['date'] == slot['local_date']):
+                    slot['date'] = slot.pop('local_date')
+                if 'starts_at' in slot:
+                    slot.pop('timezone', None)
         assessment=json.loads(result['assessment_json']) if result['assessment_json'].strip() else None
         if assessment:
             assessment.update(source_question=job['id'],model=config.get('workout_model',config.get('banking_model','gpt-6-sol')),
