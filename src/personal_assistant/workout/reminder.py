@@ -22,12 +22,12 @@ def fallback(name, roast, streak):
     if not roast:
         return f'{name} starts in 30 minutes.'
     if streak == 0:
-        return 'Get your ass to the gym, you fat fuck.'
+        return 'Man, get your fat ass up. Gym in thirty. Why you still looking at this? Put your damn shoes on.'
     if streak == 1:
-        return 'You skipped the last one, you lazy sack of shit. Get your ass to the gym.'
+        return 'Here we go. You skipped the last one. Get your ass out the door this time, bitch.'
     if streak == 2:
-        return 'Two misses in a row, you pathetic excuse factory. Get your fucking ass to the gym.'
-    return f'{streak} missed workouts, you useless sack of shit. Quit collecting excuses and get your fucking ass to the gym.'
+        return 'Two misses. Man, fuck your pre-workout. You need some pre-leave-the-house. Get your punk ass moving.'
+    return f'{streak} times? Bitch, you got gym clothes with house mileage on ’em. Shut the fuck up about Monday. Grab your bag.'
 
 
 class Preferences(Model):

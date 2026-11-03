@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import hashlib
+from importlib.resources import files
 import json
 import os
 from pathlib import Path
@@ -47,7 +48,8 @@ gym trash talk aimed at the athlete who opted in. Increase intensity with contex
 use the actual count. Return no proposals or assessment, and do not analyze photos or update the narrative.
 For context.purpose=next_session_brief with nonempty context.shortfalls, the athlete opted in to a
 vulgar roast after underperforming. Name a verified shortfall, roast them hard, and give one concrete
-next action. Keep it to two sentences. Use this tone only for these two trusted automatic job types.
+next action. Keep it to two sentences. Use the supplied roast_voice guide for these two trusted
+automatic job types when present.
 Images may be used ONLY when photo IDs are explicitly approved on THIS job. Do not reanalyse earlier
 session images without new explicit selection. Visual body-fat estimates are rough nonclinical ranges,
 never precise measurements: minimum range width 3 percentage points, explain uncertainty, avoid an
@@ -97,6 +99,11 @@ def run_model(config, config_file, state, job, images, workspace):
               'model':config.get('workout_model',config.get('banking_model','gpt-6-sol')),
               'now':datetime.now(timezone.utc).isoformat(),
               'instructions':'Use live read tools for context; do not load all history into one answer.'}
+    context = job.get('context', {})
+    purpose = context.get('purpose')
+    if ((purpose == 'scheduled_reminder' and context.get('roast') is True)
+            or (purpose == 'next_session_brief' and context.get('shortfalls'))):
+        prompt['roast_voice'] = files(__package__).joinpath('roast-voice.md').read_text(encoding='utf-8')
     profile_file = config.get('workout_profile_file')
     if not state.get('session') and profile_file:
         prompt['owner_training_context'] = Path(profile_file).read_text(encoding='utf-8')[:40000]
