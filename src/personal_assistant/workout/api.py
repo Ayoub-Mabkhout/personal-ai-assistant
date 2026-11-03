@@ -81,6 +81,8 @@ def install(router, get_store, *, browser=False):
 
     @router.get('/overview')
     def summary(store=Depends(get_store)):
+        if not store.status()['available']:
+            store.prepare_brief()
         return {**overview(store), 'scheduled_sprints': store.scheduled_sprints_enabled()}
 
     @router.post('/sprints/{identifier}/extend')

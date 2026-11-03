@@ -77,7 +77,9 @@ function picker(order,current){return el('div',{class:'cycle',attrs:{role:'radio
   const b=el('button',{type:'button',class:'cycle-btn'+(on?' on':''),text:name.split(/\s+[-–—:]\s+/)[0],attrs:{role:'radio','aria-checked':String(on),'aria-label':name}});b.onclick=()=>{chosen=id;haptic();render()};return b}))}
 /** The coach's latest brief, or plainly where it stands. Reading it never runs the model. */
 function brief(){const b=overview().next_session_brief;if(!b)return null;const has=!!b.text,off=!has&&!autoBriefs();
-  const box=el('button',{type:'button',class:'hero-brief'},icon('sparkle'),el('span',{text:has?b.text:off?'Automatic briefs are off.':history.briefState(b.status)}));box.onclick=()=>off?profile():nav.coach({},null);return box}
+  const pending=['waiting','writing'].includes(b.status);
+  const text=has?b.text+(pending?' '+history.briefState(b.status):''):off?'Automatic briefs are off.':history.briefState(b.status);
+  const box=el('button',{type:'button',class:'hero-brief'},icon('sparkle'),el('span',{text}));box.onclick=()=>off?profile():nav.coach({},null);return box}
 export function begin(name,template,sprint,date,changed,shorter,slot){
   const d=live.fromTemplate(name,template,sprint,date,slot);if(changed)d.changes.push(changed);
   if(shorter&&d.exercises.length>1)d.exercises.length=Math.max(1,Math.ceil(d.exercises.length/2));

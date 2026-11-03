@@ -1,4 +1,4 @@
-// One durable conversation with the coach. It only proposes: nothing changes until the owner approves, and offline it says so and keeps the draft.
+// One durable conversation. The relay accepts questions while the coach is offline.
 import {el,icon,iconButton,page,toast,uid,clock} from './core.js';
 import * as store from './store.js';
 import * as units from './units.js';
@@ -24,8 +24,8 @@ export function open(context={},live=null,prefill='',photos=[]){
   async function poll(){
     if(p.closed)return;
     try{const r=await api('trainer/conversation?limit=50');const on=!!r.status?.available;state.textContent=on?'Online':'Offline';state.dataset.on=String(on);
-      const key=JSON.stringify(r.items);if(key!==seen){seen=key;paint(r.items||[]);requestAnimationFrame(()=>p.body.scrollTo({top:p.body.scrollHeight,behavior:'smooth'}))}}
-    catch{state.textContent='Offline';state.dataset.on='false'}
+      const key=JSON.stringify([on,r.items]);if(key!==seen){seen=key;paint(r.items||[],on);requestAnimationFrame(()=>p.body.scrollTo({top:p.body.scrollHeight,behavior:'smooth'}))}}
+    catch{state.textContent='No connection';state.dataset.on='false'}
     timer=setTimeout(poll,5000);
   }
   async function ask(){
@@ -34,17 +34,20 @@ export function open(context={},live=null,prefill='',photos=[]){
     const key=text+'\n'+JSON.stringify(wire)+'\n'+photos.join(',');const prior=pending();const id=prior.key===key?prior.id:uid();
     try{sessionStorage.setItem(PENDING,JSON.stringify({key,id,text}))}catch{}
     try{const problem=await store.sync();if(problem&&problem!=='')throw new Error(problem);
-      await api('trainer/questions',{body:{id,text,photos,photo_approval:photos.length>0,context:wire}});
+      const result=await api('trainer/questions',{body:{id,text,photos,photo_approval:photos.length>0,context:wire}});
+      if(result.state==='queued')toast('Message queued. Check this Coach chat for the reply.');
       input.value='';input.style.height='';photos=[];attached?.remove();try{sessionStorage.removeItem(PENDING)}catch{}clearTimeout(timer);poll()}
-    catch(e){toast(e instanceof ApiError?(e.status===409?'Your coach is offline. Your question is still here.':'Your server refused the question.'):'No connection. Your question is still here.')}
+    catch(e){toast(e instanceof ApiError?(e.status===409?'Couldn’t queue this message. Your draft is still here.':'Your server refused the question.'):'No connection. Your draft is still here. Tap Send when connected.')}
     finally{send.disabled=false}
   }
-  function paint(list){
+  function paint(list,online){
     const shown=list.filter(q=>!['next_session_brief','sprint_brief'].includes(q.context?.purpose));
-    if(!shown.length){items.replaceChildren(el('p',{class:'empty',text:'Ask about a swap, fatigue, pain or your plan.'}));return}
+    if(!shown.length){items.replaceChildren(el('p',{class:'empty',text:online?'Ask about a swap, fatigue, pain or your plan.':'The coach is offline. You can still send a message. The reply will appear in this chat when the coach is back.'}));return}
     items.replaceChildren(...shown.flatMap(q=>{const mine=el('p',{class:'bubble mine',text:q.question});
       if(q.state==='completed'){const c=el('div',{class:'bubble coach'},el('p',{text:q.answer}));proposals(c,q);return [mine,c]}
-      return [mine,el('p',{class:'bubble wait'+(q.state==='failed'?' failed':''),text:q.state==='failed'?"Your coach couldn't answer. Try again.":'Your coach is thinking…'})]}));
+      const message=q.state==='failed'?"Your coach couldn't answer. Try again.":q.state==='queued'?
+        (online?'Queued. The reply will appear here.':'Queued. The reply will appear here when the coach is back online.'):'Your coach is thinking…';
+      return [mine,el('p',{class:'bubble wait'+(q.state==='failed'?' failed':''),text:message})]}));
   }
   /** Shows what each proposal would change next to what's there now; Apply takes them all, once. */
   function proposals(c,q){

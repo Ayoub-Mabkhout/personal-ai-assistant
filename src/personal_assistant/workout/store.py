@@ -199,7 +199,6 @@ class Workouts:
                 if (old['question'],old['photos'],old['context']) != (text,encoded(photos),encoded(context or {})):
                     raise Conflict('Question ID already used')
                 return {'id': identifier, 'state': old['state']}
-            if not self.status(db)['available']: raise Conflict('Workout specialist is unavailable while Codex is offline')
             for photo in photos:
                 if not db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0", (self.user_id, photo)).fetchone():
                     raise ValueError('Selected photo is missing')
@@ -386,7 +385,7 @@ class Workouts:
         try: today=datetime.fromtimestamp(self.clock(),ZoneInfo(timezone)).date().isoformat()
         except (ValueError,ZoneInfoNotFoundError): raise ValueError('Unknown brief timezone') from None
         with self.db() as db:
-            if not self.status(db)['available']: return {'queued':False}
+            db.execute('BEGIN IMMEDIATE')
             rows=[self.row(r) for r in db.execute('SELECT * FROM entities WHERE user_id=? AND deleted=0', (self.user_id,))]
             profiles=[r for r in rows if r['kind']=='athlete']
             if not profiles or not max(profiles,key=lambda r:r['updated'])['data'].get('auto_coach_briefs'):
@@ -407,7 +406,7 @@ class Workouts:
             next_item=next_workout(rows,date.fromisoformat(today))
             if next_item:
                 sprint_id=next_item['sprint_id'];template_id=next_item['template_id'];when=next_item.get('date') or today
-                session_id=sprint_id+':'+str(next_item['sequence_number'])+':'+template_id
+                session_id=sprint_id+':'+str(next_item['sequence_number'])+':'+(template_id or '')
             else:
                 choices=[]
                 completed={(r['data'].get('sprint_id'),scheduled_day(r['data']).isoformat()) for r in rows
@@ -427,7 +426,10 @@ class Workouts:
             identifier='brief_'+signature
             if db.execute('SELECT 1 FROM trainer WHERE user_id=? AND id=?',(self.user_id, identifier)).fetchone(): return {'queued':False}
             cursor=db.execute('SELECT coalesce(max(revision),0) FROM changes WHERE user_id=?', (self.user_id,)).fetchone()[0]
-        result=self.question(identifier,'Prepare a concise brief for the next session using the current sprint goals, recent performance and recovery. Do not change the plan or analyse photos.',
-            context={'purpose':'next_session_brief','automatic':True,'session_id':session_id,'revision':cursor,
-                     'date':when,'sprint_id':sprint_id,'template_id':template_id})
-        return {'queued':True,**result}
+            question = ('Prepare a concise brief for the next session using the current sprint goals, recent performance and recovery. '
+                        'Do not change the plan or analyse photos.')
+            context = {'purpose':'next_session_brief','automatic':True,'session_id':session_id,'revision':cursor,
+                       'date':when,'sprint_id':sprint_id,'template_id':template_id}
+            db.execute("""INSERT INTO trainer(user_id,id,question,photos,context,created,state)
+                VALUES(?,?,?,'[]',?,?,'queued')""", (self.user_id,identifier,question,encoded(context),self.clock()))
+        return {'queued':True,'id':identifier,'state':'queued'}

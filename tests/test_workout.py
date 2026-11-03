@@ -130,7 +130,8 @@ class WorkoutTests(unittest.TestCase):
         self.assertEqual(records['Lateral Raise (Dumbbell)']['load_convention'],'per_hand')
 
     def test_single_specialist_leases_and_persistent_conversation(self):
-        with self.assertRaises(Conflict): self.store.question('question_one','Hello')
+        self.assertFalse(self.store.status()['available'])
+        self.assertEqual(self.store.question('question_one','Hello')['state'],'queued')
         self.store.heartbeat()
         self.store.question('question_one','Hello')
         self.store.question('question_two','Follow-up')
@@ -459,13 +460,14 @@ class WorkoutTests(unittest.TestCase):
         profile=self.store.mutate([op('athlete','self',{})])[0]
         self.store.mutate([op('sprint','sprint1',dict(name='Next sprint',phase='strength',start='2026-01-01',end='2026-01-14',
             scheduled=[{'date':'2026-01-03','template_id':'plan'}]))])
-        self.store.heartbeat()
         self.assertFalse(self.store.prepare_brief()['queued'])
         self.store.mutate([op('athlete','self',{**profile['data'],'auto_coach_briefs':True},profile['revision'])])
         self.assertFalse(self.store.prepare_brief()['queued']) # wait for stable inputs
-        self.now+=121;self.store.heartbeat()
+        self.now+=121
         self.assertTrue(self.store.prepare_brief()['queued'])
+        self.assertEqual(self.store.next_session_brief()['status'],'waiting')
         self.assertFalse(self.store.prepare_brief()['queued'])
+        self.store.heartbeat()
         claim=self.store.claim()
         self.assertEqual(claim['photos'],[])
         self.assertTrue(claim['context']['automatic'])

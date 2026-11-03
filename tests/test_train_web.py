@@ -70,10 +70,15 @@ class TrainWebTest(unittest.TestCase):
 
         first_worker = f'/v1/train/users/{first_id}/workout/trainer'
         second_worker = f'/v1/train/users/{second_id}/workout/trainer'
+        queued = first.post(TRAIN+'/trainer/questions', json={'id': 'same-coach-question',
+                            'text': 'First private question', 'context': {'not_before': 99999999999}})
+        self.assertEqual(queued.status_code, 200)
+        self.assertEqual(queued.json()['state'], 'queued')
+        chat = first.get(TRAIN+'/trainer/conversation').json()
+        self.assertFalse(chat['status']['available'])
+        self.assertEqual(chat['items'][0]['state'], 'queued')
         for route in (first_worker, second_worker):
             self.assertEqual(self.admin.put(route+'/heartbeat', headers=ADMIN, json={'state': 'ready'}).status_code, 200)
-        self.assertEqual(first.post(TRAIN+'/trainer/questions', json={'id': 'same-coach-question',
-                         'text': 'First private question', 'context': {'not_before': 99999999999}}).status_code, 200)
         job = self.admin.post(first_worker+'/claim', headers=ADMIN).json()['job']
         self.assertEqual(job['question'], 'First private question')
         self.assertIsNone(self.admin.post(second_worker+'/claim', headers=ADMIN).json()['job'])

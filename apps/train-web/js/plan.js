@@ -22,7 +22,8 @@ function stats(h,d){const done=h?.completed||0,target=d.target_sessions||0,load=
   return el('div',{class:'stats four'},stat(done+(target?'/'+target:''),'workouts'),stat(load>0?units.total(load):'–','lifted'),stat(String(records),records===1?'record':'records'),stat(String(ranks),ranks===1?'rank up':'rank ups'))}
 /** The coach's review of a sprint, or where it stands; null before the sprint ends. */
 function review(h){if(!h?.ended)return null;const b=h.brief,state=b?.state||'',ready=state==='ready';
-  return el('div',{class:'brief'+(ready?' ready':'')},icon('sparkle'),el('p',{text:ready?b.text:state==='writing'?"Your coach is writing this sprint's review…":state==='failed'?"Your coach couldn't write this review.":'Queued for when your coach is back.'}))}
+  if(!b)return null;
+  return el('div',{class:'brief'+(ready?' ready':'')},icon('sparkle'),el('p',{text:ready?b.text:state==='writing'?"Your coach is writing. Find the review in this sprint.":state==='failed'?"Your coach couldn't write this review.":'Review queued. Find it in this sprint when the coach is back online.'}))}
 
 /** Past, current and planned sprints as chapters, newest first, each in the colour it has on the calendar. */
 export function sprintList(){

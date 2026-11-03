@@ -28,11 +28,18 @@ export function sessionStats(w){
 }
 
 const autoBriefs=()=>!!store.athlete().auto_coach_briefs;
-export function briefState(status){return {writing:'Your coach is writing…',waiting:'Queued for when your coach is back.',failed:"Your coach couldn't write this.",unavailable:'Coach offline.'}[status]||'Your coach will write this soon.'}
+export function briefState(status, location='Train → Next workout'){return {
+  writing:'Your coach is writing. Read it in '+location+'.',
+  waiting:'Brief queued. Read it in '+location+' when the coach is back online.',
+  failed:"Your coach couldn't write this.",
+  unavailable:'Coach offline. The brief appears in '+location+' once it can be prepared.',
+}[status]||'Check '+location+' for the brief.'}
 /** One workout's brief, for the end screen and History; null when a session never had one. */
 export function workoutBrief(id,history){
   const b=(store.overview().workout_briefs||{})[id];if(!b&&history)return null;
-  const ready=b?.state==='ready',text=ready?b.text:b?briefState(b.state):autoBriefs()?"Your coach gets this when you're back online.":'Automatic briefs are off.';
+  const ready=b?.state==='ready',location='Train → History → this workout';
+  const text=ready?b.text:b?briefState(b.state,location):autoBriefs()?
+    'The brief queues when this workout syncs. Read it in '+location+'.':'Automatic briefs are off.';
   const box=el('div',{class:'brief'+(ready?' ready':''),attrs:{role:'status'}},icon('sparkle'),el('p',{text}));
   if(!ready&&!b&&!autoBriefs()){box.classList.add('tappable');box.onclick=()=>nav.profile()}
   return box;
