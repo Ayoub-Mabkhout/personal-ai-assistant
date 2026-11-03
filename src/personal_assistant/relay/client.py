@@ -5,6 +5,15 @@ import urllib.parse
 import urllib.request
 
 
+def long_poll_seconds(path):
+    """The ?wait= a long-polling request asked the relay to hold it for; added to the socket timeout."""
+    query = urllib.parse.urlsplit(path).query
+    try:
+        return max(0.0, min(60.0, float(urllib.parse.parse_qs(query).get('wait', ['0'])[0])))
+    except ValueError:
+        return 0.0
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
@@ -26,4 +35,4 @@ class OwnerClient:
         if len(token) < 32: raise ValueError('Invalid protected submit credential.')
         request = urllib.request.Request(self.origin + path, data=json.dumps(payload).encode() if payload is not None else None,
             headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method=method)
-        with self.opener.open(request, timeout=15) as response: return json.load(response)
+        with self.opener.open(request, timeout=15 + long_poll_seconds(path)) as response: return json.load(response)

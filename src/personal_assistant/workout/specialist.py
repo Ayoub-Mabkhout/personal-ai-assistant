@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from urllib.request import Request
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -18,6 +19,9 @@ from ..relay.client import OwnerClient
 from ..worker.runtime import Singleton
 from .schema import OWNER
 from .tools import workout_path
+
+LONG_POLL_SECONDS = 25
+RETRY_CAP_SECONDS = 30
 
 INSTRUCTIONS = '''You are the owner's persistent workout specialist. Use workout_read MCP tools to read
 actual workouts, exercises, bodyweight, recovery and sprints; search/page related records when needed.
@@ -120,7 +124,7 @@ def run_model(config, config_file, state, job, images, workspace):
     process = subprocess.Popen(args,cwd=workspace,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
     try:
-        stdout,stderr = process.communicate(json.dumps(prompt,ensure_ascii=False).encode(),timeout=config.get('workout_timeout_seconds',600))
+        stdout,stderr,marks = communicate_timed(process,json.dumps(prompt,ensure_ascii=False).encode(),config.get('workout_timeout_seconds',600))
     except BaseException:
         if os.name=='nt': subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
         else:
@@ -145,7 +149,34 @@ def run_model(config, config_file, state, job, images, workspace):
         if event.get('type')=='turn.completed': state['last_usage']=event.get('usage',{})
     result=json.loads(answer_file.read_text(encoding='utf-8'))
     if not isinstance(result.get('text'),str) or not isinstance(result.get('memory_summary'),str): raise ValueError('Incomplete trainer answer')
+    result['_marks']=marks  # monotonic times of the first model output and first answer text
     return result
+
+
+def communicate_timed(process, data, timeout):
+    """communicate(), also noting when the model's first output item and first answer text arrived."""
+    out,err,marks=[],[],{}
+    def read_stdout():
+        for line in iter(process.stdout.readline,b''):
+            out.append(line)
+            try: event=json.loads(line)
+            except ValueError: continue
+            if not isinstance(event,dict) or not str(event.get('type','')).startswith('item.'): continue
+            now=time.monotonic()
+            marks.setdefault('first_output',now)
+            item=event.get('item') if isinstance(event.get('item'),dict) else {}
+            if 'agent_message' in (item.get('type'),item.get('item_type')): marks.setdefault('first_text',now)
+    def read_stderr(): err.append(process.stderr.read())
+    readers=[threading.Thread(target=read_stdout,daemon=True),threading.Thread(target=read_stderr,daemon=True)]
+    for reader in readers: reader.start()
+    try:
+        process.stdin.write(data)
+        process.stdin.close()
+    except OSError:
+        pass  # the process exited early; its output explains why
+    process.wait(timeout=timeout)
+    for reader in readers: reader.join(timeout=15)
+    return b''.join(out),b''.join(err),marks
 
 
 def download_photos(client,job,root,base='/relay/v1/workout'):
@@ -185,11 +216,19 @@ def photo_context(client, job, base='/relay/v1/workout'):
             'earlier_analyses':sorted(earlier,key=lambda e:e['assessed_at'])}
 
 
-def run_once(client, config, config_file, state, invoke=run_model):
+def run_once(client, config, config_file, state, invoke=run_model, poll=None):
+    """One heartbeat + claim + answer cycle. `poll` (a dict) learns whether the relay held the claim open."""
+    poll = {} if poll is None else poll
     base = workout_path(config.get('workout_user_id'))
     client.call(base+'/trainer/heartbeat',{'state':'ready'},'PUT')
     client.call(base+'/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
-    job=client.call(base+'/trainer/claim',{},'POST')['job']
+    wait = config.get('long_poll_seconds', LONG_POLL_SECONDS)
+    response=client.call(base+'/trainer/claim'+('?'+urlencode({'wait':wait}) if wait else ''),{},'POST')
+    received=time.monotonic()
+    # Relays without long polling omit wait_seconds (and would reject timings in the answer).
+    poll['long_poll']=bool(response.get('wait_seconds'))
+    supports_timings='wait_seconds' in response
+    job=response['job']
     if not job: return False
     stop=threading.Event()
     lost=threading.Event()
@@ -205,8 +244,14 @@ def run_once(client, config, config_file, state, invoke=run_model):
         with tempfile.TemporaryDirectory(prefix='workout-specialist-') as directory:
             root=Path(directory)
             images=download_photos(client,job,root,base)
+            model_started=time.monotonic()
             result=invoke(config,config_file,state,job,images,root)
+            model_finished=time.monotonic()
         if lost.is_set(): raise RuntimeError('Trainer lease lost')
+        marks=result.pop('_marks',None) or {}
+        timings={'model_started_after':model_started-received,'model_finished_after':model_finished-received,
+                 **{name+'_after':value-received for name,value in marks.items() if name in ('first_output','first_text')}}
+        print('Trainer job phases: '+' '.join(f'{k.removesuffix("_after")}={v:.2f}s' for k,v in timings.items()),flush=True)
         proposals=[{'mutation_id':hashlib.sha256((job['id']+':'+str(i)).encode()).hexdigest(),
                     'kind':p['kind'],'id':p['id'],'base_revision':p['base_revision'],'deleted':p.get('deleted',False),'data':json.loads(p['data_json'])}
                    for i,p in enumerate(result['proposals'])]
@@ -227,7 +272,8 @@ def run_once(client, config, config_file, state, invoke=run_model):
         reasons='\n'.join(p['reason'] for p in result['proposals'] if p.get('reason'))
         text=result['text']+('\n\nProposed changes: '+reasons if reasons else '')
         client.call(base+'/trainer/'+job['id']+'/answer',
-                    {'token':job['token'],'text':text,'proposals':proposals,'assessment':assessment},'PUT')
+                    {'token':job['token'],'text':text,'proposals':proposals,'assessment':assessment,
+                     **({'timings':timings} if supports_timings else {})},'PUT')
         if job.get('context', {}).get('purpose') != 'scheduled_reminder':
             state['memory']=result['memory_summary'][:16000]
         return True
@@ -257,15 +303,27 @@ def run_coach(config, config_file, once=False, invoke=run_model):
     state_file=runtime/'specialist.json'
     state=json.loads(state_file.read_text(encoding='utf-8')) if state_file.exists() else {}
     client=OwnerClient(config)
+    poll={}
+    backoff=0
     with Singleton(runtime/'specialist.lock'):
         while True:
-            failed=False
-            try: run_once(client,config,config_file,state,invoke)
+            failed=worked=False
+            try: worked=run_once(client,config,config_file,state,invoke,poll)
             except Exception as error:
                 print(type(error).__name__+': workout specialist unavailable',flush=True);failed=True
             temp=state_file.with_suffix('.tmp');temp.write_text(json.dumps(state,ensure_ascii=False),encoding='utf-8');os.replace(temp,state_file)
             if once: break
-            threading.Event().wait(120 if failed else 5)
+            if failed:
+                # 5, 10, 20, 30, 30 ... seconds. A model failure answers the job as failed (briefs are deferred
+                # 30 minutes) before we get here, so a short retry never re-runs the model on the same request;
+                # it only brings the coach back online sooner for the next question.
+                backoff=min(RETRY_CAP_SECONDS, backoff*2 if backoff else 5)
+                threading.Event().wait(backoff)
+                continue
+            backoff=0
+            # The relay already held an empty claim open; a finished job may have a successor queued.
+            if not (worked or poll.get('long_poll')):
+                threading.Event().wait(5)  # relay without long polling
 
 
 def run_member_coaches(config, config_file):

@@ -33,6 +33,9 @@ def initialize(db):
             db.execute(f'DROP TABLE legacy_{table}')
     db.execute('CREATE INDEX IF NOT EXISTS workout_changes_user_revision ON changes(user_id,revision)')
     db.execute('CREATE INDEX IF NOT EXISTS workout_trainer_user_created ON trainer(user_id,created)')
+    if 'timings' not in {row['name'] for row in db.execute('PRAGMA table_info(trainer)')}:
+        # Phase timestamps (claimed, model started, first output, answered); never shown to athletes.
+        db.execute('ALTER TABLE trainer ADD COLUMN timings TEXT')
     db.execute("""CREATE TABLE IF NOT EXISTS train_reminder_preferences(
         user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, roast INTEGER NOT NULL, photo_id TEXT,
         scheduled_sprints INTEGER NOT NULL DEFAULT 0, photos_enabled INTEGER NOT NULL DEFAULT 0,

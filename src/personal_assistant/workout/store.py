@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import time
 from ..relay.store import Conflict, Missing
+from ..relay.wakeups import Wakeups, log_phases
 from .models import MODELS, Mutation, validate
 from .schema import OWNER, initialize
 
@@ -34,6 +35,9 @@ class Workouts:
         self.path, self.clock = Path(path), clock
         self.user_id = OWNER
         self.competition = False
+        # Shared by every for_user() copy: wake long polls after the writing transaction commits.
+        self.wakeups = Wakeups()
+        self._pending_wakeups = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             initialize(db)
@@ -47,13 +51,24 @@ class Workouts:
     def db(self):
         db = sqlite3.connect(self.path, timeout=20)
         db.row_factory = sqlite3.Row
+        self._pending_wakeups[id(db)] = set()
         try:
             yield db
             db.commit()
         except BaseException:
+            self._pending_wakeups.pop(id(db), None)
             db.rollback()
             raise
         finally: db.close()
+        keys = self._pending_wakeups.pop(id(db), None)
+        if keys: self.wakeups.notify(*keys)
+
+    def wake(self, db, *kinds, user_id=None):
+        """Mark trainer work ('trainer') or a visible chat change ('conversation') for this user."""
+        keys = {(kind, user_id or self.user_id) for kind in kinds}
+        pending = self._pending_wakeups.get(id(db))
+        if pending is None: self.wakeups.notify(*keys)  # not one of our transactions: no commit to wait for
+        else: pending.update(keys)
 
     def mutate(self, operations, actor='owner', db=None):
         if db is None:
@@ -91,7 +106,9 @@ class Workouts:
                 (self.user_id, op['kind'], op['id'], revision, op['deleted'], encoded(data), now))
             result = dict(kind=op['kind'], id=op['id'], revision=revision, deleted=op['deleted'], data=data, updated=now)
             if op['kind'] == 'workout':
-                if op['deleted']: db.execute("DELETE FROM trainer WHERE user_id=? AND id=? AND state='queued'",(self.user_id, 'brief_workout_'+op['id']))
+                if op['deleted']:
+                    if db.execute("DELETE FROM trainer WHERE user_id=? AND id=? AND state='queued'",(self.user_id, 'brief_workout_'+op['id'])).rowcount:
+                        self.wake(db, 'conversation')
                 else:
                     self.enqueue_workout_brief(db,op['id'],data,old,revision)
                     if self.competition:
@@ -177,7 +194,11 @@ class Workouts:
     def heartbeat(self, state='ready', detail=''):
         if state not in ('ready', 'busy', 'blocked'): raise ValueError('Invalid trainer readiness')
         with self.db() as db:
+            before = self.status(db)
             db.execute('INSERT OR REPLACE INTO specialist VALUES(?,1,?,?,?)', (self.user_id, self.clock(), state, detail[:500]))
+            after = self.status(db)
+            if (before['available'], before['state']) != (after['available'], after['state']):
+                self.wake(db, 'conversation')
 
     def status(self, db=None):
         if db is None:
@@ -204,7 +225,16 @@ class Workouts:
                     raise ValueError('Selected photo is missing')
             db.execute('INSERT INTO trainer(user_id,id,question,photos,context,created,state) VALUES(?,?,?,?,?,?,?)',
                        (self.user_id, identifier, text, encoded(photos), encoded(context or {}), self.clock(), 'queued'))
+            self.wake(db, 'trainer', 'conversation')
         return {'id': identifier, 'state': 'queued'}
+
+    def conversation_view(self, limit=100, before=None):
+        """The chat plus a version that changes only when something the athlete sees changes."""
+        with self.db() as db:
+            items, status = self.conversation(limit, before, db), self.status(db)
+        signature = [(i['id'], i['state'], i['answered_at'], i['approved']) for i in items]
+        version = hashlib.sha256(encoded([signature, status['available'], status['state']]).encode()).hexdigest()[:24]
+        return {'items': items, 'status': status, 'version': version}
 
     def conversation(self, limit=100, before=None, db=None):
         if not 1 <= limit <= 200: raise ValueError('Invalid conversation limit')
@@ -237,7 +267,12 @@ class Workouts:
                 prefs = db.execute('SELECT roast FROM train_reminder_preferences WHERE user_id=?', (self.user_id,)).fetchone()
                 if not prefs or not prefs['roast']:
                     context.pop('shortfalls')
-            db.execute("UPDATE trainer SET state='running',token=?,lease_until=? WHERE user_id=? AND id=?",(token, self.clock()+120, self.user_id, row['id']))
+            timings = json.loads(row['timings'] or '{}')
+            timings.update(claimed=self.clock(), claims=timings.get('claims', 0)+1)
+            timings.setdefault('first_claimed', timings['claimed'])
+            db.execute("UPDATE trainer SET state='running',token=?,lease_until=?,timings=? WHERE user_id=? AND id=?",
+                       (token, self.clock()+120, encoded(timings), self.user_id, row['id']))
+            self.wake(db, 'conversation')
             return dict(id=row['id'],question=row['question'],photos=json.loads(row['photos']),context=context,token=token)
 
     def renew(self, identifier, token):
@@ -246,7 +281,7 @@ class Workouts:
                                (self.clock()+120, self.user_id, identifier, token, self.clock())).rowcount
             if not count: raise Conflict('Trainer lease lost')
 
-    def finish(self, identifier, token, answer, proposals, state='completed',assessment=None):
+    def finish(self, identifier, token, answer, proposals, state='completed',assessment=None,timings=None):
         if state not in ('completed','failed'): raise ValueError('Invalid outcome')
         if not isinstance(answer,str) or not 1<=len(answer)<=24000 or len(proposals)>20: raise ValueError('Invalid specialist response')
         validated = [Mutation.model_validate(p).model_dump() for p in proposals]
@@ -269,6 +304,7 @@ class Workouts:
                 # A limit or outage shouldn't lose the brief: try again later, about six hours in all.
                 context.update(attempts=context.get('attempts',0)+1,not_before=self.clock()+1800)
                 db.execute("UPDATE trainer SET state='queued',token=NULL,lease_until=NULL,context=? WHERE user_id=? AND id=?",(encoded(context), self.user_id, identifier))
+                self.wake(db, 'conversation')
                 return
             self.check_proposals(db,validated)
             if assessment:
@@ -281,9 +317,30 @@ class Workouts:
                     if not db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0",(self.user_id, photo)).fetchone():
                         raise ValueError('An approved photo was deleted during analysis')
                 self.mutate([dict(mutation_id=hashlib.sha256(('assessment:'+identifier).encode()).hexdigest(),kind='composition',id=identifier,base_revision=0,data=data)],'approved_photo_analysis',db)
-            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,answered_at=?,lease_until=NULL WHERE user_id=? AND id=? AND token=? AND state='running' AND lease_until>?",
-                (answer, encoded(validated), state, self.clock(), self.user_id, identifier, token, self.clock())).rowcount
+            phases = self.phases(job, timings)
+            changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,answered_at=?,lease_until=NULL,timings=? WHERE user_id=? AND id=? AND token=? AND state='running' AND lease_until>?",
+                (answer, encoded(validated), state, self.clock(), encoded(phases), self.user_id, identifier, token, self.clock())).rowcount
             if not changed: raise Conflict('Trainer lease lost')
+            self.wake(db, 'conversation')
+        log_phases('trainer', f"purpose={context.get('purpose') or 'question'} state={state} claims={phases.get('claims', 1)}", [
+            ('queued_to_claimed', phases.get('first_claimed', phases.get('claimed', job['created'])) - job['created']),
+            ('claimed_to_model', phases['model_started'] - phases['claimed'] if 'model_started' in phases else None),
+            ('model_to_first_output', phases['first_output'] - phases['model_started'] if {'first_output', 'model_started'} <= phases.keys() else None),
+            ('model_to_first_text', phases['first_text'] - phases['model_started'] if {'first_text', 'model_started'} <= phases.keys() else None),
+            ('model', phases['model_finished'] - phases['model_started'] if {'model_finished', 'model_started'} <= phases.keys() else None),
+            ('claimed_to_answered', phases['answered'] - phases['claimed'] if 'claimed' in phases else None),
+            ('total', phases['answered'] - job['created'])])
+
+    def phases(self, job, reported):
+        """Relay timestamps plus the coach's offsets (seconds after it received the claim, on its own clock)."""
+        phases = json.loads(job['timings'] or '{}') if 'timings' in job.keys() else {}
+        claimed = phases.get('claimed')
+        for name in ('model_started', 'first_output', 'first_text', 'model_finished'):
+            offset = (reported or {}).get(name + '_after')
+            if claimed is not None and offset is not None:
+                phases[name] = claimed + offset
+        phases.update(queued=job['created'], answered=self.clock())
+        return phases
 
     def approve(self, identifier):
         with self.db() as db:
@@ -294,6 +351,7 @@ class Workouts:
             if not row['approved']: self.check_proposals(db,proposals)
             result = self.mutate(proposals,'approved_trainer_proposal',db)
             db.execute('UPDATE trainer SET approved=1 WHERE user_id=? AND id=?', (self.user_id, identifier))
+            self.wake(db, 'conversation')
             return {'approved': True, 'results': result}
 
     def check_proposals(self, db, proposals):
@@ -343,6 +401,7 @@ class Workouts:
         db.execute('INSERT OR IGNORE INTO trainer(user_id,id,question,photos,context,created,state) VALUES(?,?,?,?,?,?,?)',
             (self.user_id, 'brief_workout_'+identifier, question, '[]', encoded({'purpose':'next_session_brief','automatic':True,'workout_id':identifier,
              'session_id':'workout:'+identifier,'revision':revision,'shortfalls':deficits}), self.clock(), 'queued'))
+        self.wake(db, 'trainer', 'conversation')
 
     def enqueue_sprint_brief(self, db, identifier, data):
         """A finished sprint gets one short review of its own, written when the coach is next free."""
@@ -352,6 +411,7 @@ class Workouts:
                   'what improved, what held back, and the focus for the next sprint. Read its workouts for evidence. No headings, lists or preamble. Do not change the plan or analyse photos.')
         db.execute('INSERT OR IGNORE INTO trainer(user_id,id,question,photos,context,created,state) VALUES(?,?,?,?,?,?,?)',
             (self.user_id, 'brief_sprint_'+identifier, question, '[]', encoded({'purpose':'sprint_brief','automatic':True,'sprint_id':identifier}), self.clock(), 'queued'))
+        self.wake(db, 'trainer', 'conversation')
 
     def sprint_briefs(self):
         with self.db() as db:
@@ -432,4 +492,5 @@ class Workouts:
                        'date':when,'sprint_id':sprint_id,'template_id':template_id}
             db.execute("""INSERT INTO trainer(user_id,id,question,photos,context,created,state)
                 VALUES(?,?,?,'[]',?,?,'queued')""", (self.user_id,identifier,question,encoded(context),self.clock()))
+            self.wake(db, 'trainer', 'conversation')
         return {'queued':True,'id':identifier,'state':'queued'}

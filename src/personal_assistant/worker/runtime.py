@@ -31,6 +31,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise TransportError(302)
 
 
+from personal_assistant.relay.client import long_poll_seconds
+
+LONG_POLL_SECONDS = 25
+
+
 class RelayClient:
     def __init__(self, base, token_file, timeout=8):
         parsed = urllib.parse.urlsplit(base)
@@ -47,7 +52,7 @@ class RelayClient:
             data=json.dumps(payload).encode() if payload is not None else None,
             headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method=method)
         try:
-            with self.opener.open(request, timeout=self.timeout) as response:
+            with self.opener.open(request, timeout=self.timeout + long_poll_seconds(path)) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             raise TransportError(exc.code) from None
@@ -282,6 +287,7 @@ class Worker:
         self.executor = executor or CalendarExecutor(config)
         self.notifier = notifier
         self.shutdown = threading.Event()
+        self.long_poll = False  # whether the last claim was held open by the relay
 
     def status(self, state, **extra):
         record = {'state': state, 'pid': os.getpid(), 'updated_at': datetime.now(timezone.utc).isoformat(),
@@ -291,6 +297,7 @@ class Worker:
         temp.replace(self.directory / 'status.json')
 
     def tick(self):
+        self.long_poll = False
         if (self.directory / 'pause.flag').exists() or Path(self.config.get('pause_file',self.directory / 'pause.flag')).exists():
             self.client.call('/v1/worker/heartbeat', {'readiness': 'blocked'})
             self.status('paused')
@@ -302,20 +309,30 @@ class Worker:
         self.client.call('/v1/worker/heartbeat', {'readiness': 'ready'})
         self.status('ready')
         self.flush_outbox()
-        job = self.client.call('/v1/worker/claim', {'lease_seconds': 120})['job']
+        wait = self.config.get('long_poll_seconds', LONG_POLL_SECONDS)
+        response = self.client.call('/v1/worker/claim' + (f'?wait={wait:g}' if wait else ''), {'lease_seconds': 120})
+        received = time.monotonic()
+        # Relays without long polling ignore ?wait and omit wait_seconds; keep the fixed interval for them.
+        supports_timings = 'wait_seconds' in response
+        self.long_poll = bool(response.get('wait_seconds'))
+        job = response['job']
         if job is None:
             return False
         self.status('running', job_id=job['id'])
+        timings = {}
         with LeaseKeeper(self.client, job, self.shutdown) as cancelled:
             outcome = self.ledger.begin(job)
             if outcome is None:
+                timings['execution_started_after'] = time.monotonic() - received
                 outcome = self.executor.execute(job, cancelled)
+                timings['execution_finished_after'] = time.monotonic() - received
                 self.ledger.outcome(job['id'], outcome)
             if cancelled.is_set() or self.shutdown.is_set():
                 self.ledger.event(job['id'], 'lease_lost_before_acknowledgement')
                 return True
-            self.ledger.enqueue_ack(job, outcome)
+            self.ledger.enqueue_ack(job, {**outcome, 'timings': timings} if supports_timings and timings else outcome)
             self.flush_outbox()
+        logging.info('Job phases: %s', ' '.join(f'{k}={v:.2f}s' for k, v in timings.items()) or 'replayed outcome')
         self.status('ready')
         return True
 
@@ -324,8 +341,16 @@ class Worker:
             outcome = json.loads(row['outcome'])
             if not row['acknowledged']:
                 try:
-                    self.client.call('/v1/worker/' + row['id'] + '/result',
-                        {'lease_token': row['lease'], **outcome})
+                    try:
+                        self.client.call('/v1/worker/' + row['id'] + '/result',
+                            {'lease_token': row['lease'], **outcome})
+                    except TransportError as exc:
+                        if exc.status != 422 or 'timings' not in outcome:
+                            raise
+                        # A relay rolled back to a version without timing support: never lose the result for them.
+                        outcome.pop('timings')
+                        self.client.call('/v1/worker/' + row['id'] + '/result',
+                            {'lease_token': row['lease'], **outcome})
                     self.ledger.acknowledged(row['id'])
                 except TransportError as exc:
                     if exc.status in (404,409,422):
@@ -350,9 +375,12 @@ class Worker:
             self.status('starting')
             while not self.shutdown.is_set():
                 try:
-                    self.tick()
+                    worked = self.tick()
                     delay = 2
-                    self.shutdown.wait(self.config.get('poll_seconds', 4))
+                    # A long poll already waited at the relay, and a finished job may have a successor:
+                    # claim again at once. Old relays (no long polling) keep the fixed interval.
+                    if not (worked or self.long_poll):
+                        self.shutdown.wait(self.config.get('poll_seconds', 4))
                 except TransportError as exc:
                     self.status('authentication_blocked' if exc.status in (401,403) else 'disconnected', http_status=exc.status)
                     logging.warning('Worker relay connection: %s', exc)

@@ -17,6 +17,7 @@ class LocalRelay:
     def call(self,path,payload=None):
         if self.offline:
             raise TransportError()
+        path=path.split('?')[0]
         if path.endswith('/heartbeat'):
             return self.queue.heartbeat(payload['readiness'])
         if path.endswith('/claim'):
