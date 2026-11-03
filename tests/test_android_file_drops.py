@@ -83,7 +83,7 @@ public Builder setAutoCancel(boolean b){return this;}public Builder setGroup(Str
 public Builder addAction(Action a){n.actions.add(a);return this;}public Builder setOngoing(boolean b){return this;}public Builder setOnlyAlertOnce(boolean b){return this;}public Builder setWhen(long w){return this;}
 public Builder setCategory(String c){return this;}public Builder setProgress(int max,int value,boolean indeterminate){return this;}public Notification build(){return n;}}}''',
     'android/app/NotificationManager.java': r'''package android.app;import java.util.*;
-public class NotificationManager {public static final int IMPORTANCE_NONE=0,IMPORTANCE_HIGH=4;public final Map<String,Notification> posted=new LinkedHashMap<String,Notification>();
+public class NotificationManager {public static final int IMPORTANCE_NONE=0,IMPORTANCE_DEFAULT=3,IMPORTANCE_HIGH=4;public final Map<String,Notification> posted=new LinkedHashMap<String,Notification>();
 public synchronized void notify(String tag,int id,Notification n){posted.put(tag,n);}public boolean areNotificationsEnabled(){return true;}public NotificationChannel getNotificationChannel(String id){return null;}}''',
     'android/app/NotificationChannel.java': 'package android.app;public class NotificationChannel {public int getImportance(){return 4;}}',
     'android/app/PendingIntent.java': r'''package android.app;import android.content.*;
