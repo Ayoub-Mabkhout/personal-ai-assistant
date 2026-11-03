@@ -29,14 +29,16 @@ class TrainWebTest(unittest.TestCase):
         (assets/'index.html').write_text('<title>Train fixture</title>', encoding='utf-8')
         self.app = create_app(self.root/'queue.sqlite3', SUBMIT, 'synthetic-worker-' * 3, train_assets=assets)
         self.admin = self.client()
+        self.enrollments = 0
 
     def client(self):
         client = TestClient(self.app, base_url=BASE)
         self.addCleanup(client.close)
         return client
 
-    def enroll(self, user_id=None):
-        body = {'name': 'Same name'}
+    def enroll(self, user_id=None, *, name=None):
+        self.enrollments += 1
+        body = {'name': name or f'Member {self.enrollments}'}
         if user_id:
             body['invite'] = self.admin.post('/v1/train/invites', headers=ADMIN, json={'user_id': user_id}).json()['invite']
         client = self.client()
@@ -48,6 +50,15 @@ class TrainWebTest(unittest.TestCase):
         if user_id:
             self.assertEqual(self.admin.post(TRAIN+'/join', json={'name': 'Other', 'invite': body['invite']}).status_code, 403)
         return client, joined.json()['id']
+
+    def test_display_name_reopens_member_profile_from_another_browser(self):
+        first, identifier = self.enroll(name='Sample Athlete')
+        first.patch(TRAIN+'/me', json={'setup_complete': True}).raise_for_status()
+        second, reopened = self.enroll(name=' sample  athlete ')
+        self.assertEqual(reopened, identifier)
+        self.assertTrue(second.get(TRAIN+'/me').json()['setup_complete'])
+        self.enroll('owner', name='Companion Owner')
+        self.assertEqual(self.admin.post(TRAIN+'/join', json={'name': 'companion owner'}).status_code, 403)
 
     def test_same_ids_keep_mutations_history_media_and_coaches_separate(self):
         first, first_id = self.enroll()

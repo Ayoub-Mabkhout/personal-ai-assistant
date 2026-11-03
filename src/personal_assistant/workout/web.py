@@ -93,6 +93,16 @@ class Accounts:
                     raise HTTPException(403, 'This profile link is invalid or has expired.')
                 user_id = row['user_id'] or user_id
                 db.execute('DELETE FROM train_invites WHERE hash=?', (invite_hash,))
+            else:
+                profiles = db.execute('SELECT id,name FROM train_users ORDER BY rowid')
+                folded_name = name.casefold()
+                for profile in profiles:
+                    if profile['name'].casefold() != folded_name:
+                        continue
+                    if profile['id'] == OWNER:
+                        raise HTTPException(403, 'Use your private profile link to open Companion history.')
+                    user_id = profile['id']
+                    break
             created = db.execute('INSERT OR IGNORE INTO train_users(id,name,setup_complete) VALUES(?,?,?)',
                                  (user_id, name, user_id == OWNER)).rowcount
             if user_id == OWNER:
