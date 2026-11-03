@@ -207,10 +207,14 @@ function toggle(title,note,on){const input=el('input',{type:'checkbox',class:'sw
 /** What friends can see, and whether their rank-ups notify you. Each switch saves on its own. */
 function sharing(){
   const c=card(el('h3',{class:'card-title',text:'Friends'}));
+  const status=el('p',{class:'hint small',attrs:{role:'status'}});
+  const device=el('div',{class:'stack',hidden:!me?.rank_alerts},
+    button('Enable notifications on this device','btn quiet wide',()=>enablePush(status)),status);
+  pushStatus(status).catch(()=>{status.textContent='Connect to check notification settings.'});
   const item=(key,title,note,done)=>{const t=toggle(title,note,!!me?.[key]);t.input.onchange=async()=>{try{me={...me,...await api('me',{method:'PATCH',body:{[key]:t.input.checked}})};done?.(t.input.checked)}catch{t.input.checked=!t.input.checked;toast('Connect to change this.')}};return t.el};
   c.append(item('share_progress','Share my progress','Friends can open your sprint, workout count, ranks and lift and volume trends. Notes, photos and coach chats stay private.',on=>toast(on?'Sharing your progress':'Progress is private')),
     item('share_schedule','Share my workout schedule','Friends see your planned sessions and whether you made them. Needs progress sharing.'),
-    item('rank_alerts','Competitive notifications','A notification when a friend ranks up. Off by default.',on=>{if(on)enablePush(el('p'))}));
+    item('rank_alerts','Competitive notifications','A notification when a friend ranks up.',on=>{device.hidden=!on}),device);
   return c;
 }
 /** Private reminders before scheduled sessions: push on this device, an opt-in blunt tone, and an optional photo of your own. */
@@ -249,8 +253,8 @@ async function enablePush(out){
   try{const permission=await Notification.requestPermission();if(permission!=='granted'){out.textContent='Notifications were not allowed.';return}
     const {public_key}=await api('push/key');const reg=await navigator.serviceWorker.ready;
     let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(public_key)});
-    await api('push/subscriptions',{method:'PUT',body:sub.toJSON()});out.textContent='Notifications are on for this device.';toast('Reminders on')}
-  catch(e){out.textContent=e instanceof ApiError&&e.status===503?'Reminders are not set up on your server yet.':"Couldn't turn on notifications."}
+    await api('push/subscriptions',{method:'PUT',body:sub.toJSON()});out.textContent='Notifications are on for this device.';toast('Notifications on')}
+  catch(e){out.textContent=e instanceof ApiError&&e.status===503?'Notifications are not set up on your server yet.':"Couldn't turn on notifications."}
 }
 export async function disablePush(){try{const sub=await (await navigator.serviceWorker.ready).pushManager.getSubscription();if(!sub)return;await api('push/subscriptions',{method:'DELETE',body:sub.toJSON()}).catch(()=>{});await sub.unsubscribe()}catch{}}
 const b64=s=>{const p='='.repeat((4-s.length%4)%4),raw=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(raw,c=>c.charCodeAt(0))};
