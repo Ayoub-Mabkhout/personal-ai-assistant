@@ -1,4 +1,4 @@
-"""Invite-only Train accounts and a limited projection for other athletes."""
+"""Invite-only Iron League accounts and a limited projection for other athletes."""
 
 import hashlib
 import secrets
@@ -71,7 +71,7 @@ class Accounts:
             if user_id and user_id != OWNER and not db.execute(
                 'SELECT 1 FROM train_users WHERE id=?', (user_id,)
             ).fetchone():
-                raise Missing('Train profile not found')
+                raise Missing('Iron League profile not found')
             db.execute('DELETE FROM train_invites WHERE expires<=?', (self.clock(),))
             db.execute('INSERT INTO train_invites VALUES(?,?,?)',
                        (digest(token), user_id, self.clock() + 7 * 86400))
@@ -108,21 +108,21 @@ class Accounts:
 
     def authenticate(self, session):
         if not session or len(session) != 43:
-            raise HTTPException(401, 'Join Train to continue.')
+            raise HTTPException(401, 'Join Iron League to continue.')
         with self.workouts.db() as db:
             row = db.execute(
                 'SELECT u.* FROM train_sessions s JOIN train_users u ON u.id=s.user_id '
                 'WHERE s.hash=? AND s.expires>?', (digest(session), self.clock())
             ).fetchone()
         if not row:
-            raise HTTPException(401, 'Join Train to continue.')
+            raise HTTPException(401, 'Join Iron League to continue.')
         return own_account(row)
 
     def profile(self, user_id, *, own=False):
         with self.workouts.db() as db:
             row = db.execute('SELECT * FROM train_users WHERE id=?', (user_id,)).fetchone()
         if not row:
-            raise Missing('Train profile not found')
+            raise Missing('Iron League profile not found')
         return own_account(row) if own else public_account(row)
 
     def update(self, user_id, body):
@@ -161,13 +161,13 @@ def same_origin(request: Request):
         return
     origin = request.headers.get('origin')
     if request.headers.get('sec-fetch-site') in ('cross-site', 'same-site'):
-        raise HTTPException(403, 'Open Train directly to make changes.')
+        raise HTTPException(403, 'Open Iron League directly to make changes.')
     if origin:
         parsed = urlsplit(origin)
         host = request.headers.get('host')
         secure = parsed.scheme == 'https' or (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1'))
         if not secure or parsed.netloc != host:
-            raise HTTPException(403, 'Open Train directly to make changes.')
+            raise HTTPException(403, 'Open Iron League directly to make changes.')
 
 
 SPRINT_KEYS = ('id', 'name', 'phase', 'status', 'start', 'end', 'completed', 'target_sessions')
@@ -249,7 +249,7 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
                 if error.status_code != 401:
                     raise
             else:
-                raise Conflict('This browser is already joined to Train.')
+                raise Conflict('This browser is already joined to Iron League.')
         user, session = accounts.join(body.name, body.invite)
         response.set_cookie(COOKIE, session, max_age=SESSION_SECONDS, httponly=True,
                             secure=True, samesite='strict', path='/train/api')

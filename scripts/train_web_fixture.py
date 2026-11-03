@@ -1,4 +1,4 @@
-"""Serve the Train web app over a throwaway relay seeded with invented athletes.
+"""Serve Iron League over a throwaway relay seeded with invented athletes.
 
 Development only: everything lives in a temporary directory, the service tokens are random,
 and every name, number and note is synthetic. It prints a one-use join link for the browser.
@@ -190,8 +190,10 @@ def seed(admin, user, rng, today, strength):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8790)
-    parser.add_argument('--assets', default=str(ROOT / 'apps' / 'train-web'))
+    parser.add_argument('--assets', type=Path, default=ROOT.parent / 'iron-league' / 'web')
     args = parser.parse_args()
+    if not (args.assets / 'index.html').is_file():
+        parser.error('Pass --assets pointing to the web directory of the Iron League repository.')
     import uvicorn
     with TemporaryDirectory() as directory:
         submit, worker = secrets.token_urlsafe(32), secrets.token_urlsafe(32)

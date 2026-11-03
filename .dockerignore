@@ -8,6 +8,9 @@
 !src/personal_assistant/relay/*.py
 !src/personal_assistant/groceries/
 !src/personal_assistant/groceries/*.py
+!src/personal_assistant/workout/
+!src/personal_assistant/workout/*.py
+!src/personal_assistant/workout/roast-voice.md
 !apps/
 !apps/groceries/
 !apps/groceries/*

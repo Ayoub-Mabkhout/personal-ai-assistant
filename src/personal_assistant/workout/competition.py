@@ -1,4 +1,4 @@
-"""Persist verified rank-ups and deliver them to opted-in Train members."""
+"""Persist verified rank-ups and deliver them to opted-in Iron League members."""
 
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -84,13 +84,13 @@ class Competition:
                 WHERE event.native_sent=0 AND event.source!=? ORDER BY event.created LIMIT 8''',
                 (OWNER, OWNER)).fetchall() if self.mobile else []
         for row in native:
-            payload = {'type':'train_rank', 'title':'Train rank-up', 'message':row['body'],
+            payload = {'type':'train_rank', 'title':'Iron League rank-up', 'message':row['body'],
                        'tag':row['id'], 'friend_id':row['source'], 'visibility':'private'}
             if self.mobile.enqueue(payload, ttl=max(1, int(row['expires']-now)), repeat=row['id']):
                 with self.workouts.db() as db:
                     db.execute('UPDATE train_rank_events SET native_sent=1 WHERE id=?', (row['id'],))
         for row in web:
-            payload = {'title':'Train rank-up','body':row['body'],'tag':row['id'],
+            payload = {'title':'Iron League rank-up','body':row['body'],'tag':row['id'],
                        'url':'/train/?friend='+row['source']}
             ttl = int(row['expires']-self.workouts.clock())
             if ttl <= 0:
@@ -98,7 +98,7 @@ class Competition:
             try:
                 status = self.push.send(json.loads(row['data']), encoded(payload).encode(), ttl)
             except (OSError, ValueError):
-                logging.warning('Train rank notification failed; delivery will retry.')
+                logging.warning('Iron League rank notification failed; delivery will retry.')
                 continue
             with self.workouts.db() as db:
                 if status in (404, 410):

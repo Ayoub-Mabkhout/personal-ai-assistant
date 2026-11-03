@@ -1,8 +1,6 @@
-# Train web app
+# Iron League web app
 
-`apps/train-web` is the installable Train client for iPhone and Android browsers. The relay serves it at `/train/` (see
-"Standalone Train" in `docs/workout.md`). It has no build step and no runtime dependencies: plain ES modules, the Onest font
-and the native glyph set copied from the Android app.
+The [Iron League repository](https://github.com/Ayoub-Mabkhout/iron-league) contains the installable client for iPhone and Android browsers. The relay image builds with a specific frontend commit from that repository, pinned in `infra/server/Dockerfile`. It serves the app and its API together under `/train/`. See "Standalone Iron League" in `docs/workout.md` for the shared database and deployment steps.
 
 ## Structure
 
@@ -30,7 +28,7 @@ and the native glyph set copied from the Android app.
 photos and a stand-in coach, and prints one-use join links for a seeded member and for a new member:
 
 ```
-python scripts/train_web_fixture.py --port 8790
+python scripts/train_web_fixture.py --port 8790 --assets ../iron-league/web
 ```
 
 Open the printed link in a phone-sized browser window. Never point it at real data.

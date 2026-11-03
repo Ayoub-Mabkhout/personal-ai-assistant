@@ -105,7 +105,7 @@ class TrainReminders:
                 if 'photo_id' in updates or updates.get('photo_ids') is not None:
                     values['photo_ids'] = list(dict.fromkeys(values['photo_ids']))
                     if any(not self.photo(db, user_id, photo) for photo in values['photo_ids']):
-                        raise Missing('Choose your own Train photos.')
+                        raise Missing('Choose your own Iron League photos.')
                 if updates.get('photos_enabled') and not values['roast']:
                     raise Conflict('Enable Diss mode before enabling reminder photos.')
                 values['photo_id'] = next(iter(values['photo_ids']), None)
@@ -125,7 +125,7 @@ class TrainReminders:
             db.execute('BEGIN IMMEDIATE')
             previous = db.execute('SELECT user_id FROM train_push_subscriptions WHERE endpoint=?', (endpoint,)).fetchone()
             if previous and previous['user_id'] != user_id:
-                raise Conflict('This device already receives another Train profile’s reminders.')
+                raise Conflict('This device already receives another Iron League profile’s reminders.')
             count = db.execute('SELECT count(*) FROM train_push_subscriptions WHERE user_id=?', (user_id,)).fetchone()[0]
             if not previous and count >= 8:
                 raise Conflict('Remove a device before adding another.')
@@ -264,7 +264,7 @@ class TrainReminders:
             try:
                 status = self.provider.send(json.loads(row['data']), encoded(payload).encode(), ttl)
             except (OSError, ValueError):
-                logging.warning('Train Web Push transport failed; delivery will retry.')
+                logging.warning('Iron League Web Push transport failed; delivery will retry.')
                 continue
             if status in (404, 410):
                 self.unsubscribe(row['user_id'], row['endpoint'])
@@ -282,7 +282,7 @@ class TrainReminders:
                     if competition:
                         competition.tick()
                 except Exception as error:
-                    logging.warning('Train reminder check failed (%s).', type(error).__name__)
+                    logging.warning('Iron League reminder check failed (%s).', type(error).__name__)
                 self.stop.wait(15)
         self.stop.clear()
         self.thread = Thread(target=run, name='train-reminders', daemon=True)
@@ -310,13 +310,13 @@ def install_reminders(router, reminders, account):
     @router.get('/push/key')
     def push_key(user=Depends(account)):
         if not reminders.provider:
-            raise HTTPException(503, 'Train push notifications are unavailable.')
+            raise HTTPException(503, 'Iron League push notifications are unavailable.')
         return {'public_key': reminders.provider.public_key}
 
     @router.put('/push/subscriptions')
     def subscribe(body: Subscription, user=Depends(account)):
         if not reminders.provider:
-            raise HTTPException(503, 'Train push notifications are unavailable.')
+            raise HTTPException(503, 'Iron League push notifications are unavailable.')
         reminders.subscribe(user['id'], body)
         return {'ok': True}
 

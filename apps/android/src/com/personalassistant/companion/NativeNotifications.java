@@ -58,7 +58,7 @@ final class NativeNotifications {
         NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from tasks running on your laptop");
         NotificationStyle.channel(manager,"calendar_reminders","Calendar reminders",NotificationManager.IMPORTANCE_HIGH,"Upcoming events from your assistant's calendar");
         NotificationStyle.channel(manager,"phone_actions","Phone actions",NotificationManager.IMPORTANCE_HIGH,"Alarms and other requests your assistant sends to this phone");
-        NotificationStyle.channel(manager,"train_competition","Train rank-ups",NotificationManager.IMPORTANCE_DEFAULT,"Rank-ups shared by your Train friends");
+        NotificationStyle.channel(manager,"train_competition","Iron League rank-ups",NotificationManager.IMPORTANCE_DEFAULT,"Rank-ups shared by your Iron League friends");
         NotificationStyle.channel(manager,"files","Files",NotificationManager.IMPORTANCE_HIGH,"Files you asked your assistant to send to this phone");
     }
     /** Glyph and medallion tone for a task state. */
@@ -98,7 +98,7 @@ final class NativeNotifications {
             String[] lines=message.split("\n");
             if(lines.length>1&&!lines[0].trim().isEmpty()){headline=lines[0].trim();StringBuilder rest=new StringBuilder();for(int i=1;i<lines.length;i++)if(!lines[i].trim().isEmpty())rest.append(rest.length()==0?"":" · ").append(lines[i].trim());text=expanded=rest.toString();}
             boolean birthday="birthday".equals(body.optString("kind"));label=birthday?"Birthday":"Calendar";glyph=birthday?"cake":"calendar";tone=birthday?NotificationStyle.ATTENTION:NotificationStyle.PROGRESS;
-        }else if(type.equals("train_rank")){label="Train";glyph="star";tone=NotificationStyle.BRAND;}
+        }else if(type.equals("train_rank")){label="Iron League";glyph="star";tone=NotificationStyle.BRAND;}
         else{label="Phone action";glyph="clock";tone=NotificationStyle.BRAND;}
         boolean hidden=!body.optString("visibility").equals("public");
         Notification.Builder notification=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(headline)
@@ -107,7 +107,7 @@ final class NativeNotifications {
             .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).setShowWhen(true);
         if(type.equals("reminder"))notification.setCategory(Notification.CATEGORY_EVENT);else if(active)notification.setCategory(Notification.CATEGORY_PROGRESS);
         // The lock screen shows only the kind of update, never the request, result or event.
-        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":type.equals("train_rank")?"Train rank-up":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
+        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":type.equals("train_rank")?"Iron League rank-up":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
         if(body.optString("state").equals("running"))notification.setProgress(0,0,true);
         if(!task.isEmpty()){
             notification.addAction(new Notification.Action.Builder(null,"Details",pending).build());

@@ -1,4 +1,4 @@
-# Train: workout cycles and persistent coaching
+# Iron League: workout cycles and persistent coaching
 
 The Companion keeps workout drafts, exercise order, set deletion and offline edits locally. The relay owns revisioned records and history. One persistent subscription-authenticated Codex specialist reads only workout data and proposes changes; no API-funded fallback is used. The UI reports Online/Offline.
 
@@ -38,7 +38,7 @@ Strong imports preserve exact original bytes/hash, dates, notes, warmup/drop/fai
 
 Phone endpoints use `/groceries/v1/mobile/workout` and existing pairing; owner endpoints use `/relay/v1/workout`. Entity kinds and DTOs are in models.py. `/changes` pages revision history; `/sync` atomically accepts stable mutation IDs/base revisions.409 keeps offline edits for review. `/entities`, `/overview`, `/export` and `/imports` preserve existing contracts.
 
-## Standalone Train
+## Standalone Iron League
 
 The relay serves the installable web app at `/train/` when its assets are present. The same
 workout API is available at `/train/api` through a Secure, HttpOnly browser cookie. Browser
@@ -48,7 +48,7 @@ clients should keep their draft and retry outbox in IndexedDB keyed by the authe
 Generate a one-use link with `scripts/workout.py invite`. Use `invite --user owner` to
 connect the original Companion workout history or `invite --user ID` to reconnect an
 existing member on another device. `scripts/workout.py users` lists enrolled IDs. Open the
-link in the phone's browser, enter a name and add Train to the Home Screen. Treat each invite
+link in the phone's browser, enter a name and add Iron League to the Home Screen. Treat each invite
 link as a credential. It expires after seven days or on redemption.
 
 New members enter their age and body stats after choosing a name, choose whether to
@@ -66,7 +66,7 @@ the same grace period used for reminders. Competitive notifications are opt-in
 and describe the set or run that earned a new rank. Tap an alert to see that
 athlete's ranks.
 
-Train uses the existing workout SQLite database. The schema upgrade copies existing
+Iron League uses the existing workout SQLite database. The schema upgrade copies existing
 records, mutations, revisions, imports, photos and coach history into the owner partition.
 Back up the live database with SQLite's backup API before deploying. Restore that backup
 before starting an older relay, since the older code expects the single-owner schema.
@@ -87,12 +87,12 @@ date and `source.companion.scheduled_session_id`. Legacy date-only entries are v
 The relay checks the schedule every 15 seconds and sends a push 30 minutes before
 the workout. An unstarted slot counts as missed after three hours, an explicit skip
 counts immediately after its scheduled time, and completing a slot resets the
-streak. The athlete can opt in to vulgar reminders, then separately allow Train
+streak. The athlete can opt in to vulgar reminders, then separately allow Iron League
 to rotate through up to 12 of their private photos, one per reminder. Turning off
 either option stops photo attachments and keeps their selection. The coach can
 write the copy in advance. The relay uses its own
 fallback if the coach has no answer when the reminder is due. Where the system
-notification omits the photo, opening the reminder displays it in Train.
+notification omits the photo, opening the reminder displays it in Iron League.
 
 The same opt-in enables a blunt post-workout brief when logged working sets fall
 short of template targets. The comparison uses completed sets and logged values,

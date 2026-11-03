@@ -79,7 +79,7 @@ class Workouts:
                 previous = json.loads(old['data']).get('scheduled', []) if old and not old['deleted'] else []
                 timed = any(slot.get('starts_at') for slot in data['scheduled'])
                 if (self.user_id != OWNER or timed) and data['scheduled'] != previous and not self.scheduled_sprints_enabled(db):
-                    raise Conflict('Enable scheduled sprints in Train settings before adding or changing a schedule.')
+                    raise Conflict('Enable scheduled sprints in Iron League settings before adding or changing a schedule.')
             if op['kind'] == 'photo' and not op['deleted']:
                 if not db.execute('SELECT 1 FROM blobs WHERE user_id=? AND id=?', (self.user_id, data['blob_id'])).fetchone():
                     raise ValueError('Upload the photo first')

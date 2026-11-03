@@ -64,7 +64,7 @@ are configured by each deployment.
 | **Tasks & agents** | Submit by voice, text, or dashboard. Follow queued → working → completed states. Open a result, add an instruction, and resume the **same worker session**. |
 | **Shopping & recipes** | Keep a cloud list that works while the laptop is off. Make multi-item edits, import recipes, select ingredients, and replay offline changes without duplicate mutations. |
 | **Money** | Import read-only bank transactions. Explore categories and recurring costs, track income and allowance, inspect explanations, and teach a persistent specialist with your corrections. |
-| **Train** | Log workouts offline, import Strong history, plan cyclic training sprints, track weight and personal records, and progress through transparent strength ranks. A persistent Codex coach proposes changes for your approval. |
+| **Iron League** | Log workouts offline, import Strong history, plan cyclic training sprints, track weight and personal records, and progress through transparent strength ranks. A persistent Codex coach proposes changes for your approval. |
 | **Life admin** | Use an assistant-owned calendar, reminders and snooze, live email tools, attachment filing with provenance, follow-up tracking, notes, documents, and an editable personal profile. |
 
 ### The agent keeps the thread
