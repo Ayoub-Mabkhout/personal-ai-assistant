@@ -8,6 +8,7 @@ COPY src ./src
 COPY apps/groceries ./apps/groceries
 COPY apps/tasks ./apps/tasks
 COPY apps/shared ./apps/shared
+COPY apps/train-web ./apps/train-web
 RUN pip install --no-cache-dir --no-deps . \
     && groupadd --gid 10001 assistant \
     && useradd --uid 10001 --gid 10001 --no-create-home assistant \
