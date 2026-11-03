@@ -192,6 +192,7 @@ class TrainReminders:
                     VALUES(?,?,?,'[]',?,?,'queued')''',
                     (user_id, job, 'Write the upcoming workout notification using the supplied schedule and style.',
                      encoded(context), now))
+                store.wake(db, 'trainer')
             return
         if db.execute('SELECT 1 FROM train_reminder_history WHERE user_id=? AND id=?', (user_id, identifier)).fetchone():
             self.queue_delivery(db, user_id, identifier, now)

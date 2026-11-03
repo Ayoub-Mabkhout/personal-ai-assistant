@@ -36,11 +36,20 @@ class Lease(Model):
     token: str = Field(min_length=16,max_length=100)
 
 
+class CoachTimings(Model):
+    """Seconds after the coach received its claim, on the coach's own clock (no clock-skew issues)."""
+    model_started_after: float | None = Field(default=None,ge=0,le=86400)
+    first_output_after: float | None = Field(default=None,ge=0,le=86400)
+    first_text_after: float | None = Field(default=None,ge=0,le=86400)
+    model_finished_after: float | None = Field(default=None,ge=0,le=86400)
+
+
 class Answer(Lease):
     text: str = Field(min_length=1,max_length=24000)
     proposals: list[Mutation] = Field(default_factory=list,max_length=20)
     state: str = 'completed'
     assessment: dict | None = None
+    timings: CoachTimings | None = None
 
 
 async def bounded(request, limit):
@@ -113,8 +122,20 @@ def install(router, get_store, *, browser=False):
         return Response(body,media_type=mime,headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 
     @router.get('/trainer/conversation')
-    def conversation(limit: int=Query(default=100,ge=1,le=200),before: float | None=None, store=Depends(get_store)):
-        return {'items':store.conversation(limit,before),'status':store.status()}
+    async def conversation(request: Request, limit: int=Query(default=100,ge=1,le=200),before: float | None=None,
+                           wait: float=Query(default=0,ge=0), since: str | None=Query(default=None,max_length=64),
+                           store=Depends(get_store)):
+        """With ?since=<version>&wait=N, hold the request until the chat changes (or N seconds pass)."""
+        from personal_assistant.relay.wakeups import long_poll, requested_wait
+        from starlette.concurrency import run_in_threadpool
+        seconds = requested_wait(wait) if since else 0
+        def changed():
+            current = store.conversation_view(limit, before)
+            return current if not seconds or current['version'] != since else None
+        view, seconds = await long_poll(changed, store.wakeups, ('conversation', store.user_id), seconds, request, recheck=15)
+        if view is None:  # timed out unchanged: answer with the current (same-version) view
+            view = await run_in_threadpool(store.conversation_view, limit, before)
+        return {**view, 'wait_seconds': seconds}
 
     @router.post('/trainer/questions')
     def question(body: Question, store=Depends(get_store)):
@@ -134,7 +155,11 @@ def install_worker(owner, get_store):
         return store.status()
 
     @owner.post('/trainer/claim')
-    def claim(store=Depends(get_store)): return {'job':store.claim()}
+    async def claim(request: Request, wait: float=Query(default=0,ge=0), store=Depends(get_store)):
+        """?wait=N (max 25) holds the request until a job is queued for this athlete or N seconds pass."""
+        from personal_assistant.relay.wakeups import long_poll, requested_wait
+        job, waited = await long_poll(store.claim, store.wakeups, ('trainer', store.user_id), requested_wait(wait), request)
+        return {'job':job,'wait_seconds':waited}
 
     @owner.post('/trainer/prepare-brief')
     def prepare_brief(timezone: str='UTC', store=Depends(get_store)): return store.prepare_brief(timezone)
@@ -146,5 +171,6 @@ def install_worker(owner, get_store):
 
     @owner.put('/trainer/{identifier}/answer')
     def answer(identifier: str,body: Answer, store=Depends(get_store)):
-        store.finish(identifier,body.token,body.text,[p.model_dump() for p in body.proposals],body.state,body.assessment)
+        store.finish(identifier,body.token,body.text,[p.model_dump() for p in body.proposals],body.state,body.assessment,
+                     body.timings.model_dump(exclude_none=True) if body.timings else None)
         return {'ok':True}

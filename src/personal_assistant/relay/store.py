@@ -10,6 +10,10 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .wakeups import Wakeups, log_phases
+
+CLAIMABLE = 'claimable'
+
 
 class Conflict(ValueError):
     pass
@@ -33,6 +37,7 @@ class Queue:
         self.clock = clock
         self.serial = serial
         self.notifications_enabled = notifications
+        self.wakeups = Wakeups()
         with self.connection() as db:
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript('''
@@ -167,7 +172,10 @@ class Queue:
             db.execute('INSERT INTO jobs(id,payload,source,created,expires,state,updated) VALUES(?,?,?,?,?,?,?)',
                        (request_id, encoded, source, created, expires, state, self.clock()))
             self.audit(db, request_id, 'submitted', {'state': state})
-            return self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone()), True
+            record = self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone())
+        if state == 'queued':
+            self.wakeups.notify(CLAIMABLE)
+        return record, True
 
     def get(self, request_id):
         with self.connection(True) as db:
@@ -237,9 +245,15 @@ class Queue:
                        (self.clock() + lease_seconds, self.clock(), request_id))
             return self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone(), True)
 
-    def finish(self, request_id, token, state, result):
+    def finish(self, request_id, token, state, result, timings=None):
         if state not in ('completed', 'failed', 'needs_input'):
             raise ValueError('Invalid result state.')
+        record = self._finish(request_id, token, state, result, timings)
+        if self.serial:  # the next queued job became claimable
+            self.wakeups.notify(CLAIMABLE)
+        return record
+
+    def _finish(self, request_id, token, state, result, timings):
         with self.connection(True) as db:
             self.maintenance(db)
             # Allow an identical acknowledgement retry after a lost HTTP response.
@@ -250,8 +264,30 @@ class Queue:
             self.owned(db, request_id, token)
             db.execute('UPDATE jobs SET state=?,result=?,lease_until=NULL,updated=? WHERE id=?',
                        (state, encoded, self.clock(), request_id))
+            if timings:
+                self.audit(db, request_id, 'worker_timings', timings)
             self.audit(db, request_id, state)
-            return self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone())
+            record = self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone())
+            self.log_phases(db, row, state, timings or {})
+            return record
+
+    def log_phases(self, db, row, state, timings):
+        """queued -> claimed -> execution started -> first output -> finished, from the audit trail."""
+        claims = [r['at'] for r in db.execute("SELECT at FROM events WHERE job_id=? AND kind='claimed' ORDER BY seq", (row['id'],))]
+        if not claims:
+            return
+        claimed, now = claims[-1], self.clock()
+        started = timings.get('execution_started_after')
+        executed = timings.get('execution_finished_after')
+        log_phases('agent' if self.serial else 'command',
+                   f"source={row['source']} state={state} attempts={len(claims)}", [
+            ('queued_to_claimed', claims[0] - row['created']),
+            ('claimed_to_started', started),
+            ('started_to_first_output', timings.get('first_output_after') - started
+             if timings.get('first_output_after') is not None and started is not None else None),
+            ('execution', executed - started if executed is not None and started is not None else None),
+            ('claimed_to_finished', now - claimed),
+            ('total', now - row['created'])])
 
     def cancel(self, request_id):
         with self.connection(True) as db:
@@ -262,4 +298,7 @@ class Queue:
             if row['state'] in ('queued', 'running'):
                 db.execute("UPDATE jobs SET state='cancelled',lease_token=NULL,lease_until=NULL,updated=? WHERE id=?", (self.clock(), request_id))
                 self.audit(db, request_id, 'cancelled')
-            return self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone())
+            record = self.record(db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone())
+        if self.serial:
+            self.wakeups.notify(CLAIMABLE)
+        return record

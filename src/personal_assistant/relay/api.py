@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -102,11 +102,33 @@ class Renew(Lease):
     lease_token: str
 
 
+class WorkerTimings(BaseModel):
+    """Seconds after the worker received its claim, measured on the worker's own clock."""
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    execution_started_after: float | None = Field(default=None, ge=0, le=86400)
+    first_output_after: float | None = Field(default=None, ge=0, le=86400)
+    execution_finished_after: float | None = Field(default=None, ge=0, le=86400)
+
+
 class Result(BaseModel):
     model_config = ConfigDict(extra='forbid')
     lease_token: str
     state: Literal['completed', 'failed', 'needs_input']
     result: dict
+    timings: WorkerTimings | None = None
+
+
+async def claim_job(job_queue, lease_seconds, wait, request):
+    from .store import CLAIMABLE
+    from .wakeups import long_poll, requested_wait
+    job, waited = await long_poll(lambda: job_queue.claim(lease_seconds), job_queue.wakeups, CLAIMABLE,
+                                  requested_wait(wait), request)
+    # wait_seconds tells a client this relay supports long polling (and what it honoured).
+    return {'job': job, 'wait_seconds': waited}
+
+
+def timings_of(value):
+    return value.timings.model_dump(exclude_none=True) if value.timings else None
 
 
 def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None):
@@ -335,8 +357,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         return agent_queue.heartbeat(value.readiness)
 
     @app.post('/v1/agent/worker/claim', dependencies=[Depends(worker)])
-    def agent_claim(value:Lease):
-        return {'job':agent_queue.claim(value.lease_seconds)}
+    async def agent_claim(value:Lease, request:Request, wait:float=Query(default=0, ge=0)):
+        return await claim_job(agent_queue, value.lease_seconds, wait, request)
 
     @app.post('/v1/agent/worker/{request_id}/renew', dependencies=[Depends(worker)])
     def agent_renew(request_id:str,value:Renew):
@@ -344,15 +366,15 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
 
     @app.post('/v1/agent/worker/{request_id}/result', dependencies=[Depends(worker)])
     def agent_result(request_id:str,value:Result):
-        return agent_queue.finish(request_id,value.lease_token,value.state,value.result)
+        return agent_queue.finish(request_id,value.lease_token,value.state,value.result,timings_of(value))
 
     @app.post('/v1/worker/heartbeat', dependencies=[Depends(worker)])
     def heartbeat(value: Heartbeat):
         return queue.heartbeat(value.readiness)
 
     @app.post('/v1/worker/claim', dependencies=[Depends(worker)])
-    def claim(value: Lease):
-        return {'job': queue.claim(value.lease_seconds)}
+    async def claim(value: Lease, request: Request, wait: float = Query(default=0, ge=0)):
+        return await claim_job(queue, value.lease_seconds, wait, request)
 
     @app.post('/v1/worker/{request_id}/renew', dependencies=[Depends(worker)])
     def renew(request_id: str, value: Renew):
@@ -360,7 +382,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
 
     @app.post('/v1/worker/{request_id}/result', dependencies=[Depends(worker)])
     def finish(request_id: str, value: Result):
-        return queue.finish(request_id, value.lease_token, value.state, value.result)
+        return queue.finish(request_id, value.lease_token, value.state, value.result, timings_of(value))
 
     return app
 

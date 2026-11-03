@@ -24,4 +24,5 @@ RUN pip install --no-cache-dir --no-deps . \
     && mkdir /data && chown assistant:assistant /data
 USER 10001:10001
 EXPOSE 8765
-CMD ["uvicorn", "personal_assistant.relay.api:from_environment", "--factory", "--host", "0.0.0.0", "--port", "8765", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "32", "--timeout-keep-alive", "5"]
+# Long-polling claims hold connections open (capped at 24 in relay/wakeups.py); 64 keeps 40 for other traffic.
+CMD ["uvicorn", "personal_assistant.relay.api:from_environment", "--factory", "--host", "0.0.0.0", "--port", "8765", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "64", "--timeout-keep-alive", "5"]

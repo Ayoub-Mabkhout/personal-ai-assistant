@@ -9,7 +9,15 @@ venv's own `pythonw.exe` starts console Python, and closing that window would st
 the supervisor and, through it, every service.
 Windows Job Objects tie child lifetime to the supervisor, including forced stops.
 
-The worker polls every four seconds, reconnects with bounded jitter/backoff,
+The worker long-polls its claim (`?wait=25`): the relay holds the request open
+and answers the moment a job is queued, so pickup is immediate instead of waiting
+for the next poll. The laptop still opens every connection. Against a relay
+without long polling (no `wait_seconds` in the claim answer) it falls back to
+polling every four seconds (`poll_seconds`); `long_poll_seconds: 0` disables it.
+The workout coaches long-poll `/trainer/claim` the same way and retry after a
+failure with a 5-30 second backoff. Each finished job logs one line of phase
+durations (queued, claimed, execution or model start, first output, answered)
+on the relay and the laptop, without request content. The worker reconnects with bounded jitter/backoff,
 maintains readiness heartbeats, and uses renewable fenced leases. Its private
 SQLite ledger stores the request and outcome before acknowledging the relay.
 Lost acknowledgements are retried with the same lease; completed read-only work
