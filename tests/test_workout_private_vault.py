@@ -1,4 +1,5 @@
 """Opt-in password routes and opaque vault isolation, with synthetic envelopes."""
+import base64
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -98,8 +99,12 @@ class WorkoutPrivateVaultTests(unittest.TestCase):
         response=client.post('/train/api/auth/register',json={**body,'name':'returning  athlete','invite':self.invite(original['id'])})
         self.assertEqual(response.status_code,200,response.text);self.assertEqual(response.json()['id'],original['id'])
         self.assertEqual(client.get('/train/api/me').json()['id'],original['id'])
-        # Once it has a password, a second link for it can't replace that password.
-        self.assertEqual(self.client().post('/train/api/auth/register',json={**body,'name':'Returning Athlete','invite':self.invite(original['id'])}).status_code,409)
+        # A later link for it is the owner's password reset: it replaces the password and signs out other sessions.
+        new=base64.urlsafe_b64encode(bytes(range(1,33))).decode().rstrip('=')
+        other=self.client();self.assertEqual(other.post('/train/api/auth/register',json={**body,'auth_secret':new,'name':'Returning Athlete','invite':self.invite(original['id'])}).status_code,200)
+        self.assertEqual(client.get('/train/api/me').status_code,401)
+        self.assertEqual(self.client().post('/train/api/auth/login',json={'name':'Returning Athlete','auth_secret':AUTH}).status_code,401)
+        self.assertEqual(self.client().post('/train/api/auth/login',json={'name':'Returning Athlete','auth_secret':new}).status_code,200)
 
     def test_auth_rejects_raw_passwords_secret_keys_and_cross_site_calls(self):
         client=self.client()

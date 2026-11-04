@@ -171,8 +171,9 @@ class Identity:
     def _success(self,db,key):db.execute('DELETE FROM train_auth_limits WHERE key=?',(self._name_bucket(key),))
 
     def register(self,name,auth_secret,client_salt,client_id,*,invite_hash=None,on_enroll=None):
-        """A new profile, or with an invite for an existing profile, that profile's first password.
-        The web route always passes an invite; registration is never open to anyone with the URL."""
+        """A new profile, or with an invite for an existing profile, a password for it. An invite made for a profile that
+        already has a password replaces it and signs out its other sessions: that is how the owner's sign-in link
+        resets a forgotten password. The web route always passes an invite; registration is never open."""
         display,key=normalized_name(name);unb64(client_salt,16);unb64(auth_secret,32)
         self._reserve(key,client_id);verifier=hash_auth_secret(auth_secret);identifier=uuid4().hex
         with self.workouts.db() as db:
@@ -183,18 +184,23 @@ class Identity:
                 if not row:raise InviteInvalid()
                 db.execute('DELETE FROM train_invites WHERE hash=?',(invite_hash,))
                 target=row['user_id']
+            reset=False
             if target:
                 profile=db.execute('SELECT id,name FROM train_users WHERE id=?',(target,)).fetchone()
                 try:same=bool(profile) and normalized_name(profile['name'])[1]==key
                 except IdentityError:same=False
-                if not same or db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(target,)).fetchone():
-                    raise EnrollmentDenied()
+                if not same:raise EnrollmentDenied()
                 identifier=target
+                reset=bool(db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(target,)).fetchone())
             else:
                 if self._profiles(db,key) or db.execute('SELECT 1 FROM train_credentials WHERE login_name=?',(key,)).fetchone():
                     raise EnrollmentDenied()
                 db.execute('INSERT INTO train_users(id,name,setup_complete) VALUES(?,?,0)',(identifier,display))
-            self._insert(db,identifier,key,client_salt,verifier)
+            if reset:
+                db.execute('''UPDATE train_credentials SET verifier=?,client_salt=?,revision=revision+1,updated=?
+                    WHERE user_id=?''',(verifier,client_salt,self.clock(),identifier))
+                db.execute('DELETE FROM train_sessions WHERE user_id=?',(identifier,))
+            else:self._insert(db,identifier,key,client_salt,verifier)
             if on_enroll:on_enroll(db,identifier)
             self._success(db,key)
         return identifier
