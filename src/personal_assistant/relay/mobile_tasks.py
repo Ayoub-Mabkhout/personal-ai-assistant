@@ -3,7 +3,7 @@ import base64
 import json
 import hashlib
 from pydantic import BaseModel,ConfigDict,Field
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query,Request
 from .continuations import Continuations, Followup
 
 
@@ -65,7 +65,10 @@ class MobileTasks:
         turns = self.continuations.turns(identifier) if kind == 'agent' else []
         root = self.continuations.root(identifier) if kind == 'agent' else job
         latest = turns[-1] if turns else job
-        return {'id': job['id'], 'kind': kind, 'state': job['state'],
+        from .answer_streams import read_many
+        with queue.connection() as db:
+            partials=read_many(db,'agent',[root['id'],job['id'],*[t['id'] for t in turns]]) if kind=='agent' else {}
+        result={'id': job['id'], 'kind': kind, 'state': job['state'],
                 'request': job['payload']['command'], 'created': job['created'], 'updated': job['updated'],
                 'summary': (job['result'] or {}).get('summary', ''), 'connection': queue.status(),
                 'history': [{'at': e['at'], 'kind': e['kind']} for e in queue.history(identifier)
@@ -75,8 +78,18 @@ class MobileTasks:
                 'original_state': root['state'], 'original_updated': root['updated'],
                 'can_followup': kind == 'agent',
                 'turns': [{'id': t['id'], 'instruction': t['payload']['command'], 'state': t['state'],
+                           **(partials.get(t['id'],{}) if t['state']=='running' else {}),
                            'summary': (t['result'] or {}).get('summary', ''), 'created': t['created'], 'updated': t['updated']} for t in turns],
                 'conversation_state': latest['state'], 'conversation_updated': latest['updated']}
+        if job['state']=='running':result.update(partials.get(job['id'],{}))
+        if root['state']=='running':
+            result['original_partial_answer']=partials.get(root['id'],{}).get('partial_answer','')
+            result['original_partial_revision']=partials.get(root['id'],{}).get('partial_revision',0)
+        signature=[job['state'],job['updated'],root['state'],root['updated'],
+                   [(t['id'],t['state'],t['updated']) for t in turns],
+                   sorted((key,value['partial_revision']) for key,value in partials.items())]
+        result['version']=hashlib.sha256(json.dumps(signature).encode()).hexdigest()[:24]
+        return result
 
     def followup(self, kind, identifier, body):
         if kind != 'agent':
@@ -124,8 +137,19 @@ def mobile_task_router(devices, queues,attachments=None):
         return {'task_id':job['id'],'status':job['state'],'reply':'Queued to the laptop: '+body.text,'created':created,'connection':queues['agent'].status()}
 
     @api.get('/tasks/{kind}/{identifier}')
-    def detail(kind: str, identifier: str, phone=Depends(device)):
-        result=tasks.detail(kind, identifier)
+    async def detail(kind: str, identifier: str,request:Request,
+                     since:str|None=Query(default=None,max_length=64),wait:float=Query(default=0,ge=0),phone=Depends(device)):
+        from .wakeups import long_poll,requested_wait
+        from starlette.concurrency import run_in_threadpool
+        if kind not in queues:raise HTTPException(404,'Task not found.')
+        root=tasks.continuations.root(identifier)['id'] if kind=='agent' else identifier
+        seconds=requested_wait(wait) if since else 0
+        def changed():
+            value=tasks.detail(kind,identifier)
+            return value if not seconds or value['version']!=since else None
+        result,waited=await long_poll(changed,queues[kind].wakeups,('answer',root),seconds,request,recheck=1)
+        if result is None:result=await run_in_threadpool(tasks.detail,kind,identifier)
+        result['wait_seconds']=waited
         if attachments and kind=='agent':
             root=tasks.continuations.root(identifier)
             result['attachments']=attachments.describe(root['payload'].get('attachments',[]))

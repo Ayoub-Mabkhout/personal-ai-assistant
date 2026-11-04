@@ -38,9 +38,50 @@ The default remains `dispatcher_mode: legacy` until a deployment explicitly
 configures and verifies its Jev key. Each job pins its routing mode before work,
 so changing configuration cannot switch an in-flight task's execution protocol.
 
+## Ordered conversation lanes
+
+With `dispatcher_mode: jev`, the laptop agent service uses up to four execution
+slots by default (`agent_execution_slots`, integer 1–8). New tasks share one
+serial general lane. Explicit `resume_task.root_id` follow-ups use the existing
+context directly: no generic classification, Jev request or Luna review. Separate
+contexts can answer concurrently while a new task is running; turns in the same
+context retain receipt order. All turns remain durable in the agent store.
+
+The relay transaction fences each active context and keeps a follow-up behind
+its unfinished original task. Historical roots sharing the same recorded CLI
+session share a lane too. Laptop context locks add a second fence: cancellation
+or lease expiry cannot make a replacement turn overlap a still-stopping CLI.
+The existing lease renewal, cancellation and durable result outbox remain in use.
+The service holds one process singleton and records independent slot status files
+beside the original execution ledger.
+
+Parallel claims explicitly send `session_lanes: true` to the agent claim endpoint.
+Omitting it retains the old globally serial contract. An older relay rejecting
+that field causes the client to fall back to serial claims without losing tasks.
+Legacy Luna mode also uses serial claims because its historical automatic resume
+logic can select an existing session during classification. The programmatic
+queue's claim and execution behavior is unchanged.
+
 ## Legacy Luna mode
 
 The sections below describe the retained `legacy` mode and shared queue contracts.
+
+## Incremental answers
+
+`answer_streaming: true` enables genuine model deltas. Codex uses the local
+app-server protocol and resumes the same saved thread; Claude uses partial-message
+events. Background uploads coalesce readable answer snapshots without blocking
+model reception. The relay stores sequence/versioned snapshots under the job's
+existing lease. Superseded attempts and completed/cancelled jobs cannot publish
+more text. Missing streaming support never prevents the final answer transport.
+
+Task details and coach chats use versioned long polls, with no replay requirement
+after reconnection. Money conversations expose the partial answer alongside their
+existing final response fields. Structured specialist output streams only its
+answer text, not memory, reasoning, tool arguments, financial decisions or workout
+proposals. Mutations retain their complete-response validation and approval rules.
+Streaming changes when text becomes visible; it does not guarantee faster model
+startup. The normal final answer remains authoritative.
 
 The cloud relay keeps two independent SQLite stores: `queue.sqlite3` for
 programmatic commands and `agent-queue.sqlite3` for agent prompts. The second

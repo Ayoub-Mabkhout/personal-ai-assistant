@@ -207,13 +207,36 @@ def run_model(config, config_file, state, job, images, workspace):
     prompt = build_prompt(config, state, job, model, 'session')
     env = {k:v for k,v in os.environ.items() if not k.startswith(('OPENAI_','OCI_','ASSISTANT_')) and k!='CODEX_API_KEY'}
     env['PYTHONPATH']=pythonpath
-    process = subprocess.Popen(args,cwd=workspace,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
-    try:
-        stdout,stderr,marks = communicate_timed(process,json.dumps(prompt,ensure_ascii=False).encode(),config.get('workout_timeout_seconds',600))
-    except BaseException:
-        kill(process)
-        raise
+    from ..orchestrator.streaming import current_stream,codex_turn,AppServerError
+    if current_stream():
+        from types import SimpleNamespace
+        trace=runtime_dir(config)/'traces';trace.mkdir(parents=True,exist_ok=True)
+        try:
+            streamed=codex_turn(prefix,json.dumps(prompt,ensure_ascii=False),workspace,model,
+                config.get('workout_effort','medium'),session=state.get('session'),schema=SCHEMA,
+                instructions=INSTRUCTIONS,images=images,environment=env,
+                features={'apps':False,'plugins':False,'shell_tool':False,'multi_agent':False},
+                config={'sandbox_mode':'read-only','model_auto_compact_token_limit':config.get('specialist_compact_tokens',175000),
+                        'mcp_servers':{'workout':{'command':command,'args':server_args,'env':{'PYTHONPATH':pythonpath},
+                            'required':True,'startup_timeout_sec':20,'tool_timeout_sec':30,'default_tools_approval_mode':'approve'}}},
+                timeout=config.get('workout_timeout_seconds',600),
+                on_thread=lambda identity:state.__setitem__('session',identity),
+                raw_trace=trace/(job['id']+'.app-server.jsonl'))
+        except AppServerError as error:
+            (trace/(job['id']+'.jsonl')).write_bytes(getattr(error,'stdout',b''))
+            (trace/(job['id']+'.stderr.txt')).write_bytes(getattr(error,'stderr',b''))
+            if limited(str(error)):raise EngineExhausted('codex') from error
+            raise RuntimeError('Codex trainer unavailable; no plan changes applied. '+str(error)) from error
+        stdout,stderr,marks=streamed.stdout,streamed.stderr,streamed.marks
+        answer_file.write_text(streamed.text,encoding='utf-8');process=SimpleNamespace(returncode=0)
+    else:
+        process = subprocess.Popen(args,cwd=workspace,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
+        try:
+            stdout,stderr,marks = communicate_timed(process,json.dumps(prompt,ensure_ascii=False).encode(),config.get('workout_timeout_seconds',600))
+        except BaseException:
+            kill(process)
+            raise
     trace=runtime_dir(config)/'traces'
     trace.mkdir(parents=True,exist_ok=True)
     (trace/(job['id']+'.jsonl')).write_bytes(stdout)
@@ -282,6 +305,8 @@ def run_claude(config, config_file, state, job, images, workspace):
             '--tools','','--allowedTools','mcp__workout__workout_read','--permission-mode','dontAsk',
             '--setting-sources','project','--disable-slash-commands',
             '--system-prompt-file',str(workspace/'instructions.txt'),'--json-schema',json.dumps(SCHEMA)]
+    from ..orchestrator.streaming import current_stream
+    if current_stream():args+=['--include-partial-messages']
     if state.get('claude_session'): args += ['--resume',state['claude_session']]
     prompt = build_prompt(config, state, job, model, 'claude_session')
     content = [{'type':'text','text':json.dumps(prompt,ensure_ascii=False)}]
@@ -393,6 +418,8 @@ def codex_marks(event):
 
 def communicate_timed(process, data, timeout, classify=codex_marks):
     """communicate(), also noting when the model's first output item and first answer text arrived."""
+    from ..orchestrator.streaming import AnswerCapture,current_stream
+    capture=AnswerCapture(structured=classify is claude_marks) if current_stream() else None
     out,err,marks=[],[],{}
     def read_stdout():
         for line in iter(process.stdout.readline,b''):
@@ -400,6 +427,7 @@ def communicate_timed(process, data, timeout, classify=codex_marks):
             try: event=json.loads(line)
             except ValueError: continue
             if not isinstance(event,dict): continue
+            if capture:capture.claude(event)
             now=time.monotonic()
             for name in classify(event): marks.setdefault(name,now)
     def read_stderr(): err.append(process.stderr.read())
@@ -413,6 +441,8 @@ def communicate_timed(process, data, timeout, classify=codex_marks):
     process.wait(timeout=timeout)
     for reader in readers: reader.join(timeout=15)
     for stream in (process.stdout,process.stderr): stream.close()
+    if capture:
+        for name,value in capture.marks.items():marks[name]=min(marks.get(name,value),value)
     return b''.join(out),b''.join(err),marks
 
 
@@ -492,7 +522,9 @@ def run_once(client, config, config_file, state, invoke=run_engine, poll=None):
             root=Path(directory)
             images=download_photos(client,job,root,base)
             model_started=time.monotonic()
-            result=invoke(config,config_file,state,job,images,root)
+            from ..orchestrator.progress import publishing
+            with publishing(config,client,base+'/trainer/'+job['id']+'/stream',job['token'],field='text'):
+                result=invoke(config,config_file,state,job,images,root)
             model_finished=time.monotonic()
         if lost.is_set(): raise RuntimeError('Trainer lease lost')
         marks=result.pop('_marks',None) or {}

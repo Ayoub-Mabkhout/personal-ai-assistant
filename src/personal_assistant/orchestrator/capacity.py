@@ -99,7 +99,10 @@ def save_claude(config,events,now=None):
     latest=[e for e in events if e.get('type')=='rate_limit_event']
     if not latest:return
     path=claude_cache(config);path.parent.mkdir(parents=True,exist_ok=True)
-    temporary=path.with_suffix('.new');temporary.write_text(json.dumps(claude_record(latest[-1],now)),encoding='utf-8');temporary.replace(path)
+    with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,prefix=path.name+'.',suffix='.new',delete=False) as stream:
+        temporary=Path(stream.name);json.dump(claude_record(latest[-1],now),stream)
+    try:temporary.replace(path)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def refresh_claude(config):

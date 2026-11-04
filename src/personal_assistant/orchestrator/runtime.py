@@ -1,4 +1,5 @@
 from datetime import datetime,timezone
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import logging
@@ -6,13 +7,17 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
+import threading
 import time
 from typing import Literal
+from weakref import WeakValueDictionary
 from pydantic import BaseModel,ConfigDict,Field
 from personal_assistant.worker.runtime import Singleton
 from personal_assistant.skill_repository import SkillRepository
 from personal_assistant.orchestrator import capacity,forwarding
 from personal_assistant.orchestrator import attachments as task_attachments
+from personal_assistant.relay.store import Queue
 
 
 MODELS=('gpt-6-luna','gpt-6.1-terra','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
@@ -63,11 +68,58 @@ class UsageLimited(InterruptedRun):
 
 def write_json(path,body):
     path=Path(path)
-    temporary=path.with_suffix(path.suffix+'.new')
-    with temporary.open('w',encoding='utf-8') as stream:
-        json.dump(body,stream,ensure_ascii=False,indent=2)
-        stream.flush();os.fsync(stream.fileno())
-    temporary.replace(path)
+    # Independent conversations can update shared telemetry at the same time.
+    with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,prefix=path.name+'.',suffix='.new',delete=False) as stream:
+        temporary=Path(stream.name)
+        try:
+            json.dump(body,stream,ensure_ascii=False,indent=2)
+            stream.flush();os.fsync(stream.fileno())
+        except BaseException:
+            stream.close();temporary.unlink(missing_ok=True);raise
+    try:temporary.replace(path)
+    finally:temporary.unlink(missing_ok=True)
+
+
+_LANE_LOCKS=WeakValueDictionary()
+_LANE_GUARD=threading.Lock()
+_ENGINE_LOCK=threading.Lock()
+
+
+def session_alias(root,identifier):
+    """Resolve old roots that share a session, including a migrated follow-up."""
+    folder=Path(root)/'jobs'/identifier
+    conversation=folder/'conversation.json';parent=folder/'job.json'
+    current=json.loads(conversation.read_text(encoding='utf-8')) if conversation.is_file() else {}
+    original=json.loads(parent.read_text(encoding='utf-8')) if parent.is_file() else {}
+    worker=current.get('worker') or (original.get('workers') or [{}])[-1]
+    result=(original.get('outcome') or {}).get('result') or {}
+    session=worker.get('session_id') or result.get('resumed_session_id') or result.get('orchestrator_session_id')
+    if session:return 'session:'+(worker.get('agent') or result.get('orchestrator_agent') or 'codex')+':'+session
+    return None
+
+
+@contextmanager
+def execution_locks(root,job,cancelled):
+    """Serialize one context, while unrelated contexts retain their own CLI slots."""
+    root=Path(root);payload=job['payload'];identifier=Queue.session_root(payload)
+    keys=['task:'+(identifier or job['id'])]
+    if identifier:
+        alias=session_alias(root,identifier)
+        if alias:keys.append(alias)
+    else:keys.append('general')
+    directory=root/'session-locks';directory.mkdir(parents=True,exist_ok=True)
+    with ExitStack() as held:
+        for key in sorted(keys):
+            path=root/'orchestrator.lock' if key=='general' else directory/(hashlib.sha256(key.encode()).hexdigest()+'.lock')
+            with _LANE_GUARD:
+                lock=_LANE_LOCKS.get(str(path))
+                if lock is None:lock=threading.Lock();_LANE_LOCKS[str(path)]=lock
+            while not lock.acquire(timeout=.1):
+                if cancelled.is_set():raise InterruptedRun('Task cancellation was requested while waiting for its conversation.')
+            held.callback(lock.release)
+            if cancelled.is_set():raise InterruptedRun('Task cancellation was requested.')
+            held.enter_context(Singleton(path))
+        yield
 
 
 def clip(value,limit=RECENT_TEXT_CHARS):
@@ -110,6 +162,9 @@ class CLI:
                 return previous
             if previous.get('usage_limited'): raise UsageLimited('codex')
             raise InterruptedRun('An earlier agent call was interrupted. Its effects need reconciliation before rerunning it.')
+        from .streaming import current_stream
+        if current_stream() and not schema:
+            return self.stream_run(prompt,directory,workspace,model,effort,cancelled,session,instructions)
         args=[self.config['codex']]
         if Path(args[0]).suffix=='.js': args=[self.config['node'],args[0]]
         args+=['exec']
@@ -171,6 +226,40 @@ class CLI:
         write_json(record_path,record)
         return record
 
+    def stream_run(self,prompt,directory,workspace,model,effort,cancelled,session,instructions):
+        """App-server deltas with the same saved thread and execution/recovery record."""
+        from .streaming import codex_turn,AppServerError
+        prefix=[self.config['codex']]
+        if Path(prefix[0]).suffix=='.js':prefix=[self.config['node'],prefix[0]]
+        record_path=directory/'record.json'
+        record={'state':'running','agent':'codex','model':model,'effort':effort,'session_id':session,
+                'started_at':datetime.now(timezone.utc).isoformat(),'workspace':str(workspace),
+                'permission_mode':'danger-full-access','transport':'app-server',
+                'result':str(directory/'result.txt'),'trace':str(directory/'events.jsonl')}
+        (directory/'prompt.txt').write_text(prompt,encoding='utf-8');write_json(record_path,record)
+        def pid(value):record['pid']=value;write_json(record_path,record)
+        def thread(value):record['session_id']=value;write_json(record_path,record)
+        environment={k:v for k,v in os.environ.items() if not k.startswith(('ASSISTANT_','OCI_','OPENAI_')) and k!='CODEX_API_KEY'}
+        try:
+            result=codex_turn(prefix,prompt,workspace,model,effort,session=session,instructions=instructions,
+                features={'apps':True,'plugins':True},config={'sandbox_mode':'danger-full-access'},
+                environment=environment,cancelled=cancelled,timeout=self.config.get('agent_call_timeout',1800),
+                on_start=pid,on_thread=thread,raw_trace=directory/'app-server.jsonl',
+                event_trace=directory/'events.jsonl',result_file=directory/'result.txt')
+        except AppServerError as error:
+            (directory/'stderr.log').write_bytes(getattr(error,'stderr',b''))
+            record.update(state='interrupted',finished_at=datetime.now(timezone.utc).isoformat())
+            limited=capacity.codex_limited(events(directory/'events.jsonl'),str(error))
+            if limited:record['usage_limited']=True
+            write_json(record_path,record)
+            if limited:raise UsageLimited('codex',observed=True) from error
+            raise InterruptedRun(str(error)) from error
+        (directory/'stderr.log').write_bytes(result.stderr)
+        record.update(state='completed',exit_code=0,finished_at=datetime.now(timezone.utc).isoformat(),
+                      session_id=result.session_id,usage=result.usage,marks=result.marks)
+        write_json(record_path,record)
+        return record
+
 
 class ClaudeCLI:
     """Headless Claude Code worker with the same record, trace and recovery contract as CLI."""
@@ -199,6 +288,9 @@ class ClaudeCLI:
         executable=capacity.claude_executable(self.config)
         if not executable: raise InterruptedRun('Claude Code is not installed for the worker.')
         args=[executable,'-p','--output-format','stream-json','--verbose','--model',model,'--effort',effort]
+        from .streaming import AnswerCapture,current_stream
+        stream_capture=AnswerCapture() if current_stream() and not schema else None
+        if stream_capture:args+=['--include-partial-messages']
         if schema:
             # A dispatcher returns assignments only: no built-in tools, MCP servers, skills or user settings.
             write_json(directory/'schema.json',schema)
@@ -221,9 +313,19 @@ class ClaudeCLI:
         environment={k:v for k,v in os.environ.items() if k!='ANTHROPIC_API_KEY' and not k.startswith(('ASSISTANT_','OCI_','OPENAI_','CLAUDECODE','CLAUDE_CODE_'))}
         deadline=time.monotonic()+self.config.get('agent_call_timeout',1800)
         with (directory/'events.jsonl').open('wb') as out,(directory/'stderr.log').open('wb') as err:
-            process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=out,stderr=err,cwd=workspace,
+            process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE if stream_capture else out,stderr=err,cwd=workspace,
                 env=environment,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,
                 start_new_session=os.name!='nt')
+            reader=None
+            if stream_capture:
+                import threading
+                def read_stream():
+                    for line in iter(process.stdout.readline,b''):
+                        out.write(line);out.flush()
+                        try:event=json.loads(line)
+                        except ValueError:continue
+                        if isinstance(event,dict):stream_capture.claude(event)
+                reader=threading.Thread(target=read_stream,daemon=True);reader.start()
             record['pid']=process.pid;write_json(record_path,record)
             process.stdin.write(prompt.encode());process.stdin.close()
             while process.poll() is None:
@@ -235,9 +337,12 @@ class ClaudeCLI:
                         import signal
                         os.killpg(process.pid,signal.SIGKILL)
                     process.wait(timeout=15)
+                    if reader:reader.join(timeout=5)
                     record.update(state='interrupted',exit_code=process.returncode)
                     write_json(record_path,record)
                     raise InterruptedRun('Agent cancelled, disconnected or timed out. Inspect its captured trace before resuming work.')
+            if reader:
+                reader.join(timeout=5);process.stdout.close()
         history=events(directory/'events.jsonl')
         capacity.save_claude(self.config,history)
         final=[e for e in history if e.get('type')=='result']
@@ -447,15 +552,17 @@ class Orchestrator:
 
     def mark_limited(self,agent):
         """A usage-limit error takes the agent out of rotation for a cooldown, like the workout coach."""
-        state=self.engine_state()
-        state[agent+'_retry_after']=time.time()+60*float(self.config.get('dispatcher_engine_retry_minutes',ENGINE_RETRY_MINUTES))
-        state[agent+'_limited_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
-        write_json(self.engine_path,state)
+        with _ENGINE_LOCK:
+            state=self.engine_state()
+            state[agent+'_retry_after']=time.time()+60*float(self.config.get('dispatcher_engine_retry_minutes',ENGINE_RETRY_MINUTES))
+            state[agent+'_limited_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
+            write_json(self.engine_path,state)
 
     def mark_ok(self,agent):
-        state=self.engine_state()
-        if agent+'_retry_after' in state:
-            state.pop(agent+'_retry_after');state.pop(agent+'_limited_at',None);write_json(self.engine_path,state)
+        with _ENGINE_LOCK:
+            state=self.engine_state()
+            if agent+'_retry_after' in state:
+                state.pop(agent+'_retry_after');state.pop(agent+'_limited_at',None);write_json(self.engine_path,state)
 
     def agent_availability(self,now=None):
         """Whether each agent can take work now. Telemetry trouble never takes an installed agent offline."""
@@ -845,6 +952,18 @@ class Orchestrator:
         return record,moved
 
     def execute(self,job,cancelled):
+        saved=self.root/'jobs'/job['id']/'job.json'
+        mode=json.loads(saved.read_text(encoding='utf-8')).get('routing_mode','legacy') if saved.is_file() else self.config.get('dispatcher_mode','legacy')
+        if (not self.config.get('answer_streaming',False) or not job.get('lease_token')
+                or (mode!='jev' and not job['payload'].get('resume_task'))):
+            return self._execute(job,cancelled)
+        from .progress import publishing
+        from personal_assistant.worker.runtime import RelayClient
+        client=RelayClient(self.config['relay_url'],self.config['worker_token_file'],timeout=3)
+        with publishing(self.config,client,'/v1/agent/worker/'+job['id']+'/stream',job['lease_token']):
+            return self._execute(job,cancelled)
+
+    def _execute(self,job,cancelled):
         directory=self.root/'jobs'/job['id'];directory.mkdir(parents=True,exist_ok=True)
         payload=job['payload']
         fingerprint=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
@@ -855,7 +974,7 @@ class Orchestrator:
         if state.get('outcome'): return state['outcome']
         write_json(state_path,state)
         try:
-            with Singleton(self.root/'orchestrator.lock'):
+            with execution_locks(self.root,job,cancelled):
                 if payload.get('resume_task'):
                     outcome=self.continue_task(job,directory,cancelled)
                     state.update(outcome=outcome,phase='finished',finished_at=datetime.now(timezone.utc).isoformat())
