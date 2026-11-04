@@ -17,6 +17,14 @@ from personal_assistant.worker.runtime import Singleton
 from personal_assistant.skill_repository import SkillRepository
 from personal_assistant.orchestrator import capacity,forwarding
 from personal_assistant.orchestrator import attachments as task_attachments
+
+_routing_log=logging.getLogger('personal_assistant.routing')
+if not _routing_log.handlers:
+    _routing_handler=logging.StreamHandler()
+    _routing_handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    _routing_log.addHandler(_routing_handler)
+_routing_log.setLevel(logging.INFO)
+_routing_log.propagate=False
 from personal_assistant.relay.store import Queue
 
 
@@ -709,6 +717,9 @@ class Orchestrator:
             record.update(state='completed',finished_at=datetime.now(timezone.utc).isoformat(),
                           seconds=time.monotonic()-started,choice=choice,decision=decision.model_dump())
             write_json(record_path,record)
+            _routing_log.info('Task route account=%s reason=%s model=%s effort=%s task_type=%s latency_ms=%.1f',
+                         agent,choice.get('routing_reason','unspecified'),choice['model'],choice['effort'],
+                         choice['task_type'],1000*record['seconds'])
             return decision
         except Exception as error:
             record.update(state='failed',finished_at=datetime.now(timezone.utc).isoformat(),
