@@ -49,7 +49,7 @@ final class ChatTimeline {
             }
         }
         void set(String text,long time,String kind,String task,TaskOpener open){
-            if(!text.equals(this.text)){this.text=text;words.setText(text);}
+            if(!text.equals(this.text)){this.text=text;if(user)words.setText(text);else RichText.show(ui,words,text);}
             String who=user?"You":"Assistant",stamp=AppUi.stamp(time),line=stamp.isEmpty()?who:who+" · "+stamp;if(!line.contentEquals(meta.getText()))meta.setText(line);
             this.kind=kind;this.task=task;this.open=open;sync();
         }

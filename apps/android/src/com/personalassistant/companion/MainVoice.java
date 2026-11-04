@@ -11,7 +11,7 @@ final class MainVoice {
     private static final long ANSWER_FRESH_MS=30*60000L;
     private final MainActivity a;private final AppUi ui;
     final AppUi.VoiceButton talk;final AppUi.Meter meter;final AppUi.StatusChip connection;final Switch background;final AppUi.Pill stop,conversation,testWake;final Button resume;final ChatTimeline chat;
-    private final TextView status,detail,hint,words,answer,answerMeta,testCount,heard;private final Button answerTask;private final View liveCard,answerCard,testCard;private final LinearLayout actions;
+    private final TextView status,detail,hint,words,answer,answerMeta,testCount,heard;private final Button answerTask;private String shownAnswer="";private final View liveCard,answerCard,testCard;private final LinearLayout actions;
     private long answerRevision=-1,answerTime;private String answerText="",answerKind="",answerId="";boolean changing;
     /** Meridian hero: the weather pill over the sky and today's daylight under the orb; absent in the other appearance modes. */
     final boolean meridian;private final TextView weather;private final LinearLayout hero;final MeridianTimeline timeline;
@@ -86,7 +86,7 @@ final class MainVoice {
         meter.setVisibility(engaged?View.VISIBLE:View.GONE);meter.value(AppUi.level(a),mic);boolean resuming=wake&&!mic&&!loading;stop.setVisibility(engaged?View.VISIBLE:View.GONE);hint.setVisibility(orb.equals("listening")?View.VISIBLE:View.GONE);resume.setVisibility(resuming?View.VISIBLE:View.GONE);actions.setVisibility(engaged||resuming?View.VISIBLE:View.GONE);
         String partial=p.getString("voice_last_partial",""),spoken=partial.isEmpty()?p.getString("voice_user_text",""):partial;liveCard.setVisibility(live&&!spoken.isEmpty()?View.VISIBLE:View.GONE);if(!spoken.isEmpty())label(words,spoken);
         boolean fresh=freshAnswer();answerCard.setVisibility(fresh&&!live?View.VISIBLE:View.GONE);
-        if(fresh){AppUi.update(answer,answerText);AppUi.update(answerMeta,"Assistant \u00b7 "+AppUi.stamp(answerTime));answerTask.setVisibility(!answerId.isEmpty()&&answerKind.equals("acknowledgement")?View.VISIBLE:View.GONE);}
+        if(fresh){if(!answerText.equals(shownAnswer)){shownAnswer=answerText;RichText.show(ui,answer,answerText);AppUi.fade(answer);}AppUi.update(answerMeta,"Assistant \u00b7 "+AppUi.stamp(answerTime));answerTask.setVisibility(!answerId.isEmpty()&&answerKind.equals("acknowledgement")?View.VISIBLE:View.GONE);}
         String link=paired?(VoiceOutbox.networkReady(a)?"Online":"Offline"):"Connect phone";if(!link.equals(connection.getText().toString())){AppUi.update(connection,link);connection.tone(link.equals("Online")?"success":link.equals("Offline")?"warning":"neutral");}
         changing=true;background.setChecked(testing?p.getBoolean("ui_test_background_desired",false):wake);changing=false;
         testCard.setVisibility(testing?View.VISIBLE:View.GONE);label(testWake,testing?"Finish test":"Test wake");label(conversation,conversationOn?"End conversation":"Start conversation");

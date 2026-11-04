@@ -2,13 +2,16 @@ package com.personalassistant.companion;
 
 import android.graphics.*;
 import android.text.*;
+import android.text.method.LinkMovementMethod;
 import android.text.style.*;
+import android.view.MotionEvent;
 import android.view.View;
+import android.widget.TextView;
 import java.util.List;
 
 /**
  * Markdown chat answers as one Spanned for a single TextView, in the app's type and colours; Markdown decides the structure.
- * Show with setText(RichText.render(ui,answer)) and LinkMovementMethod so links open; safe to re-render on every streamed chunk.
+ * Show with show(ui,view,answer), which also makes links tappable; safe to re-render on every streamed chunk.
  */
 final class RichText {
     private RichText(){}
@@ -18,6 +21,30 @@ final class RichText {
     static CharSequence render(AppUi ui,String markdown){
         SpannableStringBuilder out=new SpannableStringBuilder();
         try{blocks(ui,out,Markdown.parse(markdown));return out;}catch(RuntimeException unexpected){return markdown==null?"":markdown;}
+    }
+
+    /**
+     * A model answer in a TextView: rich text, accent links that open on tap. Taps and long presses away from a link still reach
+     * the parent (copy on long press, row clicks), and selectable text keeps its selection.
+     */
+    static void show(AppUi ui,TextView view,String markdown){
+        if(!(view.getMovementMethod() instanceof Taps)){boolean selectable=view.isTextSelectable();view.setMovementMethod(Taps.INSTANCE);
+            if(!selectable){view.setClickable(false);view.setLongClickable(false);view.setFocusable(false);}}
+        view.setLinkTextColor(ui.accent);view.setText(render(ui,markdown));
+    }
+    /** LinkMovementMethod that only claims a touch that starts on a link, so the rest of the gesture belongs to the parent. */
+    static final class Taps extends LinkMovementMethod {
+        static final Taps INSTANCE=new Taps();
+        @Override public boolean onTouchEvent(TextView widget,Spannable buffer,MotionEvent event){
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN&&!onLink(widget,buffer,event))return false;
+            return super.onTouchEvent(widget,buffer,event);
+        }
+        private static boolean onLink(TextView widget,Spannable buffer,MotionEvent event){
+            Layout layout=widget.getLayout();if(layout==null)return false;
+            int x=(int)event.getX()-widget.getTotalPaddingLeft()+widget.getScrollX(),y=(int)event.getY()-widget.getTotalPaddingTop()+widget.getScrollY();
+            int line=layout.getLineForVertical(y);if(x<layout.getLineLeft(line)||x>layout.getLineRight(line))return false;
+            int offset=layout.getOffsetForHorizontal(line,x);return buffer.getSpans(offset,offset,ClickableSpan.class).length>0;
+        }
     }
 
     private static void blocks(AppUi ui,SpannableStringBuilder out,List<Markdown.Block> list){

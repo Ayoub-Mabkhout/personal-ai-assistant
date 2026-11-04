@@ -33,7 +33,7 @@ final class TaskViews {
         if(text==null||text.isEmpty())return null;
         LinearLayout item=ui.column();item.setGravity(user?Gravity.END:Gravity.START);
         LinearLayout box=ui.column();box.setPadding(ui.dp(14),ui.dp(10),ui.dp(14),ui.dp(11));box.setBackground(ui.bubble(user));
-        TextView words=ui.body(text);words.setMaxWidth(Math.min(Math.round(ui.context.getResources().getDisplayMetrics().widthPixels*.84f),ui.dp(520))-ui.dp(28)-(user?0:ui.dp(36)));box.addView(words);
+        TextView words=ui.body(user?text:"");if(!user)RichText.show(ui,words,text);words.setMaxWidth(Math.min(Math.round(ui.context.getResources().getDisplayMetrics().widthPixels*.84f),ui.dp(520))-ui.dp(28)-(user?0:ui.dp(36)));box.addView(words);
         box.setLongClickable(true);box.setOnLongClickListener(v->{copy(ui.context,text);return true;});
         item.addView(box,new LinearLayout.LayoutParams(-2,-2));
         String stamp=AppUi.stamp(at);TextView meta=ui.type(stamp.isEmpty()?label:label+" · "+stamp,12,16,500,0,ui.muted);meta.setPadding(ui.dp(6),0,ui.dp(6),0);LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(-2,-2);mp.topMargin=ui.dp(5);item.addView(meta,mp);
