@@ -21,7 +21,7 @@ _QUOTED=re.compile(r'```[\s\S]*?```|`[^`\n]*`|"[^"\n]*"|(?<!\w)\'[^\'\n]*\'(?!\w
 _DIRECT=re.compile(r'\b(?:use|choose|select|pick|prefer|avoid|switch\s+to|(?:route|dispatch|delegate)\s+(?:this\s+)?to)\s+(?:(?:the\s+)?(?:model|agent)\s*[:=]?\s*)?')
 _RUN=re.compile(r'\b(?:run|do|execute|process|handle|send)\b[^\n.;!?]{0,100}?\b(?:with|via|using|on|to)\s+')
 _FIELD=re.compile(r'\b(?:model|agent)\s*[:=]\s*')
-_LET=re.compile(r'\blet\s+')
+_LET=re.compile(r'\b(?:let|have|get|ask)\s+')
 _EFFORT_WORD=r'(?:extra[\s_-]*high|x[\s_-]*high|maximum|max|ultra|medium|high|low)'
 _EFFORT_FIELD=re.compile(r'\b(?:effort|reasoning(?:\s+effort)?)\s*(?:[:=]|(?:to|is)\s+)\s*('+_EFFORT_WORD+r')\b')
 _EFFORT_USE=re.compile(r'\b(?:use|set|choose|prefer|avoid)\s+('+_EFFORT_WORD+r')\s+(?:reasoning\s+)?effort\b')
@@ -97,7 +97,7 @@ def explicit_preferences(text,profiles):
             polarity=_polarity(text,directive.start(),directive[0]);target=_target(text,directive.end(),patterns)
             if not target or polarity is None:continue
             end,kind,value=target
-            if matcher is _LET and not re.match(r'\s+(?:handle|do|take|process|run|work|answer)\b',text[end:]):continue
+            if matcher is _LET and not re.match(r'\s+(?:to\s+)?(?:handle|do|take|process|run|work|answer|write|draft|look|check|plan|fix|summari[sz]e|review|deal)\b',text[end:]):continue
             add(kind,value,polarity)
             tail=_EFFORT_TAIL.match(text,end)
             if tail:add('effort',_effort(tail[1] or tail[2]),polarity)

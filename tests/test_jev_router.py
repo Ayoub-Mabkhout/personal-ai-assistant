@@ -99,8 +99,6 @@ class JevRouterTests(unittest.TestCase):
         self.assertEqual(result['action'],'forward')
 
     def test_email_cannot_use_claude_tools(self):
-        with self.assertRaisesRegex(JevError,'email tools'):
-            self.decide(FakeHTTP(answer(profile='claude_sonnet_medium',task_type='email')),agent_availability={'codex':False})
         # A mail request is pinned to Codex before Jev is asked, whatever the allowance.
         http=FakeHTTP(answer(task_type='email'))
         result=self.decide(http,user_request='Find the invoice email from the landlord',
@@ -109,6 +107,21 @@ class JevRouterTests(unittest.TestCase):
         with self.assertRaisesRegex(JevError,'Codex mailbox tools'):
             self.decide(FakeHTTP(),user_request='Use Claude to search my inbox for the invoice')
         self.assertEqual(self.decide(FakeHTTP(answer(task_type='email')))['task_type'],'email')
+
+    def test_research_is_raised_from_a_lightweight_model(self):
+        result=self.decide(FakeHTTP(answer(profile='codex_luna_low',task_type='research')))
+        self.assertEqual((result['model'],result['effort']),('gpt-6.1-sol','medium'))
+        result=self.decide(FakeHTTP(answer(profile='claude_haiku_low',task_type='research')),agent_availability={'codex':False})
+        self.assertEqual(result['model'],'claude-sonnet-5-5')
+        # An explicit model request still wins, and lightweight work outside research is left alone.
+        result=self.decide(FakeHTTP(answer(profile='claude_haiku_low',task_type='research')),user_request='Let Haiku handle this: who wrote Dubliners?')
+        self.assertEqual(result['model'],'claude-haiku-5-5')
+        self.assertEqual(self.decide(FakeHTTP(answer(task_type='general')))['model'],'gpt-6-luna')
+
+    def test_email_label_without_mailbox_work_is_writing(self):
+        result=self.decide(FakeHTTP(answer(profile='claude_haiku_low',task_type='email')),
+            user_request='Write a short note declining a meeting; I will paste it myself',agent_availability={'codex':False})
+        self.assertEqual((result['agent'],result['task_type']),('claude','documents'))
 
     def test_invalid_response_shapes_are_safe_errors(self):
         malformed=[[],{'answers':[]},{'answers':{'profile':{}}}]

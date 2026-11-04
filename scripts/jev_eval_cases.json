@@ -1,0 +1,539 @@
+{
+ "about": "Routing evaluation cases. Labels are the owner's acceptable ranges, not ground truth. Tiers: light (Luna, Haiku) < practical (Sonnet, Terra) < top (Sol, Opus) < exceptional (Astra). Cases in the held-out split must never be used to edit routing guidance; once one has influenced the guidance, move it to dev. Groups are counterfactual sets: same intent phrased differently, same vocabulary at different difficulty, or same request under different allowance.",
+ "scenarios": {
+  "balanced": {
+   "codex": {
+    "five_hour": {
+     "remaining_percent": 60
+    },
+    "weekly": {
+     "remaining_percent": 60
+    }
+   },
+   "claude": {
+    "five_hour": {
+     "remaining_percent": 60
+    },
+    "weekly": {
+     "remaining_percent": 55
+    }
+   }
+  },
+  "codex_low": {
+   "codex": {
+    "five_hour": {
+     "remaining_percent": 6
+    },
+    "weekly": {
+     "remaining_percent": 50
+    }
+   },
+   "claude": {
+    "five_hour": {
+     "remaining_percent": 80
+    },
+    "weekly": {
+     "remaining_percent": 70
+    }
+   }
+  },
+  "claude_low": {
+   "codex": {
+    "five_hour": {
+     "remaining_percent": 80
+    },
+    "weekly": {
+     "remaining_percent": 70
+    }
+   },
+   "claude": {
+    "five_hour": {
+     "remaining_percent": 6
+    },
+    "weekly": {
+     "remaining_percent": 50
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "greet-hi",
+   "split": "dev",
+   "group": "conversation",
+   "request": "Hi",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "greet-thanks",
+   "split": "heldout",
+   "group": "conversation",
+   "request": "Perfect, thanks a lot!",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "greet-chat",
+   "split": "heldout",
+   "group": "conversation",
+   "request": "Morning! Slept terribly but the coffee is helping.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "latenight-command",
+   "split": "dev",
+   "group": "late-food",
+   "request": "Find a vegetarian place near the Alfama in Lisbon that is still serving food after 22:00 tonight.",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "latenight-question",
+   "split": "dev",
+   "group": "late-food",
+   "request": "Is anywhere vegetarian still open late near the Alfama tonight?",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "latenight-remark",
+   "split": "dev",
+   "group": "late-food",
+   "request": "Starving in the Alfama and it's nearly ten, something vegetarian would be amazing.",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "rename-trivial",
+   "split": "dev",
+   "group": "utils-code",
+   "request": "In utils.py rename the variable cnt to count. Change nothing else.",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "practical",
+   "task_type": [
+    "coding"
+   ]
+  },
+  {
+   "id": "rename-hard",
+   "split": "heldout",
+   "group": "utils-code",
+   "request": "Make the counter in utils.py safe under concurrent updates from the worker pool without changing its public API, and add tests that would have caught the race.",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top",
+   "task_type": [
+    "coding"
+   ]
+  },
+  {
+   "id": "translate-short",
+   "split": "heldout",
+   "group": "translation",
+   "request": "How do you say 'good luck with the exam' in German?",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "translate-long",
+   "split": "heldout",
+   "group": "translation",
+   "request": "Translate the attached 40-page tenancy agreement into German, keeping the legal terminology consistent throughout and flagging clauses that have no direct German equivalent.",
+   "scenario": "balanced",
+   "attachments": [
+    {
+     "name": "tenancy.pdf",
+     "mime": "application/pdf"
+    }
+   ],
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "arith",
+   "split": "dev",
+   "group": "facts",
+   "request": "What's 17% of 240?",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "word-meaning",
+   "split": "heldout",
+   "group": "facts",
+   "request": "What does 'sonder' mean?",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "passport-now",
+   "split": "dev",
+   "group": "facts",
+   "request": "How long is a Portuguese passport renewal taking at the moment if I apply from Germany?",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "poem-short",
+   "split": "heldout",
+   "group": "creative",
+   "request": "Write a four-line poem about rain on a tram window.",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "top"
+  },
+  {
+   "id": "story-long",
+   "split": "heldout",
+   "group": "creative",
+   "request": "Write a 2,500-word short story about a lighthouse keeper's last night before automation, told backwards, with an ending that recontextualises the first scene.",
+   "scenario": "balanced",
+   "min": "top",
+   "max": "top",
+   "prefer_model": "claude-opus-5-5"
+  },
+  {
+   "id": "deadlock",
+   "split": "heldout",
+   "group": "hard",
+   "request": "Our distributed lock service deadlocks roughly once a week under load. Logs from the three nodes are attached. Find the cause and propose a fix with a proof sketch that it can no longer happen.",
+   "scenario": "balanced",
+   "attachments": [
+    {
+     "name": "node-logs.zip",
+     "mime": "application/zip"
+    }
+   ],
+   "min": "top",
+   "max": "exceptional",
+   "task_type": [
+    "coding",
+    "research"
+   ]
+  },
+  {
+   "id": "proof",
+   "split": "heldout",
+   "group": "hard",
+   "request": "Prove that every tournament has a Hamiltonian path, then decide whether the same holds for every strongly connected tournament having a Hamiltonian cycle, with a rigorous argument.",
+   "scenario": "balanced",
+   "min": "top",
+   "max": "exceptional"
+  },
+  {
+   "id": "explicit-opus",
+   "split": "dev",
+   "group": "explicit",
+   "request": "Use Opus for this: summarise the paragraph below in one sentence.\n\nThe committee met on Tuesday and agreed to postpone the vote.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "model": "claude-opus-5-5"
+  },
+  {
+   "id": "explicit-haiku",
+   "split": "heldout",
+   "group": "explicit",
+   "request": "Let Haiku handle this one: list the planets in order from the sun.",
+   "scenario": "claude_low",
+   "account": "claude",
+   "model": "claude-haiku-5-5"
+  },
+  {
+   "id": "explicit-sol-high",
+   "split": "heldout",
+   "group": "explicit",
+   "request": "Run this with Sol at high effort: plan the migration of our SQLite tables to Postgres with zero downtime.",
+   "scenario": "codex_low",
+   "account": "codex",
+   "model": "gpt-6.1-sol",
+   "effort": "high"
+  },
+  {
+   "id": "explicit-not-claude",
+   "split": "dev",
+   "group": "explicit",
+   "request": "Don't use Claude for this. Sketch a two-day walking itinerary for Porto in late November.",
+   "scenario": "codex_low",
+   "account": "codex",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "mention-not-request",
+   "split": "heldout",
+   "group": "explicit",
+   "request": "In one paragraph, what's the practical difference between Opus and Haiku for everyday questions?",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "mail-find",
+   "split": "dev",
+   "group": "mail",
+   "request": "Find the email from my landlord about the deposit and tell me what they asked for.",
+   "scenario": "codex_low",
+   "account": "codex",
+   "task_type": [
+    "email"
+   ]
+  },
+  {
+   "id": "mail-check",
+   "split": "heldout",
+   "group": "mail",
+   "request": "Did the university reply in my inbox about the thesis deadline?",
+   "scenario": "codex_low",
+   "account": "codex",
+   "task_type": [
+    "email"
+   ]
+  },
+  {
+   "id": "mail-style-only",
+   "split": "dev",
+   "group": "mail",
+   "request": "Write a short, polite note declining a meeting invitation for Thursday; I'll paste it myself.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "practical",
+   "task_type": [
+    "general",
+    "documents"
+   ]
+  },
+  {
+   "id": "pdf-summary-codex",
+   "split": "heldout",
+   "group": "allowance-flip",
+   "request": "Summarise the attached report in five bullets.",
+   "scenario": "claude_low",
+   "account": "codex",
+   "attachments": [
+    {
+     "name": "report.pdf",
+     "mime": "application/pdf"
+    }
+   ],
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "pdf-summary-claude",
+   "split": "heldout",
+   "group": "allowance-flip",
+   "request": "Summarise the attached report in five bullets.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "attachments": [
+    {
+     "name": "report.pdf",
+     "mime": "application/pdf"
+    }
+   ],
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "trip-codex",
+   "split": "heldout",
+   "group": "allowance-flip",
+   "request": "I land in Bologna at 11:40 tomorrow. Plan the afternoon on foot around lunch and whatever is open, back at the station by 19:00.",
+   "scenario": "claude_low",
+   "account": "codex",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "trip-claude",
+   "split": "heldout",
+   "group": "allowance-flip",
+   "request": "I land in Bologna at 11:40 tomorrow. Plan the afternoon on foot around lunch and whatever is open, back at the station by 19:00.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "museum-hours",
+   "split": "heldout2",
+   "group": "live-hours",
+   "request": "Any idea if the Rijksmuseum is open on Mondays this month?",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "flight-cancelled",
+   "split": "heldout2",
+   "group": "live-hours",
+   "request": "Ugh, my flight to Vienna just got cancelled and I need to be there by noon tomorrow.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "late-supermarket",
+   "split": "heldout2",
+   "group": "live-hours",
+   "request": "Which supermarkets around Kreuzberg stay open past midnight on Saturdays?",
+   "scenario": "claude_low",
+   "account": "codex",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "esim-plans",
+   "split": "heldout2",
+   "group": "live-hours",
+   "request": "Is it worth switching to one of the current eSIM-only phone plans in Germany?",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top"
+  },
+  {
+   "id": "inch",
+   "split": "heldout2",
+   "group": "small-facts",
+   "request": "How many centimetres are in an inch?",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "capital",
+   "split": "heldout2",
+   "group": "small-facts",
+   "request": "What's the capital of Australia?",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "good-night",
+   "split": "heldout2",
+   "group": "small-facts",
+   "request": "Good night!",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "light"
+  },
+  {
+   "id": "csv-line",
+   "split": "heldout2",
+   "group": "small-facts",
+   "request": "Turn this into one comma-separated line:\napples\npears\nplums",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "limerick",
+   "split": "heldout2",
+   "group": "creative2",
+   "request": "Write a limerick about a cat who hates Mondays.",
+   "scenario": "balanced",
+   "min": "light",
+   "max": "top"
+  },
+  {
+   "id": "ci-flake",
+   "split": "heldout2",
+   "group": "code2",
+   "request": "Our CI fails intermittently on Windows only, with a file-lock error during test teardown. Investigate and fix it.",
+   "scenario": "balanced",
+   "min": "practical",
+   "max": "top",
+   "task_type": [
+    "coding"
+   ]
+  },
+  {
+   "id": "lab-scheduler",
+   "split": "heldout2",
+   "group": "hard2",
+   "request": "Design a scheduling algorithm for shared lab equipment with three priority classes and prove that no request can starve.",
+   "scenario": "balanced",
+   "min": "top",
+   "max": "exceptional"
+  },
+  {
+   "id": "explicit-sonnet",
+   "split": "dev",
+   "group": "explicit2",
+   "request": "Have Sonnet do this: compare three popular note-taking apps for students.",
+   "scenario": "claude_low",
+   "account": "claude",
+   "model": "claude-sonnet-5-5"
+  },
+  {
+   "id": "no-codex",
+   "split": "heldout2",
+   "group": "explicit2",
+   "request": "Please don't use Codex here. What's a good stretch for tight hamstrings?",
+   "scenario": "claude_low",
+   "account": "claude",
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "mail-forward",
+   "split": "heldout2",
+   "group": "mail2",
+   "request": "Forward the train ticket from my inbox to my phone.",
+   "scenario": "codex_low",
+   "account": "codex",
+   "task_type": [
+    "email"
+   ]
+  },
+  {
+   "id": "draft-professor",
+   "split": "heldout2",
+   "group": "mail2",
+   "request": "Can you draft something I could send my professor asking for a one-week extension?",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "interest-claude",
+   "split": "heldout2",
+   "group": "flip2",
+   "request": "Explain how compound interest works with a quick example.",
+   "scenario": "codex_low",
+   "account": "claude",
+   "min": "light",
+   "max": "practical"
+  },
+  {
+   "id": "interest-codex",
+   "split": "heldout2",
+   "group": "flip2",
+   "request": "Explain how compound interest works with a quick example.",
+   "scenario": "claude_low",
+   "account": "codex",
+   "min": "light",
+   "max": "practical"
+  }
+ ]
+}

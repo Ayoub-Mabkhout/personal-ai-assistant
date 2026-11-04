@@ -55,6 +55,8 @@ CAPABILITIES = {
     'gpt-6-astra':'Exceptional difficulty requiring the strongest reasoning, beyond ordinary planning or substantial tool use. Do not select merely because a task uses several tools.',
     'claude-fable-5-1':'Use only when the user explicitly requests this model.',
 }
+LIGHTWEIGHT = {'gpt-6-luna','claude-haiku-5-5'}
+RESEARCH_FLOOR = {'codex':'codex_sol61_medium','claude':'claude_sonnet_medium'}
 PROFILE_GUIDANCE = """Choose a worker from the supplied profiles only. Code has already selected
 the account and applied explicit model/effort constraints; these are binding. This is the
 owner's routing policy, not a benchmark claim. Do not select another account.
@@ -200,7 +202,16 @@ class Router:
             raise JevError('Jev selected unavailable development forwarding')
         selected = PROFILES[profile]
         if task_type=='email' and selected['agent']!='codex':
-            raise JevError('Jev selected a worker without required email tools')
+            # Code found no mailbox access in the request, so this is writing, not mail work.
+            if routed['reason']=='mail_tools':
+                raise JevError('Jev selected a worker without required email tools')
+            task_type = 'documents'
+        # Live research needs a worker that can search, compare and verify; a lightweight model is raised to the
+        # account's practical profile unless the user asked for a specific model or effort.
+        floor = RESEARCH_FLOOR.get(selected['agent'])
+        if (task_type=='research' and selected['model'] in LIGHTWEIGHT and floor in allowed
+                and not {'model','effort'} & set(routed['explicit'])):
+            profile, selected = floor, PROFILES[floor]
         return {
             'action':'forward' if disposition=='forward' else 'dispatch',
             **selected,'task_type':task_type,'profile':profile,'routing_reason':routed['reason'],

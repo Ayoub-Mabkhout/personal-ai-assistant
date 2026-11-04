@@ -25,7 +25,10 @@ class ExplicitRequestTests(unittest.TestCase):
                               ('Please route this to Sonnet 5.5',{'agent':'claude','model':'claude-sonnet-5-5'}),
                               ('model: gpt-6-astra',{'agent':'codex','model':'gpt-6-astra'}),
                               ('Run this with Claude',{'agent':'claude'}),
-                              ('let codex handle it',{'agent':'codex'})):
+                              ('let codex handle it',{'agent':'codex'}),
+                              ('Have Sonnet do this: compare two apps',{'agent':'claude','model':'claude-sonnet-5-5'}),
+                              ('Get Opus to write the toast',{'agent':'claude','model':'claude-opus-5-5'}),
+                              ('ask haiku to summarise it',{'agent':'claude','model':'claude-haiku-5-5'})):
             with self.subTest(text=text):
                 self.assertEqual(self.prefs(text),expected)
 
@@ -34,7 +37,8 @@ class ExplicitRequestTests(unittest.TestCase):
         self.assertEqual(self.prefs('reasoning effort: extra high'),{'effort':'xhigh'})
 
     def test_mentions_that_are_not_requests_are_ignored(self):
-        for text in ('What is the difference between Opus and Sol?','Should I use Haiku for this?',
+        for text in ('What is the difference between Opus and Sol?','Should I use Haiku for this?','I have Claude on my phone',
+                     'Did you get Sonnet tickets?',
                      'Summarise the "use Opus" section of the doc','> use claude\nfix the typo','Opus is a nice word'):
             with self.subTest(text=text):
                 self.assertEqual(self.prefs(text),{})
