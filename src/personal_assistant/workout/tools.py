@@ -21,7 +21,8 @@ def serve(config, source=sys.stdin, target=sys.stdout, *, user_id=None):
     client = OwnerClient(config)
     base = workout_path(user_id)
     tools = [dict(name='workout_read',description='Read actual workout context. overview is aggregate evidence; entities pages all history; entity reads exact record/revision. No writes.',
-        inputSchema={'type':'object','properties':{'view':{'type':'string','enum':['overview','entities','entity']},
+        inputSchema={'type':'object','properties':{'view':{'type':'string','enum':['overview','entities','entity','memory','schema']},
+            'query':{'type':'string','maxLength':200},
             'kind':{'type':'string','enum':list(MODELS)},'id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'offset':{'type':'integer'},'limit':{'type':'integer'}},
             'required':['view'],'additionalProperties':False},annotations={'readOnlyHint':True,'destructiveHint':False})]
     for line in source:
@@ -51,8 +52,15 @@ def serve(config, source=sys.stdin, target=sys.stdout, *, user_id=None):
                         if args.get('kind') not in MODELS or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',args.get('id','')):
                             raise ValueError('Read a known workout entity with a valid ID')
                         path='/entities/'+quote(args['kind'],safe='')+'/'+quote(args['id'],safe='')
-                    else: raise ValueError('Invalid view')
-                    value=client.call(base+path)
+                    elif view not in ('memory','schema'): raise ValueError('Invalid view')
+                    if view=='schema':
+                        if args.get('kind') not in MODELS: raise ValueError('Choose a known entity kind')
+                        value=MODELS[args['kind']].model_json_schema()
+                    elif view=='memory':
+                        from .memory import search
+                        value=search(config,user_id,args.get('query'),int(args.get('offset',0)),int(args.get('limit',10)))
+                    else:
+                        value=client.call(base+path)
                     if view=='overview':
                         value={k:value.get(k) for k in ('completed_workouts','body_metrics','body_rank','next_workout','sprints',
                             'lift_ranks','aggregate_score','trainer','next_session_brief','scheduled_sprints')}

@@ -31,6 +31,23 @@ def strong_csv(rows):
 
 
 class WorkoutTests(unittest.TestCase):
+    def test_coach_contract_is_refreshed_and_memory_is_scoped(self):
+        from personal_assistant.workout.specialist import build_prompt
+        from personal_assistant.workout.memory import save, search
+        with tempfile.TemporaryDirectory() as directory:
+            config={'workout_runtime_dir':directory}
+            job={'id':'sample','photos':[],'context':{},'question':'Remember my goal'}
+            state={}
+            first=build_prompt(config,state,job,'gpt-6.1-terra','session')
+            self.assertIn('action_guide',first)
+            state.update(session='sample',session_contract=first['contract_signature'])
+            self.assertNotIn('data_schemas',build_prompt(config,state,job,'gpt-6.1-terra','session'))
+            state['session_contract']='obsolete'
+            self.assertIn('data_schemas',build_prompt(config,state,job,'gpt-6.1-terra','session'))
+            save(config,'goal','Goal','Run a mile','Mile goal')
+            self.assertTrue(search(config,None,'mile')['matches'])
+            self.assertEqual(search(config,'a'*32,'mile')['matches'],[])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.now=1000.
         self.store=Workouts(Path(self.tmp.name)/'workout.sqlite3',clock=lambda:self.now)

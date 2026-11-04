@@ -31,6 +31,7 @@ class SessionUnavailable(RuntimeError):
 
 
 INSTRUCTIONS = """You are the owner's personal financial auditor. Your Money MCP tools have live ledger access.
+Use memory_search to recover earlier owner explanations and conversations after compaction.
 Use transactions_search to find ANY imported transaction, not just the recent context below.
 Use transaction_annotations_write to actually SAVE requested display titles, merchant names, notes and tags.
 Use merchant_logo_fetch to fetch and cache real merchant icons using known brand website domains.
@@ -176,6 +177,8 @@ def prompt_for(ledger, jobs, today, config, notes, resumed=False):
              'payload': json.loads(j['payload'])} for j in jobs], 'transactions_for_review': pending,
              'provenance': 'Bank rows and prior decisions are durable local records; owner corrections override AI.',
              'history': 'recent_decided is a short sample; search older decisions with transactions_search.'}
+    if not resumed and config.get('banking_handoff_file'):
+        payload['previous_session_handoff'] = json.loads(Path(config['banking_handoff_file']).read_text(encoding='utf-8'))
     if resumed:
         # Stable reference material was sent when this session started.
         for key in ('accounts', 'provenance'):
@@ -200,6 +203,8 @@ def _run(prompt, config, session=None, on_start=None):
         executable = _codex(config)
         prefix = [config.get('node', 'node'), executable] if Path(executable).suffix == '.js' else [executable]
         overrides = ['--disable', 'shell_tool', '--disable', 'apps', '--disable', 'multi_agent',
+                     '-c', 'model_reasoning_effort=' + json.dumps(config.get('banking_effort','medium')),
+                     '-c', 'model_auto_compact_token_limit=' + str(config.get('specialist_compact_tokens',175000)),
                      '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"',
                      '-c', 'developer_instructions=' + json.dumps(INSTRUCTIONS)]
         if config.get('_money_tool_lease'):
@@ -249,7 +254,8 @@ def _run(prompt, config, session=None, on_start=None):
         seen = [e['thread_id'] for e in events if e.get('type') == 'thread.started' and e.get('thread_id')]
         session_id = seen[-1] if seen else session
         used = [(e.get('usage') or {}).get('input_tokens') or 0 for e in events if e.get('type') == 'turn.completed']
-        if used and used[-1] > config.get('banking_rotate_tokens', ROTATE_TOKENS):
+        rotate_limit = config.get('banking_rotate_tokens', ROTATE_TOKENS)
+        if rotate_limit and used and used[-1] > rotate_limit:
             # Retire a session before it grows too large to compact; the ledger rebuilds the next one.
             session_id = None
         if process.returncode or not (root / 'answer.json').is_file():

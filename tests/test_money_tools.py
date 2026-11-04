@@ -41,9 +41,19 @@ class MoneyToolTests(unittest.TestCase):
     def test_stale_lease_cannot_read_write_or_fetch(self):
         self.ledger.release_claim(self.token)
         for name,args in [('transactions_search',{}),('transaction_annotations_write',{'items':[self.annotation()]}),
-                          ('merchant_logo_fetch',{'merchant_name':'dm','domain':'dm.de','evidence':'Known brand'})]:
+                          ('merchant_logo_fetch',{'merchant_name':'dm','domain':'dm.de','evidence':'Known brand'}),
+                          ('memory_search',{'query':'imported'})]:
             with self.assertRaisesRegex(ValueError,'lease'):
                 self.tools.call(name,args)
+
+    def test_memory_search_recovers_questions_and_answers(self):
+        with self.ledger.db() as db:
+            db.execute('INSERT INTO audit_outputs VALUES(?,?,?)',
+                       (self.jobs[0]['seq'],'Earlier answer about groceries',self.ledger.clock()))
+        found=self.tools.call('memory_search',{'query':'GROCERIES'})
+        self.assertEqual(found['total'],1)
+        self.assertIn('groceries',found['matches'][0]['answer'])
+        self.assertEqual(self.tools.call('memory_search',{'query':'unrelated'})['total'],0)
 
     def test_logo_cached_with_provenance_and_bounded_image(self):
         png = b'\x89PNG\r\n\x1a\n'+struct.pack('>I',13)+b'IHDR'+struct.pack('>II',16,16)+b'\x08\x06\0\0\0'+b'\0'*4
@@ -70,7 +80,7 @@ class MoneyToolTests(unittest.TestCase):
         target=io.StringIO();serve(self.tools,source,target)
         responses=[json.loads(line) for line in target.getvalue().splitlines()]
         self.assertEqual([r['id'] for r in responses],[1,2,3])
-        self.assertEqual(len(responses[1]['result']['tools']),4)
+        self.assertEqual(len(responses[1]['result']['tools']),5)
         self.assertFalse(responses[2]['result']['isError'])
 
     def test_mcp_overrides_are_global_before_exec_resume(self):

@@ -109,6 +109,14 @@ Private progress-photo uploads are bounded8MiB JPEG/PNG/WebP with SHA256 IDs and
 
 The laptop supervisor enables workout_specialist using protected worker config and a private workout_profile_file/workout_runtime_dir outside synced/public storage. It stores the CLI session, narrative and private failure traces. Native Codex compaction preserves the session; aggregate multi-tool token usage is not treated as current context length. MCP dashboard reads are compact, with paged exact records for details. Real model questions share this session.
 
+Protected settings select `workout_model`, `workout_effort` and
+`specialist_compact_tokens`. The fast-actions skill is sent with the entity schemas
+at session initialization and when that contract changes. After compaction, the
+coach can retrieve an individual schema or search its private memory through
+`workout_read`. Each athlete's runtime has a separate Markdown facts file and
+conversation journal. A migration handoff can initialize a fresh model session
+with the prior narrative and conversation without changing saved workouts.
+
 ### Coach engines
 
 `workout_coach_engine` selects the engine: `auto` (default), `codex` or `claude`. In `auto` the coach uses Codex while it has allowance and Claude Code otherwise. Allowance comes from `orchestrator/capacity.py` (Codex rollout rate-limit records; the dispatcher's cached Claude `rate_limit_event`, read only when `orchestrator_dir` is configured). When a Codex call fails with a usage or rate-limit error, the same job is retried once on Claude rather than answered as failed, and that engine is skipped for `workout_engine_retry_minutes` (default 30). Other model failures are not retried. The coach heartbeats `ready` while any engine is usable and `blocked` (without claiming jobs) when none is.

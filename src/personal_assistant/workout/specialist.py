@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 from importlib.resources import files
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -28,6 +29,8 @@ RETRY_CAP_SECONDS = 30
 INSTRUCTIONS = '''You are the owner's persistent workout specialist. Use workout_read MCP tools to read
 actual workouts, exercises, bodyweight, recovery and sprints; search/page related records when needed.
 Keep one continuing training conversation, and maintain a concise dated narrative in memory_summary.
+Preserve durable facts, goals, preferences, corrections and open decisions in that narrative.
+Use workout_read view memory with a focused query to recover older discussions after compaction.
 Current explicit owner instructions override older profile proposals and suggested measurement routines.
 Use ordered workout cycles with finite completion targets by default. Check scheduled_sprints in the
 athlete's overview before offering dated slots. For an athlete who opted in and requests a schedule,
@@ -125,12 +128,19 @@ def tool_server(config, config_file):
 
 def build_prompt(config, state, job, model, session_key):
     from .models import MODELS
+    contract = {
+        'action_guide': files(__package__).joinpath('fast-actions/SKILL.md').read_text(encoding='utf-8'),
+        'data_schemas': {k:MODELS[k].model_json_schema() for k in ('exercise','template','sprint','workout','composition')},
+    }
+    signature = hashlib.sha256(json.dumps(contract,sort_keys=True).encode()).hexdigest()
     prompt = {'job':{k:v for k,v in job.items() if k!='token'},'previous_narrative':state.get('memory',''),
-              'data_schemas':{k:MODELS[k].model_json_schema() for k in ('exercise','template','sprint','workout','composition')},
               'current_approved_photo_ids':job['photos'],
               'model':model,
               'now':datetime.now(timezone.utc).isoformat(),
-              'instructions':'Use live read tools for context; do not load all history into one answer.'}
+              'instructions':'Use targeted workout_read calls. Recover earlier facts with view memory and query. If a schema is missing after compaction, use view schema with the entity kind.'}
+    if not state.get(session_key) or state.get(session_key+'_contract') != signature:
+        prompt.update(contract)
+    prompt['contract_signature'] = signature
     context = job.get('context', {})
     purpose = context.get('purpose')
     if ((purpose == 'scheduled_reminder' and context.get('roast') is True)
@@ -139,6 +149,8 @@ def build_prompt(config, state, job, model, session_key):
     profile_file = config.get('workout_profile_file')
     if not state.get(session_key) and profile_file:
         prompt['owner_training_context'] = Path(profile_file).read_text(encoding='utf-8')[:40000]
+    if not state.get(session_key) and state.get('migration_context'):
+        prompt['previous_session_handoff'] = state['migration_context']
     return prompt
 
 
@@ -179,6 +191,8 @@ def run_model(config, config_file, state, job, images, workspace):
     schema_file.write_text(json.dumps(SCHEMA),encoding='utf-8')
     prefix = [config.get('node','node'),executable] if Path(executable).suffix=='.js' else [executable]
     args = prefix+['--disable','shell_tool','--disable','apps','--disable','multi_agent',
+                  '-c','model_reasoning_effort='+json.dumps(config.get('workout_effort','medium')),
+                  '-c','model_auto_compact_token_limit='+str(config.get('specialist_compact_tokens',175000)),
                   '-c','approval_policy="never"','-c','sandbox_mode="read-only"',
                   '-c','developer_instructions='+json.dumps(INSTRUCTIONS)]
     command, server_args, pythonpath = tool_server(config, config_file)
@@ -221,6 +235,7 @@ def run_model(config, config_file, state, job, images, workspace):
         if event.get('type')=='thread.started': state['session']=event['thread_id']
         if event.get('type')=='turn.completed': state['last_usage']=event.get('usage',{})
     result=validate_answer(json.loads(answer_file.read_text(encoding='utf-8')))
+    state['session_contract'] = prompt['contract_signature']
     result['_marks']=marks  # monotonic times of the first model output and first answer text
     result['_model']=model
     return result
@@ -312,6 +327,7 @@ def run_claude(config, config_file, state, job, images, workspace):
     state['last_usage']=final[-1].get('usage') or {}
     try: result=claude_answer(final[-1])
     except ValueError as error: raise ValueError('Incomplete trainer answer') from error
+    state['claude_session_contract'] = prompt['contract_signature']
     result['_marks']=marks
     result['_model']=model
     return result
@@ -514,6 +530,11 @@ def run_once(client, config, config_file, state, invoke=run_engine, poll=None):
                      **({'timings':timings} if supports_timings else {})},'PUT')
         if job.get('context', {}).get('purpose') != 'scheduled_reminder':
             state['memory']=result['memory_summary'][:16000]
+            from .memory import save
+            try:
+                save(config,job['id'],job['question'],text,state['memory'])
+            except OSError:
+                logging.exception('Workout memory journal could not be saved')
         return True
     except Exception as error:
         trace=runtime_dir(config)/'traces'

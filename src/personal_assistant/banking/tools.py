@@ -38,6 +38,17 @@ class MoneyTools:
     def call(self, name, args):
         with self.ledger.db() as db:
             self.fenced(db)
+        if name == 'memory_search':
+            query = str(args.get('query', '')).casefold()
+            offset, limit = int(args.get('offset',0)), int(args.get('limit',10))
+            if not 1 <= len(query) <= 200 or offset < 0 or not 1 <= limit <= 20:
+                raise ValueError('Supply a query and a valid memory page')
+            with self.ledger.db() as db:
+                rows = db.execute("""SELECT j.seq,j.kind,j.payload,o.answer FROM audit_jobs j
+                    LEFT JOIN audit_outputs o ON o.job_seq=j.seq
+                    WHERE j.kind IN ('question','owner_answer','explanation') ORDER BY j.seq""")
+                found = [dict(row) for row in rows if query in (row['payload']+' '+(row['answer'] or '')).casefold()]
+            return {'total':len(found), 'matches':found[offset:offset+limit]}
         if name == 'transactions_search':
             rows = self.ledger.transactions()
             query = str(args.get('query', '')).casefold()
@@ -105,7 +116,9 @@ def tool_list():
         return {'name': name, 'description': description,
                 'inputSchema': {'type': 'object', 'properties': properties, 'required': list(required), 'additionalProperties': False},
                 'annotations': {'readOnlyHint': read, 'destructiveHint': False, 'openWorldHint': name == 'merchant_logo_fetch'}}
-    return [tool('transactions_search', 'Search ALL live imported transactions, including past months. Page until next_offset is null. missing_only finds rows without saved enhancements.',
+    return [tool('memory_search', 'Search durable past questions, owner explanations and answers after compaction. Use focused terms and page results.',
+                 {'query':{'type':'string','maxLength':200},'offset':{'type':'integer'},'limit':{'type':'integer'}}, ('query',), read=True),
+            tool('transactions_search', 'Search ALL live imported transactions, including past months. Page until next_offset is null. missing_only finds rows without saved enhancements.',
                  {'query': {'type': 'string'}, 'missing_only': {'type': 'boolean'}, 'offset': {'type': 'integer'}, 'limit': {'type': 'integer'}}, read=True),
             tool('transaction_annotations_write', 'Save titles, merchant names, notes and tags immediately. Leaves bank facts and accounting unchanged. Use null brand ID for brands outside the supplied catalog; downloaded logos match merchant_name independently.',
                  {'items': {'type': 'array', 'items': ENRICHMENT}}, ('items',)),

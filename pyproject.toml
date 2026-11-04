@@ -20,4 +20,4 @@ assistant-calendar = "personal_assistant.calendar:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"personal_assistant.workout" = ["roast-voice.md"]
+"personal_assistant.workout" = ["roast-voice.md", "fast-actions/SKILL.md"]

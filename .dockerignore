@@ -11,6 +11,8 @@
 !src/personal_assistant/workout/
 !src/personal_assistant/workout/*.py
 !src/personal_assistant/workout/roast-voice.md
+!src/personal_assistant/workout/fast-actions/
+!src/personal_assistant/workout/fast-actions/SKILL.md
 !apps/
 !apps/groceries/
 !apps/groceries/*
