@@ -50,6 +50,8 @@ class BodyLimit:
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
         if path.endswith('/stream'):
             limit=512*1024  # bounded answer snapshots with JSON Unicode escaping
+        if scope.get('method')=='PUT' and path.startswith('/train/api/vault/records/'):
+            limit=24*1024*1024  # bounded ciphertext envelope for a 16 MiB private object
         if path.endswith('/workout/sync') or path == '/train/api/sync':
             limit=2*1024*1024
         while True:
@@ -137,7 +139,7 @@ def timings_of(value):
     return value.timings.model_dump(exclude_none=True) if value.timings else None
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
@@ -272,7 +274,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         from personal_assistant.workout.web import mount_train
         train_reminders, train_competition = mount_train(
             app, workouts, submit, train_assets, train_push,
-            device_auth(groceries_api.devices) if groceries else None, mobile_events)
+            device_auth(groceries_api.devices) if groceries else None, mobile_events,require_identity=train_require_identity)
         app.state.train_reminders = train_reminders
         app.state.train_competition = train_competition
     if reminder_pump:

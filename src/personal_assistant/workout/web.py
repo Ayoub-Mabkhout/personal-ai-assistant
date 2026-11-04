@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
@@ -169,6 +169,25 @@ class AccountUpdate(Model):
     share_schedule: bool | None = None
 
 
+class PasswordLogin(Model):
+    name: str = Field(min_length=1,max_length=80)
+    auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+
+
+class PasswordEnrollment(PasswordLogin):
+    client_salt: str = Field(pattern=r'^[A-Za-z0-9_-]{22}$')
+
+
+class VaultKeyUpdate(Model):
+    base_revision: int = Field(ge=0,le=2**53-1,strict=True)
+    record: dict
+
+
+class VaultObjectUpdate(Model):
+    base_revision: int = Field(ge=0,le=2**53-1,strict=True)
+    envelope: dict
+
+
 def same_origin(request: Request):
     if request.method in ('GET', 'HEAD'):
         return
@@ -181,6 +200,10 @@ def same_origin(request: Request):
         secure = parsed.scheme == 'https' or (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1'))
         if not secure or parsed.netloc != host:
             raise HTTPException(403, 'Open Iron League directly to make changes.')
+
+
+def private_response(response: Response):
+    response.headers['Cache-Control']='private, no-store'
 
 
 SPRINT_KEYS = ('id', 'name', 'phase', 'status', 'start', 'end', 'completed', 'target_sessions')
@@ -234,18 +257,28 @@ def shared_profile(account, stats, store, share_schedule):
     }
 
 
-def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobile_events=None):
+def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobile_events=None,require_identity=False):
     from .competition import Competition
     from .reminder import TrainReminders, install_reminders
     accounts = Accounts(workouts)
+    if require_identity:
+        from .identity import Identity
+        from .private_vault import PrivateVault
+        identities=Identity(workouts);vault=PrivateVault(workouts)
+    else:identities=vault=None
     reminders = TrainReminders(workouts, push)
     competition = Competition(workouts, push, mobile_events)
-    browser = APIRouter(prefix='/train/api', dependencies=[Depends(same_origin)])
+    browser = APIRouter(prefix='/train/api', dependencies=[Depends(same_origin),Depends(private_response)])
     owner = APIRouter(prefix='/v1/train', dependencies=[Depends(owner_auth)])
     coach = APIRouter(prefix='/v1/train/users/{user_id}/workout', dependencies=[Depends(owner_auth)])
 
     def account(request: Request):
-        return accounts.authenticate(request.cookies.get(COOKIE))
+        user=accounts.authenticate(request.cookies.get(COOKIE))
+        if require_identity:
+            with workouts.db() as db:
+                enrolled=db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(user['id'],)).fetchone()
+            if not enrolled:raise HTTPException(403,'Set a password from this profile session before continuing.')
+        return user
 
     def browser_store(user=Depends(account)):
         return workouts.for_user(user['id'])
@@ -255,6 +288,7 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
 
     @browser.post('/join')
     def join(body: Join, request: Request, response: Response):
+        if require_identity:raise HTTPException(403,'Use your name and password to sign in.')
         if request.cookies.get(COOKIE) and not body.switch_profile:
             try:
                 account(request)
@@ -268,9 +302,86 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
                             secure=True, samesite='strict', path='/train/api')
         return user
 
+    def identity_enabled():
+        if not require_identity:raise HTTPException(404,'Password authentication is not enabled.')
+
+    def client_id(request):
+        # Do not accept a caller-provided JSON device ID or untrusted forwarded header.
+        return request.client.host if request.client else 'unknown-client'
+
+    def auth_call(function,*args,**kwargs):
+        from .identity import LoginFailed,EnrollmentDenied,RateLimited,IdentityError
+        try:return function(*args,**kwargs)
+        except RateLimited as error:raise HTTPException(429,str(error),headers={'Retry-After':str(error.retry_after)}) from None
+        except LoginFailed as error:raise HTTPException(401,str(error)) from None
+        except EnrollmentDenied as error:raise HTTPException(409,str(error)) from None
+        except IdentityError as error:raise HTTPException(422,str(error)) from None
+
+    def issue_session(response):
+        token=secrets.token_urlsafe(32)
+        def issued(db,user_id):
+            db.execute('DELETE FROM train_sessions WHERE expires<=?',(workouts.clock(),))
+            db.execute('INSERT INTO train_sessions VALUES(?,?,?)',(digest(token),user_id,workouts.clock()+SESSION_SECONDS))
+        def cookie():
+            response.set_cookie(COOKIE,token,max_age=SESSION_SECONDS,httponly=True,secure=True,samesite='strict',path='/train/api')
+            response.headers['Cache-Control']='private, no-store'
+        return issued,cookie
+
+    @browser.get('/auth/parameters',dependencies=[Depends(identity_enabled)])
+    def password_parameters(response:Response,name:str=Query(min_length=1,max_length=80)):
+        response.headers['Cache-Control']='private, no-store'
+        return auth_call(identities.parameters,name)
+
+    @browser.post('/auth/register',dependencies=[Depends(identity_enabled)])
+    def password_register(body:PasswordEnrollment,request:Request,response:Response):
+        issued,cookie=issue_session(response)
+        identifier=auth_call(identities.register,body.name,body.auth_secret,body.client_salt,client_id(request),on_enroll=issued)
+        cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
+
+    @browser.post('/auth/login',dependencies=[Depends(identity_enabled)])
+    def password_login(body:PasswordLogin,request:Request,response:Response):
+        issued,cookie=issue_session(response)
+        identifier=auth_call(identities.login,body.name,body.auth_secret,client_id(request),on_login=issued)
+        cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
+
+    @browser.post('/auth/claim',dependencies=[Depends(identity_enabled)])
+    def password_claim(body:PasswordEnrollment,request:Request,response:Response):
+        issued,cookie=issue_session(response)
+        identifier=auth_call(identities.claim,body.name,body.auth_secret,body.client_salt,
+                             request.cookies.get(COOKIE),client_id(request),on_enroll=issued)
+        cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
+
+    @browser.post('/auth/logout',dependencies=[Depends(identity_enabled)])
+    def password_logout(request:Request,response:Response):
+        identities.revoke(request.cookies.get(COOKIE))
+        response.delete_cookie(COOKIE,path='/train/api',secure=True,httponly=True,samesite='strict')
+        response.headers['Cache-Control']='private, no-store'
+        return {'signed_out':True}
+
+    @browser.get('/vault/key-envelope',dependencies=[Depends(identity_enabled)])
+    def vault_key(user=Depends(account)):
+        return vault.get_key(user['id'])
+
+    @browser.put('/vault/key-envelope',dependencies=[Depends(identity_enabled)])
+    def save_vault_key(body:VaultKeyUpdate,user=Depends(account)):
+        return vault.put_key(user['id'],body.record,body.base_revision)
+
+    @browser.get('/vault/records',dependencies=[Depends(identity_enabled)])
+    def vault_listing(user=Depends(account),kind:str|None=Query(default=None,max_length=64),
+                      cursor:str|None=Query(default=None,max_length=600),limit:int=Query(default=50,ge=1,le=100)):
+        return vault.listing(user['id'],kind,cursor,limit)
+
+    @browser.get('/vault/records/{kind}/{identifier}',dependencies=[Depends(identity_enabled)])
+    def vault_record(kind:str,identifier:str,user=Depends(account)):
+        return vault.get(user['id'],kind,identifier)
+
+    @browser.put('/vault/records/{kind}/{identifier}',dependencies=[Depends(identity_enabled)])
+    def save_vault_record(kind:str,identifier:str,body:VaultObjectUpdate,user=Depends(account)):
+        return vault.put(user['id'],kind,identifier,body.envelope,body.base_revision)
+
     @browser.get('/me')
     def me(user=Depends(account)):
-        return user
+        return {**user,**vault.status(user['id'])} if require_identity else user
 
     @browser.patch('/me')
     def update_account(body: AccountUpdate, user=Depends(account)):
