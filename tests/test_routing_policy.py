@@ -66,6 +66,12 @@ class AccountChoiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'No allowed agent'):
             route('Summarise',agent_availability={'codex':False,'claude':False})
 
+    def test_a_stale_low_reading_still_counts_against_its_account(self):
+        # Shape of a real snapshot: Codex read at 1% hours ago with its window still running; Claude's window reset since.
+        codex={'five_hour':{'remaining_percent':1,'resets_in_minutes':84},'weekly':{'remaining_percent':84},'observed_minutes_ago':140}
+        claude={'five_hour':{'remaining_percent':100,'reset_since_observed':True},'weekly':{'remaining_percent':44},'observed_minutes_ago':219}
+        self.assertEqual(route('Summarise this page',agent_capacity={'codex':codex,'claude':claude})['agent'],'claude')
+
     def test_stale_readings_count_as_unknown_not_full(self):
         stale={'five_hour':{'remaining_percent':100},'weekly':{'remaining_percent':100},'observed_minutes_ago':180}
         self.assertLess(account_score(stale,None,now=NOW),account_score(capacity((60,60))['codex'],None,now=NOW))

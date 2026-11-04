@@ -13,6 +13,10 @@ import unicodedata
 
 UNKNOWN_HEADROOM=20.0
 STALE_MINUTES=60
+# Allowance only falls until its window resets, so an old reading is an upper bound; it is capped because
+# other work may have used it since. A window that has reset since the reading is mostly fresh again.
+STALE_CAP=60.0
+RESET_HEADROOM=60.0
 _QUOTED=re.compile(r'```[\s\S]*?```|`[^`\n]*`|"[^"\n]*"|(?<!\w)\'[^\'\n]*\'(?!\w)|^\s*>[^\n]*',re.MULTILINE)
 _DIRECT=re.compile(r'\b(?:use|choose|select|pick|prefer|avoid|switch\s+to|(?:route|dispatch|delegate)\s+(?:this\s+)?to)\s+(?:(?:the\s+)?(?:model|agent)\s*[:=]?\s*)?')
 _RUN=re.compile(r'\b(?:run|do|execute|process|handle|send)\b[^\n.;!?]{0,100}?\b(?:with|via|using|on|to)\s+')
@@ -144,8 +148,12 @@ def account_score(reading,availability,*,now):
     stale=age is not None and age>STALE_MINUTES
     headroom=[];unknown=0
     for remaining,reset,observed in windows:
-        if remaining is None or stale or reading.get('available') is False or (remaining==0 and observed):
+        if remaining is None or reading.get('available') is False:
             headroom.append(UNKNOWN_HEADROOM);unknown+=1
+        elif observed:
+            headroom.append(RESET_HEADROOM);unknown+=1
+        elif stale:
+            headroom.append(min(remaining,STALE_CAP));unknown+=1
         else:headroom.append(remaining)
     five,weekly=headroom
     score=.70*min(five,weekly)+.15*(five+weekly)-5*unknown
