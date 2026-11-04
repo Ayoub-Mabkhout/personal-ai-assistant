@@ -108,7 +108,8 @@ final class NativeTaskScreens {
 
     private static final class Detail extends Screen {
         final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved,voiceNote;final EditText instruction;final AppUi.Fab send;final ImageButton mic;final AppUi.Pill talk;final Set<String> queued=new HashSet<>();
-        String rendered;boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder;int total=-1;long lastDay;LinearLayout attachmentDraft;
+        String rendered,version="";boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder,watching,active;int total=-1,watchEpoch,backoff;long lastDay;LinearLayout attachmentDraft;
+        final Runnable watchLoop=this::watch;
         // Voice: the service owns the microphone; "requested" bridges the moment between a tap and the service starting.
         String requested="",shownMode,lastNote="";long requestedUntil,requestedAt,noteUntil;boolean ticking;final Runnable tick=()->{ticking=false;voice();};
         Detail(Activity a,String kind,String id){
@@ -168,12 +169,22 @@ final class NativeTaskScreens {
         }
         void refreshSend(){send.setEnabled(canContinue&&!instruction.getText().toString().trim().isEmpty());}
         void end(boolean snap){follow=false;int to=Math.max(0,body.getHeight()-(scroll.getHeight()-scroll.getPaddingTop()-scroll.getPaddingBottom()));if(snap||!AppUi.motion())scroll.scrollTo(0,to);else scroll.smoothScrollTo(0,to);}
-        void settle(){int now=messages.getChildCount()+pendingMessages.getChildCount();if(now>total){follow=true;jump=total<0;}total=now;}
-        @Override void changed(){TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);pending();if(busy)return;busy=true;network.execute(()->{try{JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();});}catch(Exception error){safe(()->{busy=false;pending();});}});}
+        boolean atEnd(){return scroll.getScrollY()+scroll.getHeight()>=body.getHeight()-ui.dp(80);}
+        void settle(){int now=messages.getChildCount()+pendingMessages.getChildCount();if(now>total&&(total<0||atEnd())){follow=true;jump=total<0;}total=now;}
+        void stopWatch(){watchEpoch++;watching=false;main.removeCallbacks(watchLoop);}
+        void watch(){
+            main.removeCallbacks(watchLoop);if(closed||!active||watching)return;
+            if(busy||!dialog.getWindow().getDecorView().hasWindowFocus()){main.postDelayed(watchLoop,1000);return;}
+            watching=true;final int epoch=watchEpoch;final String since=version;
+            new Thread(()->{try{JSONObject value=NativeTasks.detail(a,kind,id,since);safe(()->{if(epoch!=watchEpoch)return;watching=false;backoff=0;NativeTasks.cacheDetail(a,kind,id,value);note("",null,false);render(value);pending();if(active)main.postDelayed(watchLoop,value.optString("version").isEmpty()?1000:0);});}
+                catch(Exception error){safe(()->{if(epoch!=watchEpoch)return;watching=false;backoff=Math.min(30000,backoff==0?2000:backoff*2);note("Connection interrupted · the saved conversation stays here.","cloud-off",true);main.postDelayed(watchLoop,backoff);});}
+            },"task-conversation").start();
+        }
+        @Override void changed(){TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);pending();if(busy)return;stopWatch();busy=true;network.execute(()->{try{JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();watch();});}catch(Exception error){safe(()->{busy=false;pending();watch();});}});}
         @Override void reload(){load();}
         @Override void load(){
-            JSONObject cached=NativeTasks.cachedDetail(a,kind,id);if(cached.length()>0)render(cached);pending();if(busy)return;busy=true;spin();note("Loading task...","refresh",false);
-            network.execute(()->{try{NativeTasks.flush(a);JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();});}catch(Exception error){safe(()->{busy=false;note("Offline · showing the saved task. Follow-ups stay on this phone until connected.","cloud-off",true);if(!loaded&&messages.getChildCount()==0){placeholder=true;messages.addView(ui.empty("cloud-off","Task not saved on this phone","Reconnect, then refresh to load its answers.","Refresh",this::load));}pending();});}});
+            JSONObject cached=NativeTasks.cachedDetail(a,kind,id);if(cached.length()>0)render(cached);pending();if(busy)return;stopWatch();busy=true;spin();note("Loading task...","refresh",false);
+            network.execute(()->{try{NativeTasks.flush(a);JSONObject value=NativeTasks.detail(a,kind,id);safe(()->{busy=false;note("",null,false);render(value);pending();watch();});}catch(Exception error){safe(()->{busy=false;note("Offline · showing the saved task. Follow-ups stay on this phone until connected.","cloud-off",true);if(!loaded&&messages.getChildCount()==0){placeholder=true;messages.addView(ui.empty("cloud-off","Task not saved on this phone","Reconnect, then refresh to load its answers.","Refresh",this::load));}pending();watch();});}});
         }
         void submit(){
             String text=instruction.getText().toString().trim();if(text.isEmpty())return;
@@ -195,23 +206,27 @@ final class NativeTaskScreens {
             }catch(Exception ignored){}
         }
         void render(JSONObject value){
+            boolean tail=!loaded||atEnd();version=value.optString("version","");
             loaded=true;String raw=value.optString("conversation_state",value.optString("state"));AppUi.update(chip,state(raw));restyle(chip,raw);
+            active=raw.equals("queued")||raw.equals("running")||raw.equals("leased")||raw.equals("in_progress");
             long created=timestamp(value.opt("created"));AppUi.update(provenance,created>0?"Requested "+AppUi.stamp(created):"");meta.setVisibility(View.VISIBLE);
             String signature=value.toString();
             if(!signature.equals(rendered)||placeholder){
                 int before=placeholder?0:messages.getChildCount();rendered=signature;placeholder=false;messages.removeAllViews();lastDay=0;
-                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")),value.optJSONArray("attachments"),value.optJSONArray("response_attachments"));
-                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null){exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("state"),timestamp(turn.opt("updated")),turn.optJSONArray("attachments"),turn.optJSONArray("response_attachments"));}}
+                exchange(value.optString("original_request",value.optString("request","")),created,value.optString("original_summary",value.optString("summary","")),value.optString("original_partial_answer",value.optString("partial_answer","")),value.optString("original_state",value.optString("state")),timestamp(value.opt("original_updated")),value.optJSONArray("attachments"),value.optJSONArray("response_attachments"));
+                JSONArray turns=value.optJSONArray("turns");for(int n=0;turns!=null&&n<turns.length();n++){JSONObject turn=turns.optJSONObject(n);if(turn!=null){exchange(turn.optString("instruction"),timestamp(turn.opt("created")),turn.optString("summary"),turn.optString("partial_answer",""),turn.optString("state"),timestamp(turn.opt("updated")),turn.optJSONArray("attachments"),turn.optJSONArray("response_attachments"));}}
                 for(int n=before;before>0&&n<messages.getChildCount();n++)AppUi.enter(messages.getChildAt(n),(n-before)*60);
             }
             canContinue=agent&&value.optBoolean("can_followup",true);if(instruction.isEnabled()!=canContinue){instruction.setEnabled(canContinue);instruction.setAlpha(canContinue?1f:.55f);}refreshSend();voice();
             if(agent&&!canContinue)line(saved,"This task cannot be continued.");else if(saved.getText().toString().equals("This task cannot be continued."))line(saved,"");
             settle();
+            if(tail){follow=true;scroll.post(()->end(true));}
         }
-        void exchange(String request,long asked,String answer,String raw,long answered,JSONArray files,JSONArray responseFiles){
+        void exchange(String request,long asked,String answer,String partial,String raw,long answered,JSONArray files,JSONArray responseFiles){
             message(request,true,"You",asked,null);
             TaskAttachments.show(a,ui,messages,files);
             if(!answer.isEmpty())message(answer,false,"Assistant",answered,raw.equals("completed")||raw.equals("complete")?null:stateChip(raw));
+            else if(!partial.isEmpty()&&(raw.equals("running")||raw.equals("leased")||raw.equals("in_progress")))message(partial,false,"Assistant",0,ui.statusChip("Answering…","info"));
             else{LinearLayout row=ui.row();row.setPadding(ui.dp(4),0,0,ui.dp(14));row.addView(stateChip(raw));messages.addView(row);}
             TaskAttachments.show(a,ui,messages,responseFiles);
         }

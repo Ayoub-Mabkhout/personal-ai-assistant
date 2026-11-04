@@ -22,9 +22,12 @@ final class NativeTasks {
     static JSONObject cachedHistory(Context c){try{return new JSONObject(Cloud.prefs(c).getString("tasks_history","{\"items\":[]}"));}catch(Exception e){return new JSONObject();}}
     private static String key(String kind,String id){return "task_detail_"+kind+"_"+id;}
     static JSONObject detail(Context c,String kind,String id)throws Exception{
-        JSONObject result=(JSONObject)Cloud.call(c,"tasks/"+encode(kind)+"/"+encode(id),null,true);
-        Cloud.prefs(c).edit().putString(key(kind,id),result.toString()).commit();return result;
+        JSONObject result=detail(c,kind,id,"");cacheDetail(c,kind,id,result);return result;
     }
+    static JSONObject detail(Context c,String kind,String id,String since)throws Exception{
+        return (JSONObject)Cloud.call(c,"tasks/"+encode(kind)+"/"+encode(id)+(since.isEmpty()?"":"?since="+encode(since)+"&wait=10"),null,true);
+    }
+    static void cacheDetail(Context c,String kind,String id,JSONObject value){Cloud.prefs(c).edit().putString(key(kind,id),value.toString()).apply();}
     static JSONObject cachedDetail(Context c,String kind,String id){try{return new JSONObject(Cloud.prefs(c).getString(key(kind,id),"{}"));}catch(Exception e){return new JSONObject();}}
     static synchronized JSONArray pending(Context c){try{return new JSONArray(Cloud.prefs(c).getString("task_followups","[]"));}catch(Exception e){throw new IllegalStateException("Saved follow-ups need recovery",e);}}
     static synchronized JSONArray newPending(Context c){try{return new JSONArray(Cloud.prefs(c).getString("task_new_outbox","[]"));}catch(Exception e){throw new IllegalStateException("Saved new tasks need recovery",e);}}

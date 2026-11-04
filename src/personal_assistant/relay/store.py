@@ -204,17 +204,61 @@ class Queue:
             queued = db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0]
             return {'laptop': state, 'last_seen': row['seen'] if row else None, 'queued': queued}
 
-    def claim(self, lease_seconds=60):
+    @staticmethod
+    def session_root(payload):
+        continuation = payload.get('resume_task')
+        if isinstance(continuation, dict):
+            root = continuation.get('root_id')
+            if isinstance(root, str) and re.fullmatch(r'[A-Za-z0-9_-]{8,64}', root):
+                return root
+        return None
+
+    def execution_lane(self, db, row):
+        """Explicit contexts use their actual last worker session when it is known."""
+        payload = json.loads(row['payload'])
+        root = self.session_root(payload)
+        if not root:
+            return 'general'
+        # Older intelligent routing could make two roots share the same CLI session.
+        # Include completed follow-ups because an allowance fallback can move a context.
+        results = db.execute('''SELECT result FROM jobs WHERE result IS NOT NULL AND
+            (id=? OR json_extract(payload,'$.resume_task.root_id')=?) ORDER BY rowid DESC''', (root,root))
+        for latest in results:
+            result = json.loads(latest['result'])
+            workers = result.get('workers') or []
+            worker = workers[-1] if workers and isinstance(workers[-1], dict) else {}
+            session = worker.get('session_id') or result.get('resumed_session_id') or result.get('orchestrator_session_id')
+            if isinstance(session, str) and session:
+                agent = worker.get('agent') or result.get('orchestrator_agent') or 'codex'
+                return 'session:'+agent+':'+session
+        return 'task:'+root
+
+    def lane_candidate(self, db):
+        running = db.execute("SELECT * FROM jobs WHERE state='running'").fetchall()
+        occupied = {self.execution_lane(db, row) for row in running}
+        active_roots = {self.session_root(json.loads(row['payload'])) or row['id'] for row in running}
+        for row in db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY rowid").fetchall():
+            root = self.session_root(json.loads(row['payload']))
+            if root:
+                original = db.execute('SELECT state FROM jobs WHERE id=?', (root,)).fetchone()
+                if root in active_roots or (original and original['state'] in ('queued','running')):
+                    continue
+            if self.execution_lane(db, row) not in occupied:
+                return row
+        return None
+
+    def claim(self, lease_seconds=60, session_lanes=False):
         self.validate_duration(lease_seconds)
         with self.connection(True) as db:
             self.maintenance(db)
             worker = db.execute('SELECT * FROM worker WHERE id=1').fetchone()
             if not worker or worker['readiness'] != 'ready' or self.clock() - worker['seen'] >= 60:
                 return None
-            if self.serial and db.execute("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").fetchone():
+            if self.serial and not session_lanes and db.execute("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").fetchone():
                 return None
             order = 'rowid' if self.serial else 'created,id'
-            row = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY "+order+" LIMIT 1").fetchone()
+            row = self.lane_candidate(db) if self.serial and session_lanes else db.execute(
+                "SELECT * FROM jobs WHERE state='queued' ORDER BY "+order+" LIMIT 1").fetchone()
             if row is None:
                 return None
             token = str(uuid4())

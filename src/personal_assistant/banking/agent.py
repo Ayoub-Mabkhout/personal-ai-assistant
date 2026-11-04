@@ -221,26 +221,46 @@ def _run(prompt, config, session=None, on_start=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('ASSISTANT_', 'OPENAI_', 'OCI_'))
                and k != 'CODEX_API_KEY'}
         env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])
-        process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   cwd=root, env=env,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-                                   start_new_session=os.name != 'nt')
-        try:
-            if on_start: on_start(process.pid)
-            stdout, stderr = process.communicate(prompt.encode('utf-8'), timeout=config.get('banking_audit_timeout', 900))
-        except BaseException as error:
-            if os.name == 'nt':
-                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True,
-                               creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
-            else:
-                import signal
-                try: os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-            process.wait(timeout=15)
-            if session and isinstance(error, subprocess.TimeoutExpired):
-                # A resumed conversation that hangs is usually one too large to compact; rebuild it.
-                raise SessionUnavailable('Saved auditor session timed out') from error
-            raise
+        from ..orchestrator.streaming import current_stream,codex_turn,AppServerError
+        if current_stream():
+            from types import SimpleNamespace
+            tools={}
+            if config.get('_money_tool_lease'):
+                tools['money']={'command':sys.executable,'env':{'PYTHONPATH':env['PYTHONPATH']},
+                    'args':['-m','personal_assistant.banking.tools','--ledger',str(config['_money_tool_ledger'])],
+                    'required':True,'startup_timeout_sec':20,'tool_timeout_sec':90,'default_tools_approval_mode':'approve'}
+            try:
+                streamed=codex_turn(prefix,prompt,root,config.get('banking_model',MODEL),config.get('banking_effort','medium'),
+                    session=session,schema=SCHEMA,instructions=INSTRUCTIONS,environment=env,
+                    features={'apps':False,'plugins':False,'shell_tool':False,'multi_agent':False},
+                    config={'sandbox_mode':'read-only','mcp_servers':tools,
+                            'model_auto_compact_token_limit':config.get('specialist_compact_tokens',175000)},
+                    timeout=config.get('banking_audit_timeout',900),on_start=on_start)
+                stdout,stderr=streamed.stdout,streamed.stderr
+                (root/'answer.json').write_text(streamed.text,encoding='utf-8');process=SimpleNamespace(returncode=0)
+            except AppServerError as error:
+                stdout=getattr(error,'stdout',b'');stderr=str(error).encode();process=SimpleNamespace(returncode=1)
+        else:
+            process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       cwd=root, env=env,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                                       start_new_session=os.name != 'nt')
+            try:
+                if on_start: on_start(process.pid)
+                stdout, stderr = process.communicate(prompt.encode('utf-8'), timeout=config.get('banking_audit_timeout', 900))
+            except BaseException as error:
+                if os.name == 'nt':
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True,
+                                   creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+                else:
+                    import signal
+                    try: os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                process.wait(timeout=15)
+                if session and isinstance(error, subprocess.TimeoutExpired):
+                    # A resumed conversation that hangs is usually one too large to compact; rebuild it.
+                    raise SessionUnavailable('Saved auditor session timed out') from error
+                raise
         if config.get('_money_tool_ledger'):
             traces = Path(config['_money_tool_ledger']).parent / 'audit-traces'
             traces.mkdir(parents=True, exist_ok=True)
@@ -303,7 +323,9 @@ def audit(ledger, config, today=None, ask=ask, notes='', job_kind=None, max_batc
             if session:
                 prompt = Prompt(prompt_for(ledger, jobs, today, config, notes, resumed=True), prompt)
             call_config = {**config, '_money_tool_ledger': str(ledger.path), '_money_tool_lease': token}
-            result = ask(prompt, call_config, session, lambda pid: ledger.set_claim_process(token, pid))
+            from ..orchestrator.progress import banking_publishing
+            with banking_publishing(config,jobs,token):
+                result = ask(prompt, call_config, session, lambda pid: ledger.set_claim_process(token, pid))
             answer, next_session = result if isinstance(result, tuple) else (result, session)
             decisions = []
             for item in answer['decisions']:

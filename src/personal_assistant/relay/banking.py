@@ -69,6 +69,8 @@ def page(title, text):
 class Banking:
     def __init__(self, path, clock=time.time):
         self.path, self.clock = Path(path), clock
+        from .wakeups import Wakeups
+        self.stream_wakeups=Wakeups()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=10)
         with db:
@@ -276,7 +278,11 @@ class Banking:
             row = db.execute('SELECT id,text,created,answer,answered FROM conversations WHERE id=?', (identifier,)).fetchone()
         if not row:
             raise HTTPException(404, 'Conversation not found.')
-        return dict(zip(('id', 'text', 'created', 'answer', 'answered'), row))
+        result=dict(zip(('id', 'text', 'created', 'answer', 'answered'), row))
+        if row[3] is None:
+            from .answer_streams import read_many
+            with self.db() as db:result.update(read_many(db,'money',[identifier]).get(identifier,{}))
+        return result
 
     def conversations(self, limit=50, before=None):
         with self.db() as db:
@@ -319,6 +325,7 @@ class Banking:
                 raise HTTPException(409, 'Conversation already has a different answer.')
             db.execute('UPDATE conversations SET answer=?,answered=COALESCE(answered,?) WHERE id=?',
                        (answer.text, self.clock(), identifier))
+        self.stream_wakeups.notify('conversation')
         return self.conversation(identifier)
 
 
@@ -442,6 +449,11 @@ def banking_router(banking, submit, device, owner_auth=None):
     @conversation.put('/{identifier}/answer', dependencies=[Depends(submit)])
     def reply(identifier: str, body: ConversationAnswer):
         return banking.reply(identifier, body)
+
+    from .answer_streams import Snapshot,money_snapshot
+    @conversation.put('/{identifier}/stream',dependencies=[Depends(submit)])
+    def stream_reply(identifier:str,body:Snapshot):
+        return money_snapshot(banking,identifier,body)
 
     @public.get('/v1/banking/callback', include_in_schema=False)
     def callback(state: str = Query(default='', max_length=64), code: str = Query(default='', max_length=2048),

@@ -232,7 +232,7 @@ class Workouts:
         """The chat plus a version that changes only when something the athlete sees changes."""
         with self.db() as db:
             items, status = self.conversation(limit, before, db), self.status(db)
-        signature = [(i['id'], i['state'], i['answered_at'], i['approved']) for i in items]
+        signature = [(i['id'], i['state'], i['answered_at'], i['approved'],i.get('partial_revision',0)) for i in items]
         version = hashlib.sha256(encoded([signature, status['available'], status['state']]).encode()).hexdigest()[:24]
         return {'items': items, 'status': status, 'version': version}
 
@@ -244,8 +244,11 @@ class Workouts:
             AND coalesce(json_extract(context,'$.purpose'),'')!='scheduled_reminder'
             ORDER BY created DESC,rowid DESC LIMIT ?""",
                           (self.user_id, before, before, limit)).fetchall()
-        return [{k: json.loads(r[k]) if k in ('photos','context','proposals') and r[k] else r[k]
-                 for k in ('id','question','photos','context','created','state','answer','answered_at','proposals','approved')} for r in reversed(rows)]
+        from ..relay.answer_streams import read_many
+        partials=read_many(db,'coach:'+self.user_id,[r['id'] for r in rows if r['state']=='running'])
+        return [{**{k: json.loads(r[k]) if k in ('photos','context','proposals') and r[k] else r[k]
+                 for k in ('id','question','photos','context','created','state','answer','answered_at','proposals','approved')},
+                 **partials.get(r['id'],{})} for r in reversed(rows)]
 
     def claim(self):
         with self.db() as db:

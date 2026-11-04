@@ -149,6 +149,12 @@ def install(router, get_store, *, browser=False):
 
 
 def install_worker(owner, get_store):
+    from personal_assistant.relay.answer_streams import Snapshot,coach_snapshot
+
+    @owner.put('/trainer/{identifier}/stream')
+    def progress(identifier:str,body:Snapshot,store=Depends(get_store)):
+        return coach_snapshot(store,identifier,body)
+
     @owner.put('/trainer/heartbeat')
     def heartbeat(body: Ready, store=Depends(get_store)):
         store.heartbeat(body.state,body.detail)

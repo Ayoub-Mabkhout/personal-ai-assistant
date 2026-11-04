@@ -48,6 +48,8 @@ class BodyLimit:
             1024*1024 if path in ('/groceries/v1/recipes/import/preview','/groceries/v1/recipes/import/commit') else self.limit))
         if path.startswith('/groceries/v1/mobile/termux/'):
             limit=512*1024  # bounded scripts/results, including UTF-8/JSON escaping
+        if path.endswith('/stream'):
+            limit=512*1024  # bounded answer snapshots with JSON Unicode escaping
         if path.endswith('/workout/sync') or path == '/train/api/sync':
             limit=2*1024*1024
         while True:
@@ -102,6 +104,10 @@ class Renew(Lease):
     lease_token: str
 
 
+class AgentLease(Lease):
+    session_lanes: bool = False
+
+
 class WorkerTimings(BaseModel):
     """Seconds after the worker received its claim, measured on the worker's own clock."""
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -118,10 +124,10 @@ class Result(BaseModel):
     timings: WorkerTimings | None = None
 
 
-async def claim_job(job_queue, lease_seconds, wait, request):
+async def claim_job(job_queue, lease_seconds, wait, request, session_lanes=False):
     from .store import CLAIMABLE
     from .wakeups import long_poll, requested_wait
-    job, waited = await long_poll(lambda: job_queue.claim(lease_seconds), job_queue.wakeups, CLAIMABLE,
+    job, waited = await long_poll(lambda: job_queue.claim(lease_seconds, session_lanes=session_lanes), job_queue.wakeups, CLAIMABLE,
                                   requested_wait(wait), request)
     # wait_seconds tells a client this relay supports long polling (and what it honoured).
     return {'job': job, 'wait_seconds': waited}
@@ -229,6 +235,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         return verify
     submit = authorization(submit_token)
     worker = authorization(worker_token)
+    from .answer_streams import router as answer_stream_router
+    app.include_router(answer_stream_router(agent_queue,worker))
     from .replies import reply_router
     app.include_router(reply_router({'command':queue,'agent':agent_queue},submit))
     from .features import Features,device_auth,features_router
@@ -357,8 +365,9 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         return agent_queue.heartbeat(value.readiness)
 
     @app.post('/v1/agent/worker/claim', dependencies=[Depends(worker)])
-    async def agent_claim(value:Lease, request:Request, wait:float=Query(default=0, ge=0)):
-        return await claim_job(agent_queue, value.lease_seconds, wait, request)
+    async def agent_claim(value:AgentLease, request:Request, wait:float=Query(default=0, ge=0)):
+        result=await claim_job(agent_queue, value.lease_seconds, wait, request, value.session_lanes)
+        return {**result,'session_lanes':value.session_lanes}
 
     @app.post('/v1/agent/worker/{request_id}/renew', dependencies=[Depends(worker)])
     def agent_renew(request_id:str,value:Renew):
