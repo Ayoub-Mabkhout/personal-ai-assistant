@@ -459,8 +459,8 @@ through worker follow-up, or report an actual access/coverage limitation.
 
 AVAILABILITY_DISPATCH='''agent_availability says whether each agent can run now. An agent with usable=false
 is out of allowance or cooling down after a usage-limit error: do not assign it. When
-codex is unusable, use claude workers (haiku for Luna-sized, sonnet for Sol-sized and
-opus for Astra-sized work); the service substitutes that tier for any codex assignment.
+codex is unusable, use claude workers (haiku for Luna-sized, sonnet for Terra-sized and
+opus for Sol/Astra-sized work); the service substitutes that tier for any codex assignment.
 Email tasks need the codex Gmail plugin: while codex is unusable, return needs_input
 naming when its allowance resets instead of dispatching them.
 '''
@@ -473,7 +473,7 @@ Your session continues across tasks like Luna's; earlier turns may have been mad
 PROTOCOL=DISPATCH_INSTRUCTIONS+SKILL_DISPATCH+AVAILABILITY_DISPATCH
 
 # Equivalent Claude tier when a Codex worker cannot run; effort ultra has no Claude equivalent.
-CLAUDE_TIER={'gpt-6-luna':'claude-haiku-5-5','gpt-6.1-terra':'claude-sonnet-5-5','gpt-6-sol':'claude-sonnet-5-5','gpt-6.1-sol':'claude-sonnet-5-5','gpt-6-astra':'claude-opus-5-5'}
+CLAUDE_TIER={'gpt-6-luna':'claude-haiku-5-5','gpt-6.1-terra':'claude-sonnet-5-5','gpt-6-sol':'claude-opus-5-5','gpt-6.1-sol':'claude-opus-5-5','gpt-6-astra':'claude-opus-5-5'}
 DISPATCHER_ENGINES=('auto','codex','claude')
 DEFAULT_CLAUDE_DISPATCHER='claude-sonnet-5-5'
 ENGINE_RETRY_MINUTES=30

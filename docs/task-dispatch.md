@@ -12,6 +12,11 @@ There is no Luna planning turn or model review after the worker finishes.
 
 The routing guidelines prefer the least demanding sufficient model, respect
 explicit model/effort requests, and weigh remaining five-hour and weekly allowance.
+Luna/Haiku are restricted to lightweight work. Live itinerary planning, multi-tool
+research and combining opening hours with walking times require at least the
+Sonnet tier. Sol and Opus are policy peers for general capability, with Opus
+preferred for demanding creative work. Allowance selects among suitable models;
+it never justifies falling below the task's capability floor.
 Unknown telemetry is labelled unknown, never treated as free capacity. Unavailable
 agents cannot be launched. Email continues to require the Codex Gmail tools.
 Routing reads cached allowance data without spending a separate model call to
@@ -182,8 +187,8 @@ at `dispatcher_claude_effort` (default `low`), the same protocol and Decision sc
 A crash-recovered turn reuses whichever agent's decision was already recorded.
 
 Every turn carries `agent_availability`. While Codex is unusable, code also replaces each
-codex assignment with its Claude tier before any worker starts (Luna to Haiku, Sol to
-Sonnet, Astra to Opus, ultra to max) and records `substituted_from` on the worker. Such a
+codex assignment with its Claude tier before any worker starts (Luna to Haiku, Terra to
+Sonnet, Sol/Astra to Opus, ultra to max) and records `substituted_from` on the worker. Such a
 worker starts a fresh session: a Codex session cannot move to Claude. Email assignments
 need the Codex Gmail plugin, so they return needs_input with the reset time instead. A
 follow-up on a Codex task while Codex is unusable, or whose Codex turn hit the limit
