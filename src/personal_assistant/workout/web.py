@@ -187,6 +187,13 @@ class PasskeyCredential(Model):
     auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
 
 
+class PasskeyAddition(PasskeyCredential):
+    # Proof beyond the session cookie: the current password's auth secret, or an existing passkey of this profile.
+    password_auth_secret: str | None = Field(default=None,pattern=r'^[A-Za-z0-9_-]{43}$')
+    proof_credential_id: str | None = Field(default=None,pattern=r'^[A-Za-z0-9_-]{16,1024}$')
+    proof_auth_secret: str | None = Field(default=None,pattern=r'^[A-Za-z0-9_-]{43}$')
+
+
 class PasskeyPasswordReset(Model):
     credential_id: str = Field(pattern=r'^[A-Za-z0-9_-]{16,1024}$')
     passkey_auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
@@ -381,8 +388,9 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         return {'items':identities.passkeys(user['id'])}
 
     @browser.post('/auth/passkeys',dependencies=[Depends(identity_enabled)])
-    def passkey_add(body:PasskeyCredential,user=Depends(account)):
-        auth_call(identities.add_passkey,user['id'],body.credential_id,body.auth_secret)
+    def passkey_add(body:PasskeyAddition,request:Request,user=Depends(account)):
+        auth_call(identities.add_passkey,user['id'],body.credential_id,body.auth_secret,client_id(request),
+                  password_secret=body.password_auth_secret,proof_credential=body.proof_credential_id,proof_secret=body.proof_auth_secret)
         return {'items':identities.passkeys(user['id'])}
 
     @browser.delete('/auth/passkeys/{credential}',dependencies=[Depends(identity_enabled)])

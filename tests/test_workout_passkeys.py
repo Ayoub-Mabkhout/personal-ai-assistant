@@ -46,8 +46,9 @@ class PasskeyCase(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         return client,response.json()['id']
 
-    def add(self,client,credential=CREDENTIAL,secret=PASSKEY_SECRET):
-        return client.post('/train/api/auth/passkeys',json={'credential_id':credential,'auth_secret':secret})
+    def add(self,client,credential=CREDENTIAL,secret=PASSKEY_SECRET,**proof):
+        proof=proof or {'password_auth_secret':AUTH}
+        return client.post('/train/api/auth/passkeys',json={'credential_id':credential,'auth_secret':secret,**proof})
 
 
 
@@ -71,6 +72,35 @@ class WorkoutPasskeyTests(PasskeyCase):
         self.assertEqual(client.delete('/train/api/auth/passkeys/'+CREDENTIAL).json(),{'items':[]})
         self.assertEqual(client.delete('/train/api/auth/passkeys/'+CREDENTIAL).status_code,404)
         self.assertEqual(self.client().get('/train/api/auth/passkeys').status_code,401)
+
+    def test_adding_a_passkey_needs_proof_beyond_the_session(self):
+        client,_=self.enroll()
+        # A stolen session cookie alone can't add a passkey (and then reset the password with it).
+        bare=client.post('/train/api/auth/passkeys',json={'credential_id':CREDENTIAL,'auth_secret':PASSKEY_SECRET})
+        self.assertEqual(bare.status_code,401)
+        self.assertEqual(self.add(client,password_auth_secret=WRONG).status_code,401)
+        self.assertEqual(self.add(client,proof_credential_id=CREDENTIAL).status_code,401)  # incomplete passkey proof
+        self.assertEqual(client.get('/train/api/auth/passkeys').json()['items'],[])
+        # The current password proves it.
+        self.assertEqual(self.add(client,password_auth_secret=AUTH).status_code,200)
+        # So does an existing passkey of the same profile, but not a wrong secret or another profile's passkey.
+        second=b64(b'credential-two-16bytes')
+        self.assertEqual(self.add(client,second,proof_credential_id=CREDENTIAL,proof_auth_secret=WRONG).status_code,401)
+        other,_=self.enroll('Other Athlete')
+        foreign=b64(b'credential-foreign-xxx')
+        self.assertEqual(self.add(other,foreign,proof_credential_id=CREDENTIAL,proof_auth_secret=PASSKEY_SECRET).status_code,401)
+        added=self.add(client,second,proof_credential_id=CREDENTIAL,proof_auth_secret=PASSKEY_SECRET)
+        self.assertEqual(added.status_code,200,added.text)
+        self.assertEqual(len(added.json()['items']),2)
+
+    def test_password_proof_for_adding_a_passkey_is_rate_limited(self):
+        client,_=self.enroll()
+        for index in range(NAME_ATTEMPTS):
+            self.assertEqual(self.add(client,b64(b'credential-%02d-xxxxx'%index),password_auth_secret=WRONG).status_code,401)
+        limited=self.add(client,password_auth_secret=AUTH)
+        self.assertEqual(limited.status_code,429);self.assertIn('retry-after',limited.headers)
+        # It shares the name bucket with password sign-in.
+        self.assertEqual(self.client().post('/train/api/auth/login',json={'name':'Synthetic Athlete','auth_secret':AUTH}).status_code,429)
 
     def test_passkey_material_is_validated_and_limited(self):
         client,_=self.enroll()

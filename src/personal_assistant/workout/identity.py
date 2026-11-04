@@ -264,17 +264,35 @@ class Identity:
             return [dict(row) for row in db.execute('''SELECT credential_id,created,last_used FROM train_passkeys
                 WHERE user_id=? ORDER BY created,credential_id''',(user_id,))]
 
-    def add_passkey(self,user_id,credential,passkey_secret):
-        credential_id(credential);verifier=hash_auth_secret(passkey_secret)
+    def add_passkey(self,user_id,credential,passkey_secret,client_id,*,password_secret=None,proof_credential=None,proof_secret=None):
+        """A session alone can't add a passkey: a stolen cookie could otherwise add one and reset the password with it.
+        The caller proves the profile with its current password secret or with one of its existing passkeys."""
+        credential_id(credential);unb64(passkey_secret,32)
+        if password_secret is not None:
+            unb64(password_secret,32)
+            with self.workouts.db() as db:
+                row=db.execute('SELECT * FROM train_credentials WHERE user_id=?',(user_id,)).fetchone()
+            key=row['login_name'] if row else 'unknown-user:'+str(user_id)
+            self._reserve(key,client_id)
+            valid=verify_auth_secret(password_secret,row['verifier'] if row else _DUMMY)
+            if not row or not valid:raise LoginFailed()
+            check=lambda db:db.execute('SELECT 1 FROM train_credentials WHERE user_id=? AND revision=?',(user_id,row['revision'])).fetchone()
+        elif proof_credential is not None and proof_secret is not None:
+            proof,key=self._passkey(proof_credential,proof_secret,client_id)
+            if proof['user_id']!=user_id:raise PasskeyFailed()
+            check=lambda db:db.execute('SELECT 1 FROM train_passkeys WHERE credential_id=? AND user_id=? AND verifier=?',
+                                       (proof['credential_id'],user_id,proof['verifier'])).fetchone()
+        else:raise LoginFailed()
+        verifier=hash_auth_secret(passkey_secret)
         with self.workouts.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            if not db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(user_id,)).fetchone():
-                raise EnrollmentDenied()
+            if not check(db):raise LoginFailed()
             if db.execute('SELECT count(*) FROM train_passkeys WHERE user_id=?',(user_id,)).fetchone()[0]>=MAX_PASSKEYS:
                 raise IdentityError(f'A profile can keep at most {MAX_PASSKEYS} passkeys. Remove one first.')
             try:db.execute('INSERT INTO train_passkeys(credential_id,user_id,verifier,created) VALUES(?,?,?,?)',
                            (credential,user_id,verifier,self.clock()))
             except sqlite3.IntegrityError:raise EnrollmentDenied() from None
+            self._success(db,key)
 
     def remove_passkey(self,user_id,credential):
         credential_id(credential)
