@@ -1,4 +1,46 @@
-# Two queues and one Luna session
+# Task routing and separate queues
+
+## JEV direct routing
+
+Set `dispatcher_mode` to `jev` in the protected laptop worker configuration to
+use one TypeSafe Jev classification call for each new agent task. The router
+receives the original request, available skill descriptions, and read-only Codex
+and Claude allowance snapshots. It chooses an allowlisted agent/model/effort
+profile and task type. Code supplies the workspace, original prompt and required
+skills, launches one fresh worker, and publishes that worker's answer directly.
+There is no Luna planning turn or model review after the worker finishes.
+
+The routing guidelines prefer the least demanding sufficient model, respect
+explicit model/effort requests, and weigh remaining five-hour and weekly allowance.
+Unknown telemetry is labelled unknown, never treated as free capacity. Unavailable
+agents cannot be launched. Email continues to require the Codex Gmail tools.
+Routing reads cached allowance data without spending a separate model call to
+refresh it. Worker calls still record their usual capacity observations.
+
+New tasks do not search recent tasks or infer a session to resume. Explicit task
+Replies and follow-ups retain their existing recorded-worker continuation path.
+Assistant-development requests can still be forwarded to the interactive sessions
+when the coordination bridge is configured. Attachments, required email skills,
+task-file delivery, cancellation, queue leases and interrupted-worker recovery
+keep the existing contracts.
+
+Configure `jev_api_key_file` as an absolute protected path outside the checkout,
+or provide `JEV_API_KEY` / `TYPESAFE_API_KEY` to the service environment. Optional
+`jev_model` and `jev_timeout_seconds` configure the classifier. The default model
+is `jev-latest`, using `https://api.typesafe.ai/v1/systemone`. See the
+[TypeSafe Choice reference](https://docs.typesafe.ai/primitives/choice).
+No key is stored in source, routing traces or the public configuration example.
+Routing failures start no worker and do not silently fall back to the slower
+Luna review loop. Each private job directory records the route and duration in
+`dispatch-0/router.json` and preserves the worker's ordinary traces.
+
+The default remains `dispatcher_mode: legacy` until a deployment explicitly
+configures and verifies its Jev key. Each job pins its routing mode before work,
+so changing configuration cannot switch an in-flight task's execution protocol.
+
+## Legacy Luna mode
+
+The sections below describe the retained `legacy` mode and shared queue contracts.
 
 The cloud relay keeps two independent SQLite stores: `queue.sqlite3` for
 programmatic commands and `agent-queue.sqlite3` for agent prompts. The second

@@ -15,7 +15,7 @@ from personal_assistant.orchestrator import capacity,forwarding
 from personal_assistant.orchestrator import attachments as task_attachments
 
 
-MODELS=('gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
+MODELS=('gpt-6-luna','gpt-6.1-terra','gpt-6.1-sol','gpt-6-sol','gpt-6-astra')
 CLAUDE_MODELS=('claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5')
 EFFORTS=('low','medium','high','xhigh','max','ultra')
 # recent_tasks: finished jobs whose worker sessions a new, related request may resume.
@@ -30,7 +30,7 @@ TASK_ID=re.compile(r'[A-Za-z0-9_-]{8,64}')
 class Assignment(BaseModel):
     model_config=ConfigDict(extra='forbid')
     agent:Literal['codex','claude']
-    model:Literal['gpt-6-luna','gpt-6.1-sol','gpt-6-sol','gpt-6-astra','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']
+    model:Literal['gpt-6-luna','gpt-6.1-terra','gpt-6.1-sol','gpt-6-sol','gpt-6-astra','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']
     effort:Literal['low','medium','high','xhigh','max','ultra']
     prompt:str=Field(min_length=1,max_length=24000)
     workspace:str=Field(min_length=1,max_length=1000)
@@ -368,7 +368,7 @@ Your session continues across tasks like Luna's; earlier turns may have been mad
 PROTOCOL=DISPATCH_INSTRUCTIONS+SKILL_DISPATCH+AVAILABILITY_DISPATCH
 
 # Equivalent Claude tier when a Codex worker cannot run; effort ultra has no Claude equivalent.
-CLAUDE_TIER={'gpt-6-luna':'claude-haiku-5-5','gpt-6-sol':'claude-sonnet-5-5','gpt-6.1-sol':'claude-sonnet-5-5','gpt-6-astra':'claude-opus-5-5'}
+CLAUDE_TIER={'gpt-6-luna':'claude-haiku-5-5','gpt-6.1-terra':'claude-sonnet-5-5','gpt-6-sol':'claude-sonnet-5-5','gpt-6.1-sol':'claude-sonnet-5-5','gpt-6-astra':'claude-opus-5-5'}
 DISPATCHER_ENGINES=('auto','codex','claude')
 DEFAULT_CLAUDE_DISPATCHER='claude-sonnet-5-5'
 ENGINE_RETRY_MINUTES=30
@@ -390,7 +390,7 @@ def untouched(directory):
 class Orchestrator:
     capabilities=['agent.orchestrator','agent.worker']
 
-    def __init__(self,config,cli=None,claude=None):
+    def __init__(self,config,cli=None,claude=None,router=None):
         self.config=config
         self.root=Path(config['orchestrator_dir'])
         self.root.mkdir(parents=True,exist_ok=True)
@@ -402,6 +402,7 @@ class Orchestrator:
         self.engine_path=self.root/'engines.json'
         self.skills=SkillRepository(config['repository'])
         self.dispatcher={'agent':'codex','model':'gpt-6-luna','session_id':None}
+        self.router=router
 
     def available(self):
         codex=self.config.get('codex')
@@ -548,6 +549,65 @@ class Orchestrator:
         original={'agent':task.agent,'model':task.model,'effort':task.effort,'resume_session':task.resume_session,'reason':reason}
         return task.model_copy(update={'agent':'claude','model':CLAUDE_TIER[task.model],
                                        'effort':'max' if task.effort=='ultra' else task.effort,'resume_session':''}),original
+
+    def jev_decision(self,job,attached,directory,cancelled):
+        """One classification call. Code supplies the workspace, prompt and fresh-session policy."""
+        directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
+        record_path=directory/'router.json'
+        previous=json.loads(record_path.read_text(encoding='utf-8')) if record_path.is_file() else {}
+        if previous.get('state')=='completed':
+            return Decision.model_validate(previous['decision'])
+        if cancelled.is_set():raise InterruptedRun('Task cancellation was requested.')
+        availability=self.agent_availability()
+        if not any(item['usable'] for item in availability.values()):
+            raise UsageLimited('codex','Neither Codex nor Claude can run a worker now. No routing call or worker was started.')
+        # No prior conversations, session IDs, local paths or file contents go to the classifier.
+        body={'user_request':job['payload']['command'],
+              'attachments':[{'name':item['name'],'mime':item.get('mime')} for item in attached],
+              'agent_capacity':capacity.snapshot(self.config,refresh=False),
+              'agent_availability':availability,
+              'skill_catalog':[{'name':s['name'],'description':s['description']} for s in self.skills.catalog()],
+              'dev_forwarding':{'available':forwarding.configured(self.config)}}
+        write_json(directory/'prompt.json',body)
+        record={'state':'running','started_at':datetime.now(timezone.utc).isoformat()}
+        write_json(record_path,record)
+        started=time.monotonic()
+        if self.router is None:
+            from .jev import Router
+            self.router=Router(self.config)
+        try:
+            choice=self.router.decide(body,cancelled)
+            if cancelled.is_set():raise InterruptedRun('Task cancellation was requested.')
+            action=choice['action'];agent=choice['agent']
+            if agent not in ('codex','claude') or action not in ('dispatch','forward'):
+                raise ValueError('Invalid JEV routing decision')
+            if not availability[agent]['usable']:
+                raise ValueError('JEV selected an unavailable agent; no worker was started')
+            if choice['task_type']=='email' and agent!='codex':
+                raise CodexRequired('Email tasks require the Codex Gmail tools. No worker was started.')
+            if action=='forward':
+                if not body['dev_forwarding']['available']:raise ValueError('Development forwarding is unavailable')
+                decision=Decision(action='forward',summary='Development request routed to '+agent+'.',forward_to=agent,tasks=[])
+            else:
+                workspace=Path(job['payload'].get('workspace') or self.config['repository'])
+                if not workspace.is_absolute():raise ValueError('Worker workspace must be an absolute directory')
+                workspace=str(workspace.resolve())
+                skill={'email':'email','coding':'coding-workbench','calendar':'local-calendar'}.get(choice['task_type'])
+                available_skills={s['name'] for s in self.skills.catalog()}
+                selected=[skill] if skill in available_skills else []
+                task=Assignment(agent=agent,model=choice['model'],effort=choice['effort'],
+                    prompt=job['payload']['command'],workspace=workspace,resume_session='',
+                    expected_artifacts=[],task_type=choice['task_type'],skills=selected)
+                decision=Decision(action='dispatch',summary='Task routed to '+agent+'.',forward_to='none',tasks=[task])
+            record.update(state='completed',finished_at=datetime.now(timezone.utc).isoformat(),
+                          seconds=time.monotonic()-started,choice=choice,decision=decision.model_dump())
+            write_json(record_path,record)
+            return decision
+        except Exception as error:
+            record.update(state='failed',finished_at=datetime.now(timezone.utc).isoformat(),
+                          seconds=time.monotonic()-started,error_type=type(error).__name__)
+            write_json(record_path,record)
+            raise
 
     def recent_tasks(self,current):
         """Recently finished tasks whose worker sessions a new, related request may resume.
@@ -802,13 +862,19 @@ class Orchestrator:
                     write_json(state_path,state)
                     return outcome
                 attached=task_attachments.download(self.config,payload.get('attachments',[]),directory)
+                if 'routing_mode' not in state:
+                    # In-flight legacy jobs finish on their original protocol across a configuration change.
+                    state['routing_mode']='legacy' if state['workers'] or (directory/'dispatch-0').exists() else self.config.get('dispatcher_mode','legacy')
+                    write_json(state_path,state)
+                if state['routing_mode'] not in ('legacy','jev'):raise ValueError('dispatcher_mode must be legacy or jev')
+                direct=state['routing_mode']=='jev'
                 if 'recent_tasks' not in state:
                     # Saved so a recovered run validates against the same list Luna saw.
-                    state['recent_tasks']=self.recent_tasks(job['id']);write_json(state_path,state)
+                    state['recent_tasks']=[] if direct else self.recent_tasks(job['id']);write_json(state_path,state)
                 recent=state['recent_tasks']
                 # Only sessions actually shown to Luna may be resumed across tasks.
                 resumable={w['session_id']:{**w,'task_id':entry['task_id']} for entry in recent for w in entry['workers']}
-                prompt=json.dumps({'task_id':job['id'],'user_request':payload['command'],
+                prompt='' if direct else json.dumps({'task_id':job['id'],'user_request':payload['command'],
                     'attachments':attached,
                     'response_files':task_attachments.response_instructions(self.config,job['id']),
                     'followup_context':payload.get('reply_context'),
@@ -818,10 +884,10 @@ class Orchestrator:
                     'timezone':payload.get('timezone'),'previous_results':state['workers'],'recent_tasks':recent,
                     'skill_catalog':self.skills.catalog(),'agent_capacity':capacity.snapshot(self.config),
                     'dev_forwarding':{'available':forwarding.configured(self.config),'sessions':sorted(forwarding.SESSIONS)}},ensure_ascii=False)
-                for round_number in range(8):
+                for round_number in range(1 if direct else 8):
                     if cancelled.is_set(): raise InterruptedRun('Task cancellation was requested.')
                     turn=directory/f'dispatch-{round_number}'
-                    decision=self.decision(prompt,turn,cancelled)
+                    decision=self.jev_decision(job,attached,turn,cancelled) if direct else self.decision(prompt,turn,cancelled)
                     state.update(phase='decided',decision=decision.model_dump(),round=round_number)
                     write_json(state_path,state)
                     if (decision.action=='forward')!=(decision.forward_to!='none'):
@@ -857,6 +923,8 @@ class Orchestrator:
                             earlier=directory/f'worker-{round_number}-{index}'/'record.json'
                             # A recovered run keeps the agent an earlier attempt of this worker already used.
                             started=json.loads(earlier.read_text(encoding='utf-8')).get('agent','codex') if earlier.is_file() else None
+                            if direct and task.agent=='claude' and not started and not self.agent_availability()['claude']['usable']:
+                                raise UsageLimited('claude','Claude cannot run the selected worker now. No worker was started.')
                             if started=='codex' or availability is None:routed.append((task,None))
                             elif started=='claude' and task.agent=='codex':
                                 routed.append(self.route(task,{**availability,'codex':{'usable':False,'reason':'routed to Claude in an earlier attempt'},'claude':{'usable':True}}))
@@ -901,6 +969,8 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                                    {'task_type':task.task_type,'selected_skills':selected,
                                     'sources':[s for s in self.skills.catalog() if s['name'] in selected]})
                         runner=self.claude if task.agent=='claude' else self.cli
+                        if direct:
+                            worker_instructions+='\nYou are the assigned task worker. Routing and worker creation are already complete. Answer the user directly in your final response; there is no dispatcher review after you. Do not create another worker merely to repeat this assignment.'
                         record=runner.run(task.prompt,run_directory,workspace,task.model,task.effort,cancelled,
                                             session=task.resume_session or None,instructions=worker_instructions)
                         checks=[]
@@ -920,6 +990,10 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                             state['workers'].append(completed[-1]);write_json(state_path,state)
                     # Persist before delivering results into the next Luna turn.
                     state['phase']='workers_completed';write_json(state_path,state)
+                    if direct:
+                        outcome={'state':'completed','result':{'summary':completed[0]['result'],
+                            'executor':'agent.worker','router':'jev','workers':state['workers'],'trace_ref':str(directory)}}
+                        break
                     prompt=json.dumps({'task_id':job['id'],'instruction':'Review these worker results; verify evidence and complete or delegate follow-up.',
                                        'dispatch_protocol':PROTOCOL,
                                        'worker_results':completed,'skill_catalog':self.skills.catalog(),

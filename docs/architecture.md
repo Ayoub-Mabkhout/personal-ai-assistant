@@ -2,8 +2,9 @@
 
 Native Android Companion, an HTTPS cloud relay with durable SQLite stores and an
 outbound laptop worker form the assistant. The laptop owns the local calendar,
-private source connectors and headless agent execution. A persistent Luna
-dispatcher selects models/effort. The relay owns grocery/recipe data, queues,
+private source connectors and headless agent execution. Configurable routing uses
+Jev decisions with direct worker answers, or the legacy persistent Luna dispatcher.
+The relay owns grocery/recipe data, queues,
 conversations, pairing, reminder projection and phone event journals.
 
 Caddy terminates TLS and proxies only to the relay. Standalone owner password
