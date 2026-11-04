@@ -497,6 +497,11 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         def native_update(body: AccountUpdate):
             return accounts.update(OWNER, body)
 
+        @native.post('/invites')
+        def native_invite(body: Invite):
+            """A one-use, seven-day link from the owner's phone: a new member, or a member's own profile to sign in again."""
+            return {**accounts.invite(body.user_id), 'expires_in_days': 7}
+
         @native.get('/{user_id}')
         def native_profile(user_id: str):
             return profile_data(user_id, OWNER)
