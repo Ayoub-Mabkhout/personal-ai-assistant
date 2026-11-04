@@ -1,5 +1,6 @@
-"""Serial, subscription-authenticated Codex trainer. No paid API fallback."""
+"""Serial, subscription-authenticated workout coach on Codex or headless Claude Code. No paid API fallback."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import hashlib
 from importlib.resources import files
@@ -84,31 +85,51 @@ SCHEMA = {'type':'object','additionalProperties':False,'required':['text','memor
             'base_revision':{'type':'integer'},'data_json':{'type':'string'},'reason':{'type':'string'},'deleted':{'type':'boolean'}}}}}}
 
 
-def run_model(config, config_file, state, job, images, workspace):
-    executable = config.get('codex') or shutil.which('codex.cmd') or shutil.which('codex')
-    if not executable: raise RuntimeError('Codex CLI is unavailable')
-    from .models import MODELS
-    schema_file, answer_file = workspace/'response-schema.json', workspace/'answer.json'
-    schema_file.write_text(json.dumps(SCHEMA),encoding='utf-8')
-    prefix = [config.get('node','node'),executable] if Path(executable).suffix=='.js' else [executable]
-    args = prefix+['--disable','shell_tool','--disable','apps','--disable','multi_agent',
-                  '-c','approval_policy="never"','-c','sandbox_mode="read-only"',
-                  '-c','developer_instructions='+json.dumps(INSTRUCTIONS)]
-    settings = {'command':sys.executable,'args':['-m','personal_assistant.workout.tools','--config',str(config_file)],
-                'env.PYTHONPATH':str(Path(__file__).resolve().parents[2]),'required':True,
-                'startup_timeout_sec':20,'tool_timeout_sec':30,'default_tools_approval_mode':'approve'}
+ENGINES = ('auto', 'codex', 'claude')
+DEFAULT_CODEX_MODEL = 'gpt-6-sol'
+DEFAULT_CLAUDE_MODEL = 'claude-sonnet-5-5'
+EXHAUSTED_RETRY_MINUTES = 30
+# Phrases the CLIs print when the subscription allowance (not the request) is the problem.
+LIMIT_MARKERS = ('usage limit', 'usage_limit', 'rate limit', 'rate_limit', 'too many requests', 'quota', 'out of credits')
+CLAUDE_NOTES = '''
+Your workout_read tool is named mcp__workout__workout_read. Return the answer only through structured output
+with every required field: data_json and assessment_json are JSON documents encoded as strings ('' when empty).
+'''
+
+
+class EngineExhausted(RuntimeError):
+    """The engine's subscription allowance is used up; another engine may answer the same job."""
+    def __init__(self, engine):
+        super().__init__(engine.capitalize()+' usage limit reached; no plan changes applied')
+        self.engine = engine
+
+
+def codex_model(config):
+    return config.get('workout_model', config.get('banking_model', DEFAULT_CODEX_MODEL))
+
+
+def claude_model(config):
+    return config.get('workout_claude_model', DEFAULT_CLAUDE_MODEL)
+
+
+def runtime_dir(config):
+    return Path(config.get('workout_runtime_dir', str(Path.home()/'.personal-assistant/workout')))
+
+
+def tool_server(config, config_file):
+    """The read-only workout MCP server both engines use."""
+    args = ['-m', 'personal_assistant.workout.tools', '--config', str(config_file)]
     if config.get('workout_user_id'):
-        settings['args'] += ['--user', config['workout_user_id']]
-    for key,value in settings.items(): args += ['-c','mcp_servers.workout.'+key+'='+json.dumps(value)]
-    args += ['exec']+(['resume',state['session']] if state.get('session') else [])
-    args += ['--ignore-user-config','--skip-git-repo-check','--json','--output-schema',str(schema_file),
-             '--output-last-message',str(answer_file),'-m',config.get('workout_model',config.get('banking_model','gpt-6-sol'))]
-    for path in images: args += ['--image',str(path)]
-    args += ['-']
+        args += ['--user', config['workout_user_id']]
+    return sys.executable, args, str(Path(__file__).resolve().parents[2])
+
+
+def build_prompt(config, state, job, model, session_key):
+    from .models import MODELS
     prompt = {'job':{k:v for k,v in job.items() if k!='token'},'previous_narrative':state.get('memory',''),
               'data_schemas':{k:MODELS[k].model_json_schema() for k in ('exercise','template','sprint','workout','composition')},
               'current_approved_photo_ids':job['photos'],
-              'model':config.get('workout_model',config.get('banking_model','gpt-6-sol')),
+              'model':model,
               'now':datetime.now(timezone.utc).isoformat(),
               'instructions':'Use live read tools for context; do not load all history into one answer.'}
     context = job.get('context', {})
@@ -117,43 +138,258 @@ def run_model(config, config_file, state, job, images, workspace):
             or (purpose == 'next_session_brief' and context.get('shortfalls'))):
         prompt['roast_voice'] = files(__package__).joinpath('roast-voice.md').read_text(encoding='utf-8')
     profile_file = config.get('workout_profile_file')
-    if not state.get('session') and profile_file:
+    if not state.get(session_key) and profile_file:
         prompt['owner_training_context'] = Path(profile_file).read_text(encoding='utf-8')[:40000]
+    return prompt
+
+
+def validate_answer(result):
+    """The structured answer contract shared by both engines (Codex also enforces it with --output-schema)."""
+    if not isinstance(result, dict) or not isinstance(result.get('text'), str) or not isinstance(result.get('memory_summary'), str):
+        raise ValueError('Incomplete trainer answer')
+    if not result['text'].strip(): raise ValueError('Empty trainer answer')
+    result.setdefault('assessment_json', '')
+    result.setdefault('proposals', [])
+    if not isinstance(result['assessment_json'], str) or not isinstance(result['proposals'], list):
+        raise ValueError('Malformed trainer answer')
+    for proposal in result['proposals']:
+        if (not isinstance(proposal, dict) or proposal.get('kind') not in ('exercise','template','sprint','workout')
+                or not isinstance(proposal.get('id'), str) or not isinstance(proposal.get('data_json'), str)
+                or not isinstance(proposal.get('base_revision'), int) or isinstance(proposal.get('base_revision'), bool)):
+            raise ValueError('Malformed trainer proposal')
+        proposal.setdefault('reason', '')
+        proposal.setdefault('deleted', False)
+    return result
+
+
+def limited(text):
+    text = text.lower().replace('’', "'")
+    return any(marker in text for marker in LIMIT_MARKERS)
+
+
+def kill(process):
+    if os.name=='nt': subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        import signal
+        try: os.killpg(process.pid,signal.SIGKILL)
+        except ProcessLookupError: pass
+    process.wait(timeout=15)
+
+
+def run_model(config, config_file, state, job, images, workspace):
+    """Codex engine: the persistent Codex exec session for this athlete."""
+    executable = config.get('codex') or shutil.which('codex.cmd') or shutil.which('codex')
+    if not executable: raise RuntimeError('Codex CLI is unavailable')
+    model = codex_model(config)
+    schema_file, answer_file = workspace/'response-schema.json', workspace/'answer.json'
+    schema_file.write_text(json.dumps(SCHEMA),encoding='utf-8')
+    prefix = [config.get('node','node'),executable] if Path(executable).suffix=='.js' else [executable]
+    args = prefix+['--disable','shell_tool','--disable','apps','--disable','multi_agent',
+                  '-c','approval_policy="never"','-c','sandbox_mode="read-only"',
+                  '-c','developer_instructions='+json.dumps(INSTRUCTIONS)]
+    command, server_args, pythonpath = tool_server(config, config_file)
+    settings = {'command':command,'args':server_args,'env.PYTHONPATH':pythonpath,'required':True,
+                'startup_timeout_sec':20,'tool_timeout_sec':30,'default_tools_approval_mode':'approve'}
+    for key,value in settings.items(): args += ['-c','mcp_servers.workout.'+key+'='+json.dumps(value)]
+    args += ['exec']+(['resume',state['session']] if state.get('session') else [])
+    args += ['--ignore-user-config','--skip-git-repo-check','--json','--output-schema',str(schema_file),
+             '--output-last-message',str(answer_file),'-m',model]
+    for path in images: args += ['--image',str(path)]
+    args += ['-']
+    prompt = build_prompt(config, state, job, model, 'session')
     env = {k:v for k,v in os.environ.items() if not k.startswith(('OPENAI_','OCI_','ASSISTANT_')) and k!='CODEX_API_KEY'}
-    env['PYTHONPATH']=str(Path(__file__).resolve().parents[2])
+    env['PYTHONPATH']=pythonpath
     process = subprocess.Popen(args,cwd=workspace,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
     try:
         stdout,stderr,marks = communicate_timed(process,json.dumps(prompt,ensure_ascii=False).encode(),config.get('workout_timeout_seconds',600))
     except BaseException:
-        if os.name=='nt': subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            import signal
-            try: os.killpg(process.pid,signal.SIGKILL)
-            except ProcessLookupError: pass
-        process.wait(timeout=15)
+        kill(process)
         raise
-    trace=Path(config.get('workout_runtime_dir',str(Path.home()/'.personal-assistant/workout')))/'traces'
+    trace=runtime_dir(config)/'traces'
     trace.mkdir(parents=True,exist_ok=True)
     (trace/(job['id']+'.jsonl')).write_bytes(stdout)
     (trace/(job['id']+'.stderr.txt')).write_bytes(stderr)
+    events=[]
+    for line in stdout.decode('utf-8','replace').splitlines():
+        try: event=json.loads(line)
+        except ValueError: continue
+        if isinstance(event,dict): events.append(event)
     if process.returncode or not answer_file.exists():
         # Retain summary, rebuild unavailable/oversized sessions on a future request, not an immediate paid retry.
         diagnostic=(stdout+stderr).decode('utf-8','replace').lower()
         if any(word in diagnostic for word in ('not found','context window','compact task','failed to load')): state.pop('session',None)
+        # Only error events and stderr count: answer text or tool output may mention limits.
+        errors=[str(e.get('message') or (e.get('error') or {}).get('message') or '') for e in events if e.get('type') in ('error','turn.failed')]
+        if limited('\n'.join(errors)+'\n'+stderr.decode('utf-8','replace')): raise EngineExhausted('codex')
         raise RuntimeError('Codex trainer unavailable; no plan changes applied')
-    for line in stdout.decode('utf-8','replace').splitlines():
-        try: event=json.loads(line)
-        except ValueError: continue
+    for event in events:
         if event.get('type')=='thread.started': state['session']=event['thread_id']
         if event.get('type')=='turn.completed': state['last_usage']=event.get('usage',{})
-    result=json.loads(answer_file.read_text(encoding='utf-8'))
-    if not isinstance(result.get('text'),str) or not isinstance(result.get('memory_summary'),str): raise ValueError('Incomplete trainer answer')
+    result=validate_answer(json.loads(answer_file.read_text(encoding='utf-8')))
     result['_marks']=marks  # monotonic times of the first model output and first answer text
+    result['_model']=model
     return result
 
 
-def communicate_timed(process, data, timeout):
+def claude_marks(event):
+    """first_output on the first assistant message; first_text once it writes text or its structured answer."""
+    if event.get('type')!='assistant': return ()
+    content=(event.get('message') or {}).get('content') or []
+    answered=any(isinstance(c,dict) and (c.get('type')=='text' or (c.get('type')=='tool_use' and c.get('name')=='StructuredOutput'))
+                 for c in content)
+    return ('first_output','first_text') if answered else ('first_output',)
+
+
+def claude_answer(final):
+    value=final.get('structured_output')
+    if value is None:
+        text=str(final.get('result') or '').strip()
+        if text.startswith('```'): text=text.strip('`').removeprefix('json').strip()
+        value=json.loads(text)
+    return validate_answer(value)
+
+
+def run_claude(config, config_file, state, job, images, workspace):
+    """Claude engine: headless Claude Code with the same instructions, read-only workout tools and answer schema.
+
+    Only the workout MCP tool is available (no built-in file, shell or web tools). Approved photos travel inline
+    as image blocks. The session is resumed from a stable per-athlete directory so --resume finds it.
+    """
+    from ..orchestrator import capacity
+    executable = capacity.claude_executable(config)
+    if not executable: raise RuntimeError('Claude Code is unavailable')
+    model = claude_model(config)
+    home = runtime_dir(config)
+    session_dir = home/'claude-session'
+    session_dir.mkdir(parents=True,exist_ok=True)
+    (workspace/'instructions.txt').write_text(INSTRUCTIONS+CLAUDE_NOTES,encoding='utf-8')
+    command, server_args, pythonpath = tool_server(config, config_file)
+    (workspace/'mcp.json').write_text(json.dumps({'mcpServers':{'workout':{'type':'stdio','command':command,'args':server_args,
+                                                                           'env':{'PYTHONPATH':pythonpath}}}}),encoding='utf-8')
+    args = [executable,'-p','--input-format','stream-json','--output-format','stream-json','--verbose',
+            '--model',model,'--effort',config.get('workout_claude_effort','medium'),
+            '--strict-mcp-config','--mcp-config',str(workspace/'mcp.json'),
+            '--tools','','--allowedTools','mcp__workout__workout_read','--permission-mode','dontAsk',
+            '--setting-sources','project','--disable-slash-commands',
+            '--system-prompt-file',str(workspace/'instructions.txt'),'--json-schema',json.dumps(SCHEMA)]
+    if state.get('claude_session'): args += ['--resume',state['claude_session']]
+    prompt = build_prompt(config, state, job, model, 'claude_session')
+    content = [{'type':'text','text':json.dumps(prompt,ensure_ascii=False)}]
+    for identifier, path in zip(job['photos'], images):
+        media = {'.jpg':'image/jpeg','.png':'image/png','.webp':'image/webp'}.get(Path(path).suffix)
+        if not media: raise ValueError('Unsupported approved image')
+        content += [{'type':'text','text':'Approved photo '+identifier+':'},
+                    {'type':'image','source':{'type':'base64','media_type':media,'data':base64.b64encode(Path(path).read_bytes()).decode()}}]
+    message = json.dumps({'type':'user','message':{'role':'user','content':content}},ensure_ascii=False)+'\n'
+    # Subscription login rather than an API key; never inherit a parent Claude session's markers.
+    env = {k:v for k,v in os.environ.items() if k!='ANTHROPIC_API_KEY' and not k.startswith(('ASSISTANT_','OCI_','OPENAI_','CLAUDECODE','CLAUDE_CODE_'))}
+    env['PYTHONPATH']=pythonpath
+    process = subprocess.Popen(args,cwd=session_dir,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
+    try:
+        stdout,stderr,marks = communicate_timed(process,message.encode(),config.get('workout_timeout_seconds',600),claude_marks)
+    except BaseException:
+        kill(process)
+        raise
+    trace=home/'traces'
+    trace.mkdir(parents=True,exist_ok=True)
+    (trace/(job['id']+'.claude.jsonl')).write_bytes(stdout)
+    (trace/(job['id']+'.claude.stderr.txt')).write_bytes(stderr)
+    events=[]
+    for line in stdout.decode('utf-8','replace').splitlines():
+        try: event=json.loads(line)
+        except ValueError: continue
+        if isinstance(event,dict): events.append(event)
+    if config.get('orchestrator_dir'):
+        try: capacity.save_claude(config,events)  # keeps the dispatcher's Claude allowance figure current
+        except OSError: pass
+    for event in events:
+        if event.get('type')=='system' and event.get('session_id'): state['claude_session']=event['session_id']
+    final=[e for e in events if e.get('type')=='result']
+    if process.returncode or not final or final[-1].get('is_error'):
+        last=final[-1] if final else {}
+        diagnostic='\n'.join([str(last.get('result') or ''),*map(str,last.get('errors') or []),stderr.decode('utf-8','replace')])
+        if 'no conversation found' in diagnostic.lower(): state.pop('claude_session',None)
+        rejected=any(e.get('type')=='rate_limit_event' and (e.get('rate_limit_info') or {}).get('status')=='rejected' for e in events)
+        if rejected or last.get('api_error_status')==429 or limited(diagnostic): raise EngineExhausted('claude')
+        raise RuntimeError('Claude trainer unavailable; no plan changes applied')
+    if final[-1].get('session_id'): state['claude_session']=final[-1]['session_id']
+    state['last_usage']=final[-1].get('usage') or {}
+    try: result=claude_answer(final[-1])
+    except ValueError as error: raise ValueError('Incomplete trainer answer') from error
+    result['_marks']=marks
+    result['_model']=model
+    return result
+
+
+def exhausted(snapshot):
+    """True when a capacity reading shows no allowance left in any window (windows that reset since count as free)."""
+    if not snapshot or not snapshot.get('available'): return False
+    windows=[v for v in snapshot.values() if isinstance(v,dict)]
+    if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0 for w in windows): return True
+    return bool(snapshot.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
+
+
+def engine_usable(name, config, state, now=None):
+    from ..orchestrator import capacity
+    now = now or time.time()
+    if state.get(name+'_retry_after',0) > now: return False
+    try:
+        if name=='codex':
+            if not (config.get('codex') or shutil.which('codex.cmd') or shutil.which('codex')): return False
+            return not exhausted(capacity.codex(config,now))
+        if not capacity.claude_executable(config): return False
+        # The cached Claude figure lives with the agent dispatcher; without it, availability is learned by trying.
+        return not (config.get('orchestrator_dir') and exhausted(capacity.claude(config,now,refresh=False)))
+    except (OSError, ValueError, KeyError, TypeError):
+        return True  # telemetry trouble never takes an installed engine offline
+
+
+def engine_order(config, state, now=None):
+    """Engines to try for the next job, in order. auto prefers Codex while it has allowance."""
+    mode = config.get('workout_coach_engine', 'auto')
+    if mode not in ENGINES: raise ValueError('workout_coach_engine must be one of '+', '.join(ENGINES))
+    if mode != 'auto': return [mode]
+    return [name for name in ('codex','claude') if engine_usable(name, config, state, now)]
+
+
+def run_engine(config, config_file, state, job, images, workspace, engines=None):
+    """Answer with the selected engine; a usage-limited engine hands the same job to the next one."""
+    engines = engines or {'codex': run_model, 'claude': run_claude}
+    order = engine_order(config, state)
+    if not order: raise RuntimeError('No coach engine has allowance; no plan changes applied')
+    skipped = []
+    for position, name in enumerate(order):
+        try:
+            result = engines[name](config, config_file, state, job, images, workspace)
+        except EngineExhausted:
+            state[name+'_retry_after'] = time.time()+60*config.get('workout_engine_retry_minutes', EXHAUSTED_RETRY_MINUTES)
+            if position+1 == len(order): raise
+            print('Trainer engine '+name+' is out of allowance; retrying the job on '+order[position+1],flush=True)
+            skipped.append(name)
+            continue
+        state.pop(name+'_retry_after', None)
+        result['_engine'] = {'engine': name, 'model': result.get('_model'), **({'fallback_from': skipped} if skipped else {})}
+        return result
+
+
+def engines_ready(config, state):
+    try: return bool(engine_order(config, state))
+    except ValueError: return False
+
+
+run_engine.readiness = engines_ready
+
+
+def codex_marks(event):
+    """Codex exec items: any item is model output; an agent_message is answer text."""
+    if not str(event.get('type','')).startswith('item.'): return ()
+    item=event.get('item') if isinstance(event.get('item'),dict) else {}
+    return ('first_output','first_text') if 'agent_message' in (item.get('type'),item.get('item_type')) else ('first_output',)
+
+
+def communicate_timed(process, data, timeout, classify=codex_marks):
     """communicate(), also noting when the model's first output item and first answer text arrived."""
     out,err,marks=[],[],{}
     def read_stdout():
@@ -161,11 +397,9 @@ def communicate_timed(process, data, timeout):
             out.append(line)
             try: event=json.loads(line)
             except ValueError: continue
-            if not isinstance(event,dict) or not str(event.get('type','')).startswith('item.'): continue
+            if not isinstance(event,dict): continue
             now=time.monotonic()
-            marks.setdefault('first_output',now)
-            item=event.get('item') if isinstance(event.get('item'),dict) else {}
-            if 'agent_message' in (item.get('type'),item.get('item_type')): marks.setdefault('first_text',now)
+            for name in classify(event): marks.setdefault(name,now)
     def read_stderr(): err.append(process.stderr.read())
     readers=[threading.Thread(target=read_stdout,daemon=True),threading.Thread(target=read_stderr,daemon=True)]
     for reader in readers: reader.start()
@@ -176,6 +410,7 @@ def communicate_timed(process, data, timeout):
         pass  # the process exited early; its output explains why
     process.wait(timeout=timeout)
     for reader in readers: reader.join(timeout=15)
+    for stream in (process.stdout,process.stderr): stream.close()
     return b''.join(out),b''.join(err),marks
 
 
@@ -216,10 +451,20 @@ def photo_context(client, job, base='/relay/v1/workout'):
             'earlier_analyses':sorted(earlier,key=lambda e:e['assessed_at'])}
 
 
-def run_once(client, config, config_file, state, invoke=run_model, poll=None):
-    """One heartbeat + claim + answer cycle. `poll` (a dict) learns whether the relay held the claim open."""
+def run_once(client, config, config_file, state, invoke=run_engine, poll=None):
+    """One heartbeat + claim + answer cycle. `poll` (a dict) learns whether the relay held the claim open.
+
+    An invoke with a readiness(config, state) check (run_engine) reports the coach online while any engine
+    has allowance, and blocked without claiming when none has.
+    """
     poll = {} if poll is None else poll
     base = workout_path(config.get('workout_user_id'))
+    readiness = getattr(invoke, 'readiness', None)
+    poll['blocked'] = bool(readiness) and not readiness(config, state)
+    if poll['blocked']:
+        client.call(base+'/trainer/heartbeat',{'state':'blocked','detail':'No coach engine has allowance'},'PUT')
+        poll['long_poll'] = False
+        return False
     client.call(base+'/trainer/heartbeat',{'state':'ready'},'PUT')
     client.call(base+'/trainer/prepare-brief?'+urlencode({'timezone':config.get('timezone','UTC')}),{},'POST')
     wait = config.get('long_poll_seconds', LONG_POLL_SECONDS)
@@ -249,9 +494,16 @@ def run_once(client, config, config_file, state, invoke=run_model, poll=None):
             model_finished=time.monotonic()
         if lost.is_set(): raise RuntimeError('Trainer lease lost')
         marks=result.pop('_marks',None) or {}
+        model=result.pop('_model',None) or codex_model(config)
+        engine=result.pop('_engine',None)
         timings={'model_started_after':model_started-received,'model_finished_after':model_finished-received,
                  **{name+'_after':value-received for name,value in marks.items() if name in ('first_output','first_text')}}
-        print('Trainer job phases: '+' '.join(f'{k.removesuffix("_after")}={v:.2f}s' for k,v in timings.items()),flush=True)
+        if engine:
+            # Which engine answered stays local (older relays reject unknown timing fields).
+            trace=runtime_dir(config)/'traces';trace.mkdir(parents=True,exist_ok=True)
+            (trace/(job['id']+'.engine.json')).write_text(json.dumps({**engine,'timings':timings}),encoding='utf-8')
+        print('Trainer job phases: '+(f"engine={engine['engine']} " if engine else '')
+              +' '.join(f'{k.removesuffix("_after")}={v:.2f}s' for k,v in timings.items()),flush=True)
         proposals=[{'mutation_id':hashlib.sha256((job['id']+':'+str(i)).encode()).hexdigest(),
                     'kind':p['kind'],'id':p['id'],'base_revision':p['base_revision'],'deleted':p.get('deleted',False),'data':json.loads(p['data_json'])}
                    for i,p in enumerate(result['proposals'])]
@@ -267,7 +519,7 @@ def run_once(client, config, config_file, state, invoke=run_model, poll=None):
                     slot.pop('timezone', None)
         assessment=json.loads(result['assessment_json']) if result['assessment_json'].strip() else None
         if assessment:
-            assessment.update(source_question=job['id'],model=config.get('workout_model',config.get('banking_model','gpt-6-sol')),
+            assessment.update(source_question=job['id'],model=model,
                               assessed_at=datetime.now(timezone.utc).isoformat())
         reasons='\n'.join(p['reason'] for p in result['proposals'] if p.get('reason'))
         text=result['text']+('\n\nProposed changes: '+reasons if reasons else '')
@@ -278,7 +530,7 @@ def run_once(client, config, config_file, state, invoke=run_model, poll=None):
             state['memory']=result['memory_summary'][:16000]
         return True
     except Exception as error:
-        trace=Path(config.get('workout_runtime_dir',str(Path.home()/'.personal-assistant/workout')))/'traces'
+        trace=runtime_dir(config)/'traces'
         trace.mkdir(parents=True,exist_ok=True)
         detail=type(error).__name__+': '+str(error)
         if hasattr(error,'read'): detail+='\n'+error.read().decode('utf-8','replace')[:12000]
@@ -287,18 +539,20 @@ def run_once(client, config, config_file, state, invoke=run_model, poll=None):
         if not lost.is_set():
             client.call(base+'/trainer/'+job['id']+'/answer',{'token':job['token'],
                 'text':('The proposed changes did not pass validation. Ask the coach to try the plan again.'
-                        if rejected else 'The workout specialist could not complete this request. No plan changes were applied. Retry when Codex is available.'),
+                        if rejected else 'The workout specialist could not complete this request. No plan changes were applied. Retry when the coach is back online.'),
                 'proposals':[],'state':'failed'},'PUT')
             if rejected:
                 client.call(base+'/trainer/heartbeat',{'state':'ready'},'PUT')
                 return False
-        client.call(base+'/trainer/heartbeat',{'state':'blocked','detail':'Codex request failed'},'PUT')
+        # One failed request doesn't take the coach offline while an engine still has allowance.
+        usable = bool(readiness) and readiness(config, state)
+        client.call(base+'/trainer/heartbeat',{'state':'ready'} if usable else {'state':'blocked','detail':'Model request failed'},'PUT')
         raise
     finally: stop.set();thread.join(timeout=1)
 
 
-def run_coach(config, config_file, once=False, invoke=run_model):
-    runtime=Path(config.get('workout_runtime_dir',str(Path.home()/'.personal-assistant/workout')))
+def run_coach(config, config_file, once=False, invoke=run_engine):
+    runtime=runtime_dir(config)
     runtime.mkdir(parents=True,exist_ok=True)
     state_file=runtime/'specialist.json'
     state=json.loads(state_file.read_text(encoding='utf-8')) if state_file.exists() else {}
@@ -321,6 +575,9 @@ def run_coach(config, config_file, once=False, invoke=run_model):
                 threading.Event().wait(backoff)
                 continue
             backoff=0
+            if poll.get('blocked'):
+                threading.Event().wait(RETRY_CAP_SECONDS)  # no engine has allowance; check again shortly
+                continue
             # The relay already held an empty claim open; a finished job may have a successor queued.
             if not (worked or poll.get('long_poll')):
                 threading.Event().wait(5)  # relay without long polling
@@ -335,7 +592,8 @@ def run_member_coaches(config, config_file):
 
     def invoke(*args):
         with model_slot:
-            return run_model(*args)
+            return run_engine(*args)
+    invoke.readiness = engines_ready
 
     with Singleton(runtime/'pool.lock'):
         while True:
