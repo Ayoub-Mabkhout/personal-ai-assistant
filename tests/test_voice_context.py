@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 import wave
@@ -49,6 +50,71 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(self.service.agents.status()['queued'],1)
         with self.assertRaises(Exception):
             self.service.typed('phone-a',Typed(id='typed-lock-0001',created_at=body.created_at,text='Something else'))
+
+    def test_slow_capture_does_not_block_a_different_typed_command(self):
+        started,release,typed_done=threading.Event(),threading.Event(),threading.Event()
+        failures=[]
+        def transcribe(*_):
+            started.set()
+            if not release.wait(5): raise RuntimeError('Test transcription was not released')
+            return 'Find the latest invoice'
+        self.service.transcribe=transcribe
+        def capture():
+            try: self.service.capture('phone-a',self.body('slow-capture'))
+            except Exception as error: failures.append(error)
+        def typed():
+            try:
+                self.service.typed('phone-a',Typed(id='fast-typed-command',
+                    created_at=datetime.now(timezone.utc).isoformat(),text='hi'))
+            except Exception as error: failures.append(error)
+            finally: typed_done.set()
+        recording=threading.Thread(target=capture)
+        request=threading.Thread(target=typed)
+        recording.start()
+        try:
+            self.assertTrue(started.wait(2))
+            request.start()
+            self.assertTrue(typed_done.wait(2),'Typed submission waited for unrelated transcription')
+        finally:
+            release.set()
+            recording.join(5)
+            if request.ident is not None: request.join(5)
+        self.assertEqual(failures,[])
+        identifier=self.service.identifier('phone-a','fast-typed-command')
+        with self.service.ledger.db() as db:
+            saved=db.execute('SELECT request FROM voice_commands WHERE id=?',(identifier,)).fetchone()
+        marks=json.loads(saved['request'])['ingress_timing']
+        self.assertGreater(marks['service_received_at'],0)
+        self.assertGreaterEqual(marks['lock_wait_seconds'],0)
+        self.assertEqual(marks['transcription_seconds'],0)
+        self.assertGreaterEqual(marks['service_seconds'],marks['dispatch_seconds'])
+
+    def test_concurrent_retries_share_one_transcription(self):
+        started,release=threading.Event(),threading.Event()
+        calls=[];answers=[];failures=[]
+        body=self.body('shared-capture')
+        def transcribe(*_):
+            calls.append(1);started.set()
+            if not release.wait(5): raise RuntimeError('Test transcription was not released')
+            return 'hi'
+        self.service.transcribe=transcribe
+        def capture():
+            try: answers.append(self.service.capture('phone-a',body))
+            except Exception as error: failures.append(error)
+        first=threading.Thread(target=capture);second=threading.Thread(target=capture)
+        first.start()
+        try:
+            self.assertTrue(started.wait(2))
+            second.start()
+        finally:
+            release.set()
+            first.join(5)
+            if second.ident is not None: second.join(5)
+        self.assertEqual(failures,[])
+        self.assertEqual(len(answers),2)
+        self.assertEqual(answers[0],answers[1])
+        self.assertEqual(calls,[1])
+        self.assertEqual(self.service.agents.status()['queued'],1)
 
     def test_wake_only_and_stop_do_not_enter_agent_queue(self):
         self.text='Hej Chat!';answer=self.service.capture('phone-a',self.body('wake-only-command'))

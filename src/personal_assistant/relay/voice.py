@@ -1,6 +1,6 @@
 """Paired-phone speech, durable receipts and native programmed/default-agent routing."""
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -13,6 +13,7 @@ import time
 import urllib.request
 import uuid
 import wave
+import weakref
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
@@ -145,41 +146,87 @@ class VoiceService:
         from personal_assistant.groceries.intelligence import ShoppingIntelligence
         self.shopping=shopping or ShoppingIntelligence(groceries,self.config,self.ledger,interpret_groceries)
         self.lock=threading.Lock()
+        self.command_locks=weakref.WeakValueDictionary()
+
+    @contextmanager
+    def command_lock(self,identifier):
+        # Retry the same command serially without holding other phones or
+        # requests behind a transcription or shopping-model call.
+        with self.lock:
+            lock=self.command_locks.get(identifier)
+            if lock is None:
+                lock=threading.Lock()
+                self.command_locks[identifier]=lock
+        with lock:
+            yield
+
+    @staticmethod
+    def ingress_request(encoded,received_at,started,locked):
+        request=json.loads(encoded)
+        request['ingress_timing']={
+            'service_received_at':received_at,
+            'lock_wait_seconds':locked-started,
+        }
+        return json.dumps(request,sort_keys=True)
+
+    def save_result(self,identifier,result,started,dispatch_started,transcription_seconds=0):
+        finished=time.monotonic()
+        with self.ledger.db() as db:
+            request=json.loads(db.execute('SELECT request FROM voice_commands WHERE id=?',(identifier,)).fetchone()['request'])
+            marks=request.setdefault('ingress_timing',{})
+            # Preserve the first completed attempt when recovering a lost result.
+            marks.setdefault('transcription_seconds',transcription_seconds)
+            marks.setdefault('dispatch_seconds',finished-dispatch_started)
+            marks.setdefault('service_seconds',finished-started)
+            marks.setdefault('service_finished_at',time.time())
+            db.execute('UPDATE voice_commands SET request=?,result=? WHERE id=?',
+                       (json.dumps(request),json.dumps(result),identifier))
 
     @staticmethod
     def identifier(phone,identifier):return 'voice-'+hashlib.sha256((phone+':'+identifier).encode()).hexdigest()[:40]
 
     def capture(self,phone,body):
+        received_at=time.time();started=time.monotonic()
         audio,duration=decode_audio(body);identifier=self.identifier(phone,body.id)
         request=body.model_dump();request.pop('audio_base64');request['audio_sha256']=hashlib.sha256(audio).hexdigest()
         encoded=json.dumps(request,sort_keys=True);fingerprint=hashlib.sha256(encoded.encode()).hexdigest()
-        # Serialize capture processing; downstream mutation/queue IDs survive crash/retry.
-        with self.lock:
+        # Downstream mutation/queue IDs survive crash/retry.
+        session_lock=self.command_lock('conversation:'+phone+':'+body.session_id) if body.session_id else nullcontext()
+        with self.command_lock(identifier), session_lock:
+            locked=time.monotonic()
             with self.ledger.db() as db:
                 old=db.execute('SELECT * FROM voice_commands WHERE id=?',(identifier,)).fetchone()
                 if old and old['fingerprint']!=fingerprint:raise HTTPException(409,'Voice command ID already has different content.')
                 if old and old['result']:return json.loads(old['result'])
-                if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,NULL,NULL,?)',(identifier,phone,fingerprint,encoded,time.time()))
+                if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,NULL,NULL,?)',
+                    (identifier,phone,fingerprint,self.ingress_request(encoded,received_at,started,locked),time.time()))
+            transcription_started=time.monotonic()
             text=old['transcript'] if old and old['transcript'] is not None else self.transcribe(audio,duration,identifier)
+            transcription_seconds=time.monotonic()-transcription_started
             with self.ledger.db() as db:db.execute('UPDATE voice_commands SET transcript=? WHERE id=?',(text,identifier))
+            dispatch_started=time.monotonic()
             if body.dry_run:result={'text':text,'reply':'Transcription only. No action taken.','status':'transcribed'}
             elif not text.strip():result={'text':'','reply':'I did not hear a command.','status':'no_speech'}
             else:result=self.dispatch(phone,identifier,text,body.timezone,body.created_at,body.session_id,body.native_timers)
-            with self.ledger.db() as db:db.execute('UPDATE voice_commands SET result=? WHERE id=?',(json.dumps(result),identifier))
+            self.save_result(identifier,result,started,dispatch_started,transcription_seconds)
             return result
 
     def typed(self,phone,body):
         """A request typed on the phone (for example from the lock screen) is routed exactly like speech."""
+        received_at=time.time();started=time.monotonic()
         identifier=self.identifier(phone,body.id);encoded=json.dumps(body.model_dump(),sort_keys=True)
         fingerprint=hashlib.sha256(encoded.encode()).hexdigest()
-        with self.lock:
+        with self.command_lock(identifier):
+            locked=time.monotonic()
             with self.ledger.db() as db:
                 old=db.execute('SELECT * FROM voice_commands WHERE id=?',(identifier,)).fetchone()
                 if old and old['fingerprint']!=fingerprint:raise HTTPException(409,'Request ID already has different content.')
                 if old and old['result']:return json.loads(old['result'])
-                if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,?,NULL,?)',(identifier,phone,fingerprint,encoded,body.text,time.time()))
+                if not old:db.execute('INSERT INTO voice_commands VALUES(?,?,?,?,?,NULL,?)',
+                    (identifier,phone,fingerprint,self.ingress_request(encoded,received_at,started,locked),body.text,time.time()))
+            dispatch_started=time.monotonic()
             result=self.dispatch(phone,identifier,body.text,body.timezone,body.created_at,'',body.native_timers)
-            with self.ledger.db() as db:db.execute('UPDATE voice_commands SET result=? WHERE id=?',(json.dumps(result),identifier))
+            self.save_result(identifier,result,started,dispatch_started)
             return result
 
     def dispatch(self,phone,identifier,text,tz,created,session_id='',native_timers=False):
