@@ -22,6 +22,10 @@ final class WorkoutViews {
     static String label(int score){int t=tierOf(score);if(t>=FIRST_APEX)return TIERS[t];return TIERS[t]+" "+(4-(score-FLOORS[t])*4/(FLOORS[t+1]-FLOORS[t]));}
     static int tierOf(int score){int t=0;for(int i=0;i<FLOORS.length;i++)if(score>=FLOORS[i])t=i;return t;}
     static int color(int tier,boolean dark){return dark||tier!=2?COLORS[tier][tier==3&&!dark?1:0]:COLORS[tier][1];}
+    /** Tier colour for text on the page: the deep shade in light mode so pale tiers stay readable. */
+    static int ink(int tier,boolean dark){return COLORS[tier][dark?0:1];}
+    /** The tier's bright face, for marks on the dark hero and ridge backgrounds. */
+    static int bright(int tier){return COLORS[tier][0];}
 
     /** A ten-step heraldic crest on a 120×134 grid: a shield gains a crown, then wings, a star and a second pair of wings. */
     static final class Crest extends View {
@@ -37,15 +41,23 @@ final class WorkoutViews {
             if(tier>=4)poly(k,c[2],60,40,65,54,80,55,68,64,72,79,60,70,48,79,52,64,40,55,55,54);else poly(k,c[2],60,44,74,60,60,76,46,60);k.restore();}
     }
 
-    /** The ten camps up a dusk ridge; camps above the current rank are dimmed. */
+    /** The ten camps up a dusk ridge; camps above the current rank are dimmed. A rival's view also pins your own camp with a "You" pill. */
     static final class Ridge extends View {
         static final float[][] CAMPS={{.06f,.86f},{.15f,.74f},{.24f,.76f},{.34f,.66f},{.43f,.58f},{.53f,.64f},{.63f,.42f},{.71f,.48f},{.81f,.28f},{.91f,.14f}};
-        final AppUi ui;final int current;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Bitmap[] marks=new Bitmap[CAMPS.length];
-        Ridge(AppUi ui,int current){super(ui.context);this.ui=ui;this.current=current;}
+        final AppUi ui;final int current,you;final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);final Bitmap[] marks=new Bitmap[CAMPS.length];
+        Ridge(AppUi ui,int current){this(ui,current,-1);}
+        Ridge(AppUi ui,int current,int you){super(ui.context);this.ui=ui;this.current=current;this.you=you;}
         private void hill(Canvas c,int color,float... v){Path a=new Path();a.moveTo(0,getHeight());for(int i=0;i<v.length;i+=2)a.lineTo(v[i]*getWidth(),v[i+1]*getHeight());a.lineTo(getWidth(),getHeight());a.close();p.setColor(color);p.setShader(null);c.drawPath(a,p);}
         @Override protected void onDraw(Canvas c){int w=getWidth(),h=getHeight();p.setShader(new LinearGradient(0,0,0,h,new int[]{0xFF1A1248,0xFF5A2A9A,0xFFC95F8E},new float[]{0,.65f,1},Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,p);p.setShader(null);
             hill(c,0xFF2A1460,0,.9f,.2f,.68f,.3f,.76f,.43f,.54f,.53f,.62f,.63f,.38f,.71f,.46f,.91f,.08f,1,.24f);hill(c,ui.dark?ui.background:0xFF1D1729,0,.98f,.3f,.88f,.6f,.94f,1,.78f);
-            for(int i=0;i<CAMPS.length;i++){boolean here=i==current;int cw=ui.dp(here?36:20),ch=ui.dp(here?40:23);if(marks[i]==null){Crest crest=new Crest(getContext(),i,i>current);crest.layout(0,0,cw,ch);Bitmap b=Bitmap.createBitmap(cw,ch,Bitmap.Config.ARGB_8888);crest.draw(new Canvas(b));marks[i]=b;}c.drawBitmap(marks[i],CAMPS[i][0]*w-cw/2f,CAMPS[i][1]*h-ch/2f,null);}}
+            for(int i=0;i<CAMPS.length;i++){boolean here=i==current;int cw=ui.dp(here?36:20),ch=ui.dp(here?40:23);if(marks[i]==null){Crest crest=new Crest(getContext(),i,i>current&&i>you);crest.layout(0,0,cw,ch);Bitmap b=Bitmap.createBitmap(cw,ch,Bitmap.Config.ARGB_8888);crest.draw(new Canvas(b));marks[i]=b;}c.drawBitmap(marks[i],CAMPS[i][0]*w-cw/2f,CAMPS[i][1]*h-ch/2f,null);}
+            if(you>=0&&you<CAMPS.length)pin(c,w,h);}
+        /** White "You" pill with a pointer, beside the camp when it is also the rival's, kept inside the card. */
+        private void pin(Canvas c,int w,int h){boolean shared=you==current;float pw=ui.dpf(34),ph=ui.dpf(17);
+            float cx=Math.max(pw/2+ui.dpf(2),Math.min(w-pw/2-ui.dpf(2),CAMPS[you][0]*w+(shared?ui.dpf(26):0))),cy=Math.max(ph+ui.dpf(4),CAMPS[you][1]*h-ui.dpf(shared?24:14));
+            p.setShader(null);p.setColor(Color.WHITE);c.drawRoundRect(new RectF(cx-pw/2,cy-ph-ui.dpf(2),cx+pw/2,cy-ui.dpf(2)),ph/2,ph/2,p);
+            Path tip=new Path();tip.moveTo(cx-ui.dpf(4),cy-ui.dpf(2.5f));tip.lineTo(cx+ui.dpf(4),cy-ui.dpf(2.5f));tip.lineTo(cx,cy+ui.dpf(3));tip.close();c.drawPath(tip,p);
+            p.setColor(0xFF3A2470);p.setTypeface(AppUi.face(800));p.setTextSize(ui.dpf(10));p.setTextAlign(Paint.Align.CENTER);Paint.FontMetrics m=p.getFontMetrics();c.drawText("You",cx,cy-ui.dpf(2)-ph/2-(m.ascent+m.descent)/2,p);p.setTextAlign(Paint.Align.LEFT);p.setTypeface(null);}
     }
 
     /** A geometric figure whose regions take the tier colour of each trained muscle group. */
