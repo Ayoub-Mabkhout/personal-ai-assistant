@@ -86,7 +86,7 @@ class DispatcherFallbackTests(unittest.TestCase):
         self.assertFalse(json.loads(dispatch[0]['prompt'])['agent_availability']['codex']['usable'])
         workers = result['result']['workers']
         self.assertEqual([(w['agent'], w['model'], w['effort']) for w in workers],
-                         [('claude', 'claude-sonnet-5-5', 'medium'), ('claude', 'claude-opus-5-5', 'max')])
+                         [('claude', 'claude-opus-5-5', 'medium'), ('claude', 'claude-opus-5-5', 'max')])
         self.assertEqual(workers[1]['substituted_from']['model'], 'gpt-6-astra')
         self.assertEqual(result['result']['orchestrator_agent'], 'claude')
         # The Claude dispatcher session is stored apart from Luna's and resumed by the next task.
@@ -154,7 +154,7 @@ class DispatcherFallbackTests(unittest.TestCase):
         result = self.continuation('follow-up-one', SPENT)
         self.assertEqual(result['state'], 'completed')
         moved = result['result']['workers'][0]
-        self.assertEqual((moved['agent'], moved['model']), ('claude', 'claude-sonnet-5-5'))
+        self.assertEqual((moved['agent'], moved['model']), ('claude', 'claude-opus-5-5'))
         self.assertEqual(moved['fallback_from']['session_id'], worker_session)
         self.assertIsNone(self.claude.calls[-1]['session'])
         self.assertIn('fresh Claude session', self.claude.calls[-1]['instructions'])

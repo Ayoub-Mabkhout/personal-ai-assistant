@@ -43,15 +43,34 @@ TASK_TYPES = {
     'calendar':'Managing schedules, appointments and reminders.',
     'general':'Greetings, fixed replies, straightforward answers and tasks outside the other categories.',
 }
-PROFILE_GUIDANCE = """Choose one worker profile for user_request. Preserve an explicitly requested
-agent, model and reasoning effort when the profile is supported. Avoid needless effort:
-greetings, ping/fixed replies and simple bounded actions normally use Luna low or Haiku low.
-Use Sol or Terra medium, or Sonnet medium, for ordinary substantive work. Use Astra or Opus
-and higher effort for genuinely difficult or ambiguous tasks. Use ultra or Fable only when
-explicitly requested. Keep an explicit preference unless that agent cannot run.
-agent_availability reports whether a worker can run now. Prefer usable agents, and when
-both can handle the task prefer the account with more five-hour/weekly allowance. When either window
-has less than 10% remaining, prefer the other usable account and economical profiles.
+CAPABILITIES = {
+    'gpt-6-luna':'Lightweight execution: greetings, fixed replies, simple transformations or a single fully specified operation. Unsuitable for multi-step research, itinerary planning or coordinating multiple tools and constraints.',
+    'claude-haiku-5-5':'Lightweight execution: greetings, fixed replies, simple transformations or a single fully specified operation. Unsuitable for multi-step research, itinerary planning or coordinating multiple tools and constraints.',
+    'claude-sonnet-5-5':'Substantial practical agent work: multi-tool research, current opening-hour verification, walking itineraries, scheduling constraints, ordinary implementation and synthesis. Minimum Claude tier for these tasks; medium effort by default.',
+    'gpt-6.1-terra':'Substantial coding and structured tool/data workflows, ordinarily medium effort.',
+    'gpt-6.1-sol':'Top general capability tier, alongside Opus: complex coding, reasoning, research, ambiguous work and difficult synthesis. Use medium effort for substantial work and higher effort when genuinely needed.',
+    'gpt-6-sol':'Top general capability tier, alongside Opus: complex coding, reasoning, research, ambiguous work and difficult synthesis. Use medium effort for substantial work and higher effort when genuinely needed.',
+    'claude-opus-5-5':'Top general capability tier, alongside Sol, with the preferred creative advantage for demanding design, original writing and creative direction. Also suitable for complex coding, reasoning and synthesis; medium effort can be sufficient.',
+    'gpt-6-astra':'Exceptional difficulty requiring the strongest reasoning, beyond ordinary planning or substantial tool use. Do not select merely because a task uses several tools.',
+    'claude-fable-5-1':'Use only when the user explicitly requests this model.',
+}
+PROFILE_GUIDANCE = """Choose one suitable worker profile for user_request. This is the owner's
+routing policy, not a benchmark claim. Preserve an explicitly requested agent, model and
+reasoning effort when supported, unless that agent cannot run.
+First establish the capability floor from the work required, then compare allowance.
+A short user prompt can describe substantial work. Anticipate the necessary tool calls,
+live verification, synthesis and interacting constraints rather than judging prompt length.
+Luna and Haiku are only for genuinely lightweight tasks. Multi-step research, planning a
+walkable trip using live opening hours, comparing businesses, or combining travel time with
+closing times requires at least Sonnet medium or a suitable Sol/Terra profile. Do not choose
+Luna/Haiku for such work, even when their account has abundant remaining allowance.
+Treat Sol and Opus as the same top general capability tier. Prefer Opus for demanding creative
+work when available and no explicit preference overrides it. Sonnet is the practical tier below
+them. Astra is reserved for exceptional reasoning difficulty. Use ultra or Fable only when
+explicitly requested. Match effort separately: selecting a stronger model does not require high effort.
+agent_availability reports whether a worker can run now. Among profiles that meet the capability
+floor, prefer the account with more five-hour/weekly allowance. When either window has less than
+10% remaining, prefer another suitable usable account. Never lower the capability floor to save allowance.
 Unknown telemetry is not proof that the agent is unavailable.
 Email tasks require Codex because only Codex has the connected email tools. Do not choose
 Claude for email even if Codex has no allowance; the caller will explain the constraint.
@@ -128,7 +147,7 @@ class Router:
                 },
                 'profile':{
                     'type':'choice','instructions':PROFILE_GUIDANCE,
-                    'criteria':{name:profile['agent']+', '+profile['model']+', effort '+profile['effort']
+                    'criteria':{name:profile['agent']+', '+profile['model']+', effort '+profile['effort']+'. '+CAPABILITIES[profile['model']]
                                 for name,profile in PROFILES.items()},
                 },
                 'task_type':{
