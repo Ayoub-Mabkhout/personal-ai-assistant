@@ -56,8 +56,11 @@ class WorkoutPrivateVaultTests(unittest.TestCase):
         client=TestClient(app or self.app,base_url='https://train.test');self.addCleanup(client.close)
         return client
 
+    def invite(self,user_id=None):
+        return self.accounts.invite(user_id)['invite']
+
     def enroll(self,name='Synthetic Athlete'):
-        client=self.client();response=client.post('/train/api/auth/register',json={'name':name,'auth_secret':AUTH,'client_salt':SALT})
+        client=self.client();response=client.post('/train/api/auth/register',json={'name':name,'auth_secret':AUTH,'client_salt':SALT,'invite':self.invite()})
         self.assertEqual(response.status_code,200,response.text)
         return client,response.json()['id']
 
@@ -78,9 +81,29 @@ class WorkoutPrivateVaultTests(unittest.TestCase):
         self.assertEqual(client.post('/train/api/auth/logout').status_code,200)
         self.assertEqual(client.get('/train/api/me').status_code,401)
 
+    def test_registration_needs_a_single_use_invite(self):
+        client=self.client();body={'name':'Open Door','auth_secret':AUTH,'client_salt':SALT}
+        self.assertEqual(client.post('/train/api/auth/register',json=body).status_code,422)
+        self.assertEqual(client.post('/train/api/auth/register',json={**body,'invite':'x'*43}).status_code,403)
+        invite=self.invite()
+        self.assertEqual(client.post('/train/api/auth/register',json={**body,'invite':invite}).status_code,200)
+        again=self.client().post('/train/api/auth/register',json={**body,'name':'Second Try','invite':invite})
+        self.assertEqual(again.status_code,403)
+
+    def test_an_invite_for_an_existing_profile_sets_its_first_password(self):
+        original,_=self.accounts.join('Returning Athlete')
+        client=self.client();body={'auth_secret':AUTH,'client_salt':SALT}
+        # The link is for that profile only: another name is refused and the invite is spent.
+        self.assertEqual(client.post('/train/api/auth/register',json={**body,'name':'Someone Else','invite':self.invite(original['id'])}).status_code,409)
+        response=client.post('/train/api/auth/register',json={**body,'name':'returning  athlete','invite':self.invite(original['id'])})
+        self.assertEqual(response.status_code,200,response.text);self.assertEqual(response.json()['id'],original['id'])
+        self.assertEqual(client.get('/train/api/me').json()['id'],original['id'])
+        # Once it has a password, a second link for it can't replace that password.
+        self.assertEqual(self.client().post('/train/api/auth/register',json={**body,'name':'Returning Athlete','invite':self.invite(original['id'])}).status_code,409)
+
     def test_auth_rejects_raw_passwords_secret_keys_and_cross_site_calls(self):
         client=self.client()
-        body={'name':'Synthetic Athlete','auth_secret':AUTH,'client_salt':SALT}
+        body={'name':'Synthetic Athlete','auth_secret':AUTH,'client_salt':SALT,'invite':self.invite()}
         self.assertEqual(client.post('/train/api/auth/register',json={**body,'password':'not allowed'}).status_code,422)
         self.assertEqual(client.post('/train/api/auth/register',json=body,headers={'Origin':'https://other.test'}).status_code,403)
         self.assertEqual(client.post('/train/api/auth/register',json=body,headers={'Sec-Fetch-Site':'cross-site'}).status_code,403)
@@ -92,7 +115,7 @@ class WorkoutPrivateVaultTests(unittest.TestCase):
         original,old_cookie=self.accounts.join('Legacy Athlete')
         wrong=self.client()
         body={'name':'Legacy Athlete','auth_secret':AUTH,'client_salt':SALT}
-        self.assertEqual(wrong.post('/train/api/auth/register',json=body).status_code,409)
+        self.assertEqual(wrong.post('/train/api/auth/register',json={**body,'invite':self.invite()}).status_code,409)
         self.assertEqual(wrong.post('/train/api/auth/claim',json=body).status_code,409)
         client=self.client();client.cookies.set(COOKIE,old_cookie,domain='train.test',path='/train/api')
         self.assertEqual(client.get('/train/api/overview').status_code,403)

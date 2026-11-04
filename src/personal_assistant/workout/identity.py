@@ -42,6 +42,10 @@ class EnrollmentDenied(IdentityError):
     def __init__(self):super().__init__('Use the existing profile session to set its password, or choose another name.')
 
 
+class InviteInvalid(IdentityError):
+    def __init__(self):super().__init__('This invite link is invalid, expired or already used. Ask for a new one.')
+
+
 class RateLimited(IdentityError):
     def __init__(self, retry_after):
         self.retry_after=max(1,math.ceil(retry_after))
@@ -147,14 +151,30 @@ class Identity:
 
     def _success(self,db,key):db.execute('DELETE FROM train_auth_limits WHERE key=?',(self._name_bucket(key),))
 
-    def register(self,name,auth_secret,client_salt,client_id,*,on_enroll=None):
+    def register(self,name,auth_secret,client_salt,client_id,*,invite_hash=None,on_enroll=None):
+        """A new profile, or with an invite for an existing profile, that profile's first password.
+        The web route always passes an invite; registration is never open to anyone with the URL."""
         display,key=normalized_name(name);unb64(client_salt,16);unb64(auth_secret,32)
         self._reserve(key,client_id);verifier=hash_auth_secret(auth_secret);identifier=uuid4().hex
         with self.workouts.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            if self._profiles(db,key) or db.execute('SELECT 1 FROM train_credentials WHERE login_name=?',(key,)).fetchone():
-                raise EnrollmentDenied()
-            db.execute('INSERT INTO train_users(id,name,setup_complete) VALUES(?,?,0)',(identifier,display))
+            target=None
+            if invite_hash is not None:
+                row=db.execute('SELECT user_id FROM train_invites WHERE hash=? AND expires>?',(invite_hash,self.clock())).fetchone()
+                if not row:raise InviteInvalid()
+                db.execute('DELETE FROM train_invites WHERE hash=?',(invite_hash,))
+                target=row['user_id']
+            if target:
+                profile=db.execute('SELECT id,name FROM train_users WHERE id=?',(target,)).fetchone()
+                try:same=bool(profile) and normalized_name(profile['name'])[1]==key
+                except IdentityError:same=False
+                if not same or db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(target,)).fetchone():
+                    raise EnrollmentDenied()
+                identifier=target
+            else:
+                if self._profiles(db,key) or db.execute('SELECT 1 FROM train_credentials WHERE login_name=?',(key,)).fetchone():
+                    raise EnrollmentDenied()
+                db.execute('INSERT INTO train_users(id,name,setup_complete) VALUES(?,?,0)',(identifier,display))
             self._insert(db,identifier,key,client_salt,verifier)
             if on_enroll:on_enroll(db,identifier)
             self._success(db,key)

@@ -178,6 +178,10 @@ class PasswordEnrollment(PasswordLogin):
     client_salt: str = Field(pattern=r'^[A-Za-z0-9_-]{22}$')
 
 
+class PasswordRegistration(PasswordEnrollment):
+    invite: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+
+
 class VaultKeyUpdate(Model):
     base_revision: int = Field(ge=0,le=2**53-1,strict=True)
     record: dict
@@ -310,10 +314,11 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         return request.client.host if request.client else 'unknown-client'
 
     def auth_call(function,*args,**kwargs):
-        from .identity import LoginFailed,EnrollmentDenied,RateLimited,IdentityError
+        from .identity import LoginFailed,EnrollmentDenied,RateLimited,IdentityError,InviteInvalid
         try:return function(*args,**kwargs)
         except RateLimited as error:raise HTTPException(429,str(error),headers={'Retry-After':str(error.retry_after)}) from None
         except LoginFailed as error:raise HTTPException(401,str(error)) from None
+        except InviteInvalid as error:raise HTTPException(403,str(error)) from None
         except EnrollmentDenied as error:raise HTTPException(409,str(error)) from None
         except IdentityError as error:raise HTTPException(422,str(error)) from None
 
@@ -333,9 +338,10 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         return auth_call(identities.parameters,name)
 
     @browser.post('/auth/register',dependencies=[Depends(identity_enabled)])
-    def password_register(body:PasswordEnrollment,request:Request,response:Response):
+    def password_register(body:PasswordRegistration,request:Request,response:Response):
         issued,cookie=issue_session(response)
-        identifier=auth_call(identities.register,body.name,body.auth_secret,body.client_salt,client_id(request),on_enroll=issued)
+        identifier=auth_call(identities.register,body.name,body.auth_secret,body.client_salt,client_id(request),
+                             invite_hash=digest(body.invite),on_enroll=issued)
         cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
 
     @browser.post('/auth/login',dependencies=[Depends(identity_enabled)])

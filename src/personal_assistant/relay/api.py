@@ -433,5 +433,7 @@ def from_environment():
                       mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
                       owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'),
                       file_drops=file_drop_settings(), train_push=train_push,
+                      # Iron League name and password sign-in: on while this marker sits next to the queue database.
+                      train_require_identity=Path(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3')).with_name('train-require-identity').is_file(),
                       train_assets=os.environ.get('ASSISTANT_TRAIN_ASSETS') or (
                           '/app/apps/train-web' if Path('/app/apps/train-web/index.html').is_file() else None))

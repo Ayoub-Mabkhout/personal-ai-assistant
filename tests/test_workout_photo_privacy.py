@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from personal_assistant.relay.store import Conflict,Missing
 from personal_assistant.workout.private_vault import PrivateVault
+from personal_assistant.workout.web import Accounts
 from personal_assistant.workout.reminder import TrainReminders
 from personal_assistant.workout.store import Workouts
 from personal_assistant.workout.web import mount_train
@@ -181,8 +182,11 @@ class PhotoPrivacyWebTests(unittest.TestCase):
         mount_train(app,self.workouts,lambda:None,self.root/'no-assets',require_identity=True)
         self.client=TestClient(app,base_url='https://train.test');self.addCleanup(self.client.close)
 
+    def invite(self):
+        return Accounts(self.workouts).invite(None)['invite']
+
     def test_encrypted_upload_share_and_unshare(self):
-        response=self.client.post('/train/api/auth/register',json={'name':'Synthetic Athlete','auth_secret':AUTH,'client_salt':SALT})
+        response=self.client.post('/train/api/auth/register',json={'name':'Synthetic Athlete','auth_secret':AUTH,'client_salt':SALT,'invite':self.invite()})
         self.assertEqual(response.status_code,200,response.text);user=response.json()['id']
         record=wrapped(user)
         self.assertEqual(self.client.put('/train/api/vault/key-envelope',json={'base_revision':0,'record':record}).status_code,200)
