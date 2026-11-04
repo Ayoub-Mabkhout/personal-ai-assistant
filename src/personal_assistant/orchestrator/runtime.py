@@ -1,6 +1,7 @@
 from datetime import datetime,timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -52,6 +53,14 @@ class InterruptedRun(RuntimeError):
     pass
 
 
+class UsageLimited(InterruptedRun):
+    """The agent's subscription allowance (not the request) stopped the call; the other agent may take it."""
+    def __init__(self,agent,message=None,observed=False):
+        super().__init__(message or agent.capitalize()+' usage limit reached. Its private stderr and trace are preserved.')
+        self.agent=agent
+        self.observed=observed # a call just failed on the limit (not a replayed record or a telemetry refusal)
+
+
 def write_json(path,body):
     path=Path(path)
     temporary=path.with_suffix(path.suffix+'.new')
@@ -99,6 +108,7 @@ class CLI:
                     if e.get('type')=='thread.started': previous['session_id']=e['thread_id']
                 write_json(record_path,previous)
                 return previous
+            if previous.get('usage_limited'): raise UsageLimited('codex')
             raise InterruptedRun('An earlier agent call was interrupted. Its effects need reconciliation before rerunning it.')
         args=[self.config['codex']]
         if Path(args[0]).suffix=='.js': args=[self.config['node'],args[0]]
@@ -151,9 +161,14 @@ class CLI:
         for event in history:
             if event.get('type')=='thread.started': record['session_id']=event['thread_id']
             if event.get('type')=='turn.completed': record['usage']=event.get('usage',{})
-        write_json(record_path,record)
         if record['state']!='completed' or not (directory/'result.txt').is_file():
+            stderr=(directory/'stderr.log').read_text(encoding='utf-8',errors='replace') if (directory/'stderr.log').is_file() else ''
+            if capacity.codex_limited(history,stderr):
+                record['usage_limited']=True;write_json(record_path,record)
+                raise UsageLimited('codex',observed=True)
+            write_json(record_path,record)
             raise InterruptedRun('CLI run failed. Its private stderr and trace are preserved.')
+        write_json(record_path,record)
         return record
 
 
@@ -161,6 +176,9 @@ class ClaudeCLI:
     """Headless Claude Code worker with the same record, trace and recovery contract as CLI."""
     def __init__(self,config):
         self.config=config
+
+    def available(self):
+        return bool(capacity.claude_executable(self.config))
 
     def run(self,prompt,directory,workspace,model,effort,cancelled,session=None,schema=None,instructions=None):
         directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
@@ -172,23 +190,31 @@ class ClaudeCLI:
             # Recover a finished call whose final result event was written before the process died.
             done=[e for e in events(directory/'events.jsonl') if e.get('type')=='result' and not e.get('is_error')]
             if done:
-                (directory/'result.txt').write_text(str(done[-1].get('result') or ''),encoding='utf-8')
+                (directory/'result.txt').write_text(self.answer(done[-1],previous.get('structured')),encoding='utf-8')
                 previous.update(state='completed',exit_code=0,recovered=True,session_id=done[-1].get('session_id') or previous.get('session_id'))
                 write_json(record_path,previous)
                 return previous
+            if previous.get('usage_limited'): raise UsageLimited('claude')
             raise InterruptedRun('An earlier agent call was interrupted. Its effects need reconciliation before rerunning it.')
         executable=capacity.claude_executable(self.config)
         if not executable: raise InterruptedRun('Claude Code is not installed for the worker.')
-        args=[executable,'-p','--output-format','stream-json','--verbose','--model',model,'--effort',effort,
-              '--permission-mode','bypassPermissions']
+        args=[executable,'-p','--output-format','stream-json','--verbose','--model',model,'--effort',effort]
+        if schema:
+            # A dispatcher returns assignments only: no built-in tools, MCP servers, skills or user settings.
+            write_json(directory/'schema.json',schema)
+            args+=['--tools','','--strict-mcp-config','--permission-mode','dontAsk','--setting-sources','project',
+                   '--disable-slash-commands','--json-schema',json.dumps(schema,separators=(',',':'))]
+            permission='dontAsk'
+        else:
+            args+=['--permission-mode','bypassPermissions'];permission='bypassPermissions'
         if session: args+=['--resume',session]
         if instructions:
             (directory/'instructions.txt').write_text(instructions,encoding='utf-8')
-            args+=['--append-system-prompt-file',str(directory/'instructions.txt')]
+            args+=['--system-prompt-file' if schema else '--append-system-prompt-file',str(directory/'instructions.txt')]
         record={'state':'running','agent':'claude','model':model,'effort':effort,'session_id':session,
                 'started_at':datetime.now(timezone.utc).isoformat(),'workspace':str(workspace),
-                'permission_mode':'bypassPermissions','args':args,'result':str(directory/'result.txt'),
-                'trace':str(directory/'events.jsonl')}
+                'permission_mode':permission,'args':args,'result':str(directory/'result.txt'),
+                'trace':str(directory/'events.jsonl'),**({'structured':True} if schema else {})}
         (directory/'prompt.txt').write_text(prompt,encoding='utf-8')
         write_json(record_path,record)
         # Subscription login rather than an API key; never inherit a parent Claude session's markers.
@@ -221,10 +247,27 @@ class ClaudeCLI:
         record.update(state='completed' if ok else 'failed',exit_code=process.returncode,finished_at=datetime.now(timezone.utc).isoformat())
         if final:
             record['usage']={**(final[-1].get('usage') or {}),'total_cost_usd':final[-1].get('total_cost_usd')}
-            if ok:(directory/'result.txt').write_text(str(final[-1].get('result') or ''),encoding='utf-8')
+            if ok:(directory/'result.txt').write_text(self.answer(final[-1],bool(schema)),encoding='utf-8')
+        if not ok:
+            stderr=(directory/'stderr.log').read_text(encoding='utf-8',errors='replace') if (directory/'stderr.log').is_file() else ''
+            if capacity.claude_limited(history,stderr):
+                record['usage_limited']=True;write_json(record_path,record)
+                raise UsageLimited('claude',observed=True)
+            write_json(record_path,record)
+            raise InterruptedRun('Claude run failed. Its private stderr and trace are preserved.')
         write_json(record_path,record)
-        if not ok: raise InterruptedRun('Claude run failed. Its private stderr and trace are preserved.')
         return record
+
+    @staticmethod
+    def answer(final,structured):
+        """The final answer text; a structured (--json-schema) run yields its JSON document."""
+        if structured and final.get('structured_output') is not None:
+            return json.dumps(final['structured_output'],ensure_ascii=False)
+        text=str(final.get('result') or '')
+        if structured:
+            text=text.strip()
+            if text.startswith('```'):text=text.strip('`').removeprefix('json').strip()
+        return text
 
 
 DISPATCH_INSTRUCTIONS='''You are the owner's persistent lightweight Luna dispatch orchestrator.
@@ -309,6 +352,40 @@ refusal is not proof the requested task completed. Correct unsupported refusals
 through worker follow-up, or report an actual access/coverage limitation.
 '''
 
+AVAILABILITY_DISPATCH='''agent_availability says whether each agent can run now. An agent with usable=false
+is out of allowance or cooling down after a usage-limit error: do not assign it. When
+codex is unusable, use claude workers (haiku for Luna-sized, sonnet for Sol-sized and
+opus for Astra-sized work); the service substitutes that tier for any codex assignment.
+Email tasks need the codex Gmail plugin: while codex is unusable, return needs_input
+naming when its allowance resets instead of dispatching them.
+'''
+
+CLAUDE_DISPATCH_NOTE='''You are the Claude stand-in for the Luna dispatcher while Codex is out of allowance or
+unavailable. Follow the same protocol and return only the Decision JSON through structured output.
+Your session continues across tasks like Luna's; earlier turns may have been made by Luna.
+'''
+
+PROTOCOL=DISPATCH_INSTRUCTIONS+SKILL_DISPATCH+AVAILABILITY_DISPATCH
+
+# Equivalent Claude tier when a Codex worker cannot run; effort ultra has no Claude equivalent.
+CLAUDE_TIER={'gpt-6-luna':'claude-haiku-5-5','gpt-6-sol':'claude-sonnet-5-5','gpt-6.1-sol':'claude-sonnet-5-5','gpt-6-astra':'claude-opus-5-5'}
+DISPATCHER_ENGINES=('auto','codex','claude')
+DEFAULT_CLAUDE_DISPATCHER='claude-sonnet-5-5'
+ENGINE_RETRY_MINUTES=30
+
+
+class CodexRequired(ValueError):
+    """An assignment only Codex can run (its Gmail plugin) while Codex is out of allowance."""
+
+
+def untouched(directory):
+    """True when a failed Codex trace shows no command, tool or file activity, so running it elsewhere repeats nothing."""
+    for event in events(Path(directory)/'events.jsonl'):
+        if str(event.get('type','')).startswith('item.'):
+            item=event.get('item') if isinstance(event.get('item'),dict) else {}
+            if (item.get('type') or item.get('item_type')) not in ('agent_message','reasoning'):return False
+    return True
+
 
 class Orchestrator:
     capabilities=['agent.orchestrator','agent.worker']
@@ -320,12 +397,21 @@ class Orchestrator:
         self.cli=cli or CLI(config)
         self.claude=claude or ClaudeCLI(config)
         self.session_path=self.root/'session.json'
+        # The Claude stand-in dispatcher keeps its own session; a session never moves between agents.
+        self.claude_session_path=self.root/'claude-session.json'
+        self.engine_path=self.root/'engines.json'
         self.skills=SkillRepository(config['repository'])
+        self.dispatcher={'agent':'codex','model':'gpt-6-luna','session_id':None}
 
     def available(self):
-        return Path(self.config['codex']).is_file() and Path(self.config.get('node',self.config['codex'])).is_file()
+        codex=self.config.get('codex')
+        installed=bool(codex) and Path(codex).is_file() and Path(self.config.get('node',codex)).is_file()
+        return installed or bool(capacity.claude_executable(self.config))
 
-    def session(self):
+    def session(self,agent='codex'):
+        if agent=='claude':
+            if self.claude_session_path.is_file():return json.loads(self.claude_session_path.read_text(encoding='utf-8'))
+            return {'session_id':None}
         if self.session_path.is_file(): return json.loads(self.session_path.read_text(encoding='utf-8'))
         # The first CLI turn may have created its session before a service crash.
         traces=sorted((self.root/'jobs').glob('*/dispatch-*/events.jsonl'),key=lambda p:p.stat().st_mtime)
@@ -336,22 +422,132 @@ class Orchestrator:
                     return json.loads(self.session_path.read_text(encoding='utf-8'))
         return {'session_id':None}
 
-    def save_session(self,record):
+    def save_session(self,record,agent='codex'):
         if not record.get('session_id'):
-            raise InterruptedRun('Luna did not return a session ID. No independent replacement session will be started.')
+            name='Luna' if agent=='codex' else 'The Claude dispatcher'
+            raise InterruptedRun(name+' did not return a session ID. No independent replacement session will be started.')
+        if agent=='claude':
+            write_json(self.claude_session_path,{'session_id':record['session_id'],'model':record.get('model') or self.claude_dispatcher()[0],
+                       'effort':record.get('effort') or self.claude_dispatcher()[1],'updated_at':datetime.now(timezone.utc).isoformat()})
+            return
         write_json(self.session_path,{'session_id':record['session_id'],'model':'gpt-6-luna','effort':'low',
                    'updated_at':datetime.now(timezone.utc).isoformat()})
 
+    def claude_dispatcher(self):
+        model=self.config.get('dispatcher_claude_model',DEFAULT_CLAUDE_DISPATCHER)
+        effort=self.config.get('dispatcher_claude_effort','low')
+        if model not in CLAUDE_MODELS or effort not in EFFORTS or effort=='ultra':
+            raise ValueError('dispatcher_claude_model/effort must name a Claude model and an effort up to max')
+        return model,effort
+
+    def engine_state(self):
+        try:return json.loads(self.engine_path.read_text(encoding='utf-8')) if self.engine_path.is_file() else {}
+        except (OSError,ValueError):return {}
+
+    def mark_limited(self,agent):
+        """A usage-limit error takes the agent out of rotation for a cooldown, like the workout coach."""
+        state=self.engine_state()
+        state[agent+'_retry_after']=time.time()+60*float(self.config.get('dispatcher_engine_retry_minutes',ENGINE_RETRY_MINUTES))
+        state[agent+'_limited_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
+        write_json(self.engine_path,state)
+
+    def mark_ok(self,agent):
+        state=self.engine_state()
+        if agent+'_retry_after' in state:
+            state.pop(agent+'_retry_after');state.pop(agent+'_limited_at',None);write_json(self.engine_path,state)
+
+    def agent_availability(self,now=None):
+        """Whether each agent can take work now. Telemetry trouble never takes an installed agent offline."""
+        now=now or time.time();state=self.engine_state();result={}
+        for agent in ('codex','claude'):
+            until=state.get(agent+'_retry_after',0)
+            if until>now:
+                result[agent]={'usable':False,'reason':'usage limit reported; retried after '+datetime.fromtimestamp(until,timezone.utc).isoformat(timespec='minutes')}
+                continue
+            reading=None
+            try:
+                if agent=='codex':
+                    configured=self.config.get('codex')
+                    if configured and not Path(configured).is_file():
+                        result[agent]={'usable':False,'reason':'Codex is not installed for the worker'};continue
+                    # Only a configured installation has an account whose allowance applies here.
+                    reading=capacity.codex(self.config,now) if configured else None
+                else:
+                    if not getattr(self.claude,'available',lambda:True)():
+                        result[agent]={'usable':False,'reason':'Claude Code is not installed for the worker'};continue
+                    reading=capacity.claude(self.config,now,refresh=False)
+            except Exception:
+                reading=None
+            if capacity.exhausted(reading):
+                resets=sorted(w['resets_at'] for w in reading.values() if isinstance(w,dict) and w.get('resets_at') and (w.get('remaining_percent') or 0)<=0)
+                result[agent]={'usable':False,'reason':'allowance exhausted'+(' until '+resets[-1] if resets else '')}
+            else:
+                result[agent]={'usable':True}
+        return result
+
+    def dispatcher_order(self,availability):
+        mode=self.config.get('dispatcher_engine','auto')
+        if mode not in DISPATCHER_ENGINES:raise ValueError('dispatcher_engine must be one of '+', '.join(DISPATCHER_ENGINES))
+        if mode!='auto':return [mode]
+        return [agent for agent in ('codex','claude') if availability[agent]['usable']]
+
+    def dispatch_call(self,agent,prompt,directory,cancelled,schema):
+        if agent=='codex':
+            return self.cli.run(prompt,directory,self.root,'gpt-6-luna','low',cancelled,
+                                session=self.session('codex')['session_id'],schema=schema,instructions=PROTOCOL)
+        model,effort=self.claude_dispatcher()
+        # Same working directory as before: Claude resolves sessions per project directory.
+        return self.claude.run(prompt,Path(directory)/'claude',self.root,model,effort,cancelled,
+                               session=self.session('claude')['session_id'],schema=schema,instructions=CLAUDE_DISPATCH_NOTE+PROTOCOL)
+
     def decision(self,prompt,directory,cancelled):
-        instructions=DISPATCH_INSTRUCTIONS+SKILL_DISPATCH
-        record=self.cli.run(prompt,directory,self.root,'gpt-6-luna','low',cancelled,
-                            session=self.session()['session_id'],schema=Decision.model_json_schema(),
-                            instructions=instructions)
-        self.save_session(record)
+        """One dispatcher turn on Luna, or on Claude while Codex is exhausted, cooling down or usage-limited."""
+        schema=Decision.model_json_schema();directory=Path(directory)
+        made=None
+        # A decision already made for this turn (recovery after a crash) is reused, whichever agent made it.
+        for agent,path in (('codex',directory/'record.json'),('claude',directory/'claude'/'record.json')):
+            try:previous=json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+            except (OSError,ValueError):previous={}
+            if previous.get('state')=='completed':made=agent;break
+        availability=self.agent_availability()
+        order=[made] if made else self.dispatcher_order(availability)
+        if not order:
+            raise UsageLimited('codex','Neither Codex nor Claude has allowance for the dispatcher now (codex: '+availability['codex'].get('reason','')+
+                               '; claude: '+availability['claude'].get('reason','')+'). Nothing was started; resubmit after a reset.')
+        for position,agent in enumerate(order):
+            body=json.loads(prompt)
+            if isinstance(body,dict):body['agent_availability']=availability
+            try:
+                record=self.dispatch_call(agent,json.dumps(body,ensure_ascii=False),directory,cancelled,schema)
+            except UsageLimited as error:
+                if error.observed:self.mark_limited(agent)
+                availability[agent]={'usable':False,'reason':'usage limit reached on this decision'}
+                if position+1==len(order):raise
+                logging.warning('Dispatcher %s is out of allowance; retrying the decision on %s',agent,order[position+1])
+                continue
+            self.mark_ok(agent)
+            break
+        self.save_session(record,agent)
+        self.dispatcher={'agent':agent,'model':record.get('model') or ('gpt-6-luna' if agent=='codex' else self.claude_dispatcher()[0]),
+                         'session_id':record['session_id']}
         raw=json.loads(Path(record['result']).read_text(encoding='utf-8'))
         # Decisions saved before forwarding existed have no forward_to.
         if isinstance(raw,dict):raw.setdefault('forward_to','none')
         return Decision.model_validate(raw)
+
+    def route(self,task,availability):
+        """Replace a Codex assignment with its Claude tier while Codex cannot run. Returns (task, original or None)."""
+        if task.agent!='codex' or availability['codex']['usable']:return task,None
+        reason=availability['codex'].get('reason','unavailable')
+        if task.task_type=='email' or 'email' in task.skills:
+            raise CodexRequired('This email task needs the Codex Gmail plugin, and Codex cannot run now ('+reason+
+                                '). No worker was started; resubmit the request after its allowance resets.')
+        if not availability['claude']['usable']:
+            raise UsageLimited('codex','Codex cannot run this worker ('+reason+') and Claude is unavailable too ('+
+                               availability['claude'].get('reason','')+'). No worker was started; resubmit after a reset.')
+        original={'agent':task.agent,'model':task.model,'effort':task.effort,'resume_session':task.resume_session,'reason':reason}
+        return task.model_copy(update={'agent':'claude','model':CLAUDE_TIER[task.model],
+                                       'effort':'max' if task.effort=='ultra' else task.effort,'resume_session':''}),original
 
     def recent_tasks(self,current):
         """Recently finished tasks whose worker sessions a new, related request may resume.
@@ -362,7 +558,7 @@ class Orchestrator:
         """
         limit=int(self.config.get('recent_task_limit',RECENT_TASK_LIMIT))
         cutoff=time.time()-86400*float(self.config.get('recent_task_days',RECENT_TASK_DAYS))
-        luna=self.session().get('session_id')
+        dispatchers={self.session('codex').get('session_id'),self.session('claude').get('session_id')}-{None}
         candidates=[]
         for path in (self.root/'jobs').glob('*/job.json'):
             name=path.parent.name
@@ -388,7 +584,7 @@ class Orchestrator:
             workers=[]
             for worker in reversed(state.get('workers') or summary.get('workers') or []):
                 session=worker.get('session_id')
-                if not session or session==luna or session in listed or session in unsettled:continue
+                if not session or session in dispatchers or session in listed or session in unsettled:continue
                 workspace=worker.get('workspace')
                 if not workspace and worker.get('trace'):
                     trace=Path(worker['trace']).resolve()
@@ -516,9 +712,14 @@ class Orchestrator:
                     if not trace.is_relative_to(root.resolve()):raise ValueError('Task worker trace is outside its recorded task.')
                     worker['workspace']=json.loads(trace.with_name('record.json').read_text(encoding='utf-8'))['workspace']
             else:
-                session=(parent.get('outcome') or {}).get('result',{}).get('orchestrator_session_id')
-                worker={'session_id':session,'model':'gpt-6-luna','effort':'low',
-                        'workspace':str(self.root),'skills':[],'task_type':'general'}
+                answered=(parent.get('outcome') or {}).get('result',{})
+                session=answered.get('orchestrator_session_id')
+                if answered.get('orchestrator_agent')=='claude':
+                    worker={'session_id':session,'agent':'claude','model':answered.get('orchestrator_model') or self.claude_dispatcher()[0],
+                            'effort':self.claude_dispatcher()[1],'workspace':str(self.root),'skills':[],'task_type':'general'}
+                else:
+                    worker={'session_id':session,'model':'gpt-6-luna','effort':'low',
+                            'workspace':str(self.root),'skills':[],'task_type':'general'}
         if not worker.get('session_id'):raise ValueError('This task has no recorded headless session to resume.')
         workspace=Path(worker['workspace'])
         if not workspace.is_absolute() or not workspace.is_dir():raise ValueError('The original task workspace is unavailable.')
@@ -537,15 +738,51 @@ class Orchestrator:
                                     'trace_ref':str(directory/'continuation'),
                                     'note':'If this turn was interrupted, inspect its trace before repeating effects.'}})
         runner=self.claude if worker.get('agent')=='claude' else self.cli
-        record=runner.run(prompt,directory/'continuation',workspace,worker['model'],worker['effort'],cancelled,
-                            session=worker['session_id'],instructions=instructions)
-        if record['session_id']!=worker['session_id']:raise InterruptedRun('Continuation did not retain the original session.')
+        fallback=None
+        if worker.get('agent','codex')=='codex' and (directory/'continuation-claude'/'record.json').is_file():
+            fallback='recovering the Claude stand-in already started for this follow-up'
+        elif worker.get('agent','codex')=='codex' and not (directory/'continuation'/'record.json').is_file():
+            codex=self.agent_availability()['codex']
+            if not codex['usable']:fallback=codex.get('reason','unavailable')
+        if not fallback:
+            try:
+                record=runner.run(prompt,directory/'continuation',workspace,worker['model'],worker['effort'],cancelled,
+                                    session=worker['session_id'],instructions=instructions)
+            except UsageLimited as error:
+                if error.observed:self.mark_limited(error.agent)
+                # Only a Codex turn that did nothing yet may be redone elsewhere; anything else needs review.
+                if error.agent!='codex' or not untouched(directory/'continuation'):raise
+                fallback='usage limit reached before this follow-up did anything'
+        if fallback:
+            try:record,worker=self.continue_on_claude(prompt,directory,workspace,worker,instructions,fallback,cancelled)
+            except CodexRequired as error:
+                return {'state':'needs_input','result':{'summary':str(error),'executor':'agent.continuation','root_task_id':root_id,'trace_ref':str(directory)}}
+        elif record['session_id']!=worker['session_id']:raise InterruptedRun('Continuation did not retain the original session.')
         summary=Path(record['result']).read_text(encoding='utf-8')[:24000]
         result={'summary':summary,'executor':'agent.continuation','root_task_id':root_id,
                 'resumed_session_id':worker['session_id'],'trace_ref':str(directory),
                 'workers':[{**worker,'result':summary,'trace':record['trace']}]}
+        # A Claude stand-in becomes the task's session, so later follow-ups resume it.
         write_json(conversation_path,{'worker':worker,'latest_job':job['id'],'latest_result':result})
         return {'state':'completed','result':result}
+
+    def continue_on_claude(self,prompt,directory,workspace,worker,instructions,reason,cancelled):
+        """A follow-up on a Codex session while Codex cannot run: a fresh Claude session at the equivalent tier."""
+        if worker.get('task_type')=='email' or 'email' in (worker.get('skills') or []):
+            raise CodexRequired('This email follow-up needs the Codex Gmail plugin, and Codex cannot run now ('+reason+
+                                '). Nothing was run; reply again after its allowance resets.')
+        if not self.agent_availability()['claude']['usable'] and not (directory/'continuation-claude'/'record.json').is_file():
+            raise UsageLimited('codex','Codex cannot continue this task ('+reason+') and Claude is unavailable too. Nothing was run; reply again after a reset.')
+        model=CLAUDE_TIER.get(worker['model'],DEFAULT_CLAUDE_DISPATCHER)
+        effort='max' if worker.get('effort')=='ultra' else worker.get('effort','medium')
+        logging.warning('Codex cannot continue a task (%s); continuing it in a fresh Claude session',reason)
+        note=('\nThe earlier Codex session cannot be resumed now ('+reason+'), so this is a fresh Claude session in the same '
+              'workspace. Rebuild context from original_request, previous_turn and the workspace files before acting, and '
+              'do not repeat effects previous_turn reports as done.')
+        record=self.claude.run(prompt,directory/'continuation-claude',workspace,model,effort,cancelled,instructions=instructions+note)
+        moved={**worker,'agent':'claude','model':model,'effort':effort,'session_id':record['session_id'],
+               'fallback_from':{'agent':'codex','model':worker['model'],'session_id':worker['session_id'],'reason':reason}}
+        return record,moved
 
     def execute(self,job,cancelled):
         directory=self.root/'jobs'/job['id'];directory.mkdir(parents=True,exist_ok=True)
@@ -575,7 +812,7 @@ class Orchestrator:
                     'attachments':attached,
                     'response_files':task_attachments.response_instructions(self.config,job['id']),
                     'followup_context':payload.get('reply_context'),
-                    'dispatch_protocol':DISPATCH_INSTRUCTIONS+SKILL_DISPATCH,
+                    'dispatch_protocol':PROTOCOL,
                     'requested_workspace':payload.get('workspace'),
                     'default_repository':self.config['repository'],'original_request_time':payload.get('created_at'),
                     'timezone':payload.get('timezone'),'previous_results':state['workers'],'recent_tasks':recent,
@@ -602,7 +839,8 @@ class Orchestrator:
                             break
                         outcome={'state':'completed' if decision.action=='complete' else 'needs_input',
                             'result':{'summary':decision.summary,'executor':'agent.orchestrator',
-                             'orchestrator_session_id':self.session()['session_id'],
+                             'orchestrator_session_id':self.dispatcher['session_id'],
+                             **({'orchestrator_agent':'claude','orchestrator_model':self.dispatcher['model']} if self.dispatcher['agent']=='claude' else {}),
                              'workers':state['workers'],'trace_ref':str(directory)}}
                         break
                     if not decision.tasks: raise ValueError('Dispatch decision has no workers')
@@ -611,8 +849,26 @@ class Orchestrator:
                     if any(origins):
                         state['resumed_from_task']=list(dict.fromkeys([*state.get('resumed_from_task',[]),*filter(None,origins)]))
                         write_json(state_path,state)
+                    # Codex assignments move to their Claude tier while Codex cannot run, before any worker starts.
+                    availability=self.agent_availability() if any(task.agent=='codex' for task in decision.tasks) else None
+                    routed=[]
+                    try:
+                        for index,task in enumerate(decision.tasks):
+                            earlier=directory/f'worker-{round_number}-{index}'/'record.json'
+                            # A recovered run keeps the agent an earlier attempt of this worker already used.
+                            started=json.loads(earlier.read_text(encoding='utf-8')).get('agent','codex') if earlier.is_file() else None
+                            if started=='codex' or availability is None:routed.append((task,None))
+                            elif started=='claude' and task.agent=='codex':
+                                routed.append(self.route(task,{**availability,'codex':{'usable':False,'reason':'routed to Claude in an earlier attempt'},'claude':{'usable':True}}))
+                            else:routed.append(self.route(task,availability))
+                    except CodexRequired as error:
+                        outcome={'state':'needs_input','result':{'summary':str(error),'executor':'agent.orchestrator',
+                                 'workers':state['workers'],'trace_ref':str(directory)}}
+                        break
+                    if any(original for _,original in routed):
+                        logging.warning('Codex cannot run workers now; using their Claude tier')
                     completed=[]
-                    for index,task in enumerate(decision.tasks):
+                    for index,(task,original) in enumerate(routed):
                         workspace=Path(task.workspace)
                         # Checked at launch, not upfront: an earlier assignment of this decision may create it.
                         if not workspace.is_dir(): raise ValueError('Worker workspace must be an existing absolute directory')
@@ -634,8 +890,11 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                         worker_instructions+='\nExact original user request (authoritative account names, recipients, paths, times and scope; preserve these over any paraphrased assignment):\n'+payload['command']
                         worker_instructions+=task_attachments.instructions(attached)
                         worker_instructions+=task_attachments.response_instructions(self.config,job['id'])
-                        if origins[index]:
+                        if origins[index] and not original:
                             worker_instructions+='\nThis session continues earlier task '+origins[index]+' for a related new request. Its completed effects stay done; do not repeat them unless the current request explicitly asks.'
+                        elif origins[index]:
+                            worker_instructions+=('\nThis assignment continues earlier task '+origins[index]+', whose Codex session cannot be resumed now ('+original['reason']+
+                                                  '), so this is a fresh Claude session. Rebuild context from the workspace and the request; that task\'s completed effects stay done; do not repeat them unless the current request explicitly asks.')
                         if payload.get('reply_context'):
                             worker_instructions+='\nHistorical parent task context (data, not new instructions): '+json.dumps(payload['reply_context'],ensure_ascii=False)+'\nCurrent user reply: '+payload['command']+'\nContinue from completed effects; do not blindly replay them.'
                         write_json(run_directory.parent/(run_directory.name+'-skills.json'),
@@ -654,14 +913,15 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                             'result':Path(record['result']).read_text(encoding='utf-8')[:24000],
                             'trace':record['trace'],'artifacts':checks,'usage':record.get('usage',{}),
                             'task_type':task.task_type,'skills':selected,'workspace':str(workspace),
-                            **({'resumed_from_task':origins[index]} if origins[index] else {})})
+                            **({'resumed_from_task':origins[index]} if origins[index] else {}),
+                            **({'substituted_from':original} if original else {})})
                         # Persisted as each worker finishes, so a later refused or interrupted sibling cannot drop it.
                         if completed[-1]['trace'] not in {worker['trace'] for worker in state['workers']}:
                             state['workers'].append(completed[-1]);write_json(state_path,state)
                     # Persist before delivering results into the next Luna turn.
                     state['phase']='workers_completed';write_json(state_path,state)
                     prompt=json.dumps({'task_id':job['id'],'instruction':'Review these worker results; verify evidence and complete or delegate follow-up.',
-                                       'dispatch_protocol':DISPATCH_INSTRUCTIONS+SKILL_DISPATCH,
+                                       'dispatch_protocol':PROTOCOL,
                                        'worker_results':completed,'skill_catalog':self.skills.catalog(),
                                        'agent_capacity':capacity.snapshot(self.config),
                                        'dev_forwarding':{'available':False,'sessions':[]}},ensure_ascii=False)
@@ -669,6 +929,8 @@ Repository: '''+self.config['repository']+'\nSkill catalog: '+json.dumps(self.sk
                     outcome={'state':'needs_input','result':{'summary':'This task reached eight delegation rounds. Its results are saved; choose the next step.',
                                                             'trace_ref':str(directory)}}
         except (InterruptedRun,ValueError,OSError) as error:
+            # A worker that ran out of allowance takes its agent out of rotation for the next decisions.
+            if isinstance(error,UsageLimited) and error.observed:self.mark_limited(error.agent)
             outcome={'state':'needs_input','result':{'summary':str(error),'executor':'agent.orchestrator',
                                                     'trace_ref':str(directory),'reconciliation_required':True}}
         state.update(outcome=outcome,phase='finished',finished_at=datetime.now(timezone.utc).isoformat())

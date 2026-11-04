@@ -83,6 +83,33 @@ When both agents suit a task, Luna chooses the one with more remaining allowance
 avoids an agent whose five-hour window is under 20% or weekly window under 10%.
 Missing or unreadable figures report `available: false` and never block dispatch.
 
+## Claude stand-in while Codex is out of allowance
+
+The dispatcher itself falls back to Claude, as the workout coach does. `dispatcher_engine`
+(`auto`, `codex` or `claude`; default `auto`) selects it. In `auto`, each dispatcher turn
+runs on Luna unless Codex is unusable: its capacity reading shows a window at 0% or a
+reached limit, its executable is missing, or a usage-limit error put it in a cooldown
+(`dispatcher_engine_retry_minutes`, default 30, kept in `engines.json` in the orchestrator
+folder). A Luna turn that fails on the usage limit is retried once on Claude in the same
+job. Only Codex error events and stderr count as a limit, never answer text. The Claude
+turn is headless Claude Code with `dispatcher_claude_model` (default `claude-sonnet-5-5`)
+at `dispatcher_claude_effort` (default `low`), the same protocol and Decision schema
+(`--json-schema`), no built-in tools, MCP servers or skills, and its own session in
+`claude-session.json`, resumed by later Claude turns. Luna's `session.json` is untouched.
+A crash-recovered turn reuses whichever agent's decision was already recorded.
+
+Every turn carries `agent_availability`. While Codex is unusable, code also replaces each
+codex assignment with its Claude tier before any worker starts (Luna to Haiku, Sol to
+Sonnet, Astra to Opus, ultra to max) and records `substituted_from` on the worker. Such a
+worker starts a fresh session: a Codex session cannot move to Claude. Email assignments
+need the Codex Gmail plugin, so they return needs_input with the reset time instead. A
+follow-up on a Codex task while Codex is unusable, or whose Codex turn hit the limit
+before doing anything (no command, tool or file items in its trace), continues in a fresh
+Claude session at the same tier; that session then becomes the task's session for later
+follow-ups. A worker that hits the limit mid-run is not repeated: it needs review as
+before, and its agent cools down. When neither agent can run, the task returns
+needs_input without starting anything.
+
 ## Resuming earlier sessions without a Reply
 
 An explicit follow-up (Reply, or a task-page instruction) resumes its task's session

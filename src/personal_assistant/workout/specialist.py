@@ -16,6 +16,7 @@ import time
 from urllib.request import Request
 from urllib.error import HTTPError
 from urllib.parse import urlencode
+from ..orchestrator.capacity import LIMIT_MARKERS, exhausted, limited  # shared with the agent dispatcher
 from ..relay.client import OwnerClient
 from ..worker.runtime import Singleton
 from .schema import OWNER
@@ -89,8 +90,6 @@ ENGINES = ('auto', 'codex', 'claude')
 DEFAULT_CODEX_MODEL = 'gpt-6-sol'
 DEFAULT_CLAUDE_MODEL = 'claude-sonnet-5-5'
 EXHAUSTED_RETRY_MINUTES = 30
-# Phrases the CLIs print when the subscription allowance (not the request) is the problem.
-LIMIT_MARKERS = ('usage limit', 'usage_limit', 'rate limit', 'rate_limit', 'too many requests', 'quota', 'out of credits')
 CLAUDE_NOTES = '''
 Your workout_read tool is named mcp__workout__workout_read. Return the answer only through structured output
 with every required field: data_json and assessment_json are JSON documents encoded as strings ('' when empty).
@@ -160,11 +159,6 @@ def validate_answer(result):
         proposal.setdefault('reason', '')
         proposal.setdefault('deleted', False)
     return result
-
-
-def limited(text):
-    text = text.lower().replace('’', "'")
-    return any(marker in text for marker in LIMIT_MARKERS)
 
 
 def kill(process):
@@ -321,14 +315,6 @@ def run_claude(config, config_file, state, job, images, workspace):
     result['_marks']=marks
     result['_model']=model
     return result
-
-
-def exhausted(snapshot):
-    """True when a capacity reading shows no allowance left in any window (windows that reset since count as free)."""
-    if not snapshot or not snapshot.get('available'): return False
-    windows=[v for v in snapshot.values() if isinstance(v,dict)]
-    if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0 for w in windows): return True
-    return bool(snapshot.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
 
 
 def engine_usable(name, config, state, now=None):
