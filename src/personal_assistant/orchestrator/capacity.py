@@ -142,6 +142,39 @@ def claude(config,now,refresh=True):
             'observed_minutes_ago':round((now-record['observed_at'])/60)}
 
 
+# Phrases the CLIs print when the subscription allowance (not the request) is the problem.
+LIMIT_MARKERS=('usage limit','usage_limit','rate limit','rate_limit','too many requests','quota','out of credits')
+
+
+def limited(text):
+    text=str(text or '').lower().replace('’',"'")
+    return any(marker in text for marker in LIMIT_MARKERS)
+
+
+def exhausted(reading):
+    """True when a capacity reading shows no allowance left in any window (windows that reset since count as free)."""
+    if not reading or not reading.get('available'):return False
+    windows=[v for v in reading.values() if isinstance(v,dict)]
+    if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0 for w in windows):return True
+    return bool(reading.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
+
+
+def codex_limited(history,stderr=''):
+    """A failed Codex exec run hit the usage limit. Only error events and stderr count, never answer text."""
+    errors=[str(e.get('message') or (e.get('error') or {}).get('message') or '') for e in history if e.get('type') in ('error','turn.failed')]
+    return limited('\n'.join(errors)+'\n'+str(stderr or ''))
+
+
+def claude_limited(history,stderr=''):
+    """A failed headless Claude run hit the usage limit: a rejected rate_limit_event, HTTP 429 or a limit error."""
+    if any(e.get('type')=='rate_limit_event' and (e.get('rate_limit_info') or {}).get('status')=='rejected' for e in history):return True
+    final=[e for e in history if e.get('type')=='result']
+    last=final[-1] if final else {}
+    if not last.get('is_error') and final:return False
+    if last.get('api_error_status')==429:return True
+    return limited('\n'.join([str(last.get('result') or ''),*map(str,last.get('errors') or []),str(stderr or '')]))
+
+
 def snapshot(config,now=None,refresh=None):
     """Compact, model-readable capacity summary per agent. Never raises: dispatch must not fail on telemetry."""
     now=now or datetime.now(timezone.utc).timestamp()
