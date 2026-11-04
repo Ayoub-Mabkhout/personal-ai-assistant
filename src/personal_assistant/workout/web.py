@@ -182,6 +182,18 @@ class PasswordRegistration(PasswordEnrollment):
     invite: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
 
 
+class PasskeyCredential(Model):
+    credential_id: str = Field(pattern=r'^[A-Za-z0-9_-]{16,1024}$')
+    auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+
+
+class PasskeyPasswordReset(Model):
+    credential_id: str = Field(pattern=r'^[A-Za-z0-9_-]{16,1024}$')
+    passkey_auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    auth_secret: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    client_salt: str = Field(pattern=r'^[A-Za-z0-9_-]{22}$')
+
+
 class VaultKeyUpdate(Model):
     base_revision: int = Field(ge=0,le=2**53-1,strict=True)
     record: dict
@@ -363,6 +375,33 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         response.delete_cookie(COOKIE,path='/train/api',secure=True,httponly=True,samesite='strict')
         response.headers['Cache-Control']='private, no-store'
         return {'signed_out':True}
+
+    @browser.get('/auth/passkeys',dependencies=[Depends(identity_enabled)])
+    def passkey_list(user=Depends(account)):
+        return {'items':identities.passkeys(user['id'])}
+
+    @browser.post('/auth/passkeys',dependencies=[Depends(identity_enabled)])
+    def passkey_add(body:PasskeyCredential,user=Depends(account)):
+        auth_call(identities.add_passkey,user['id'],body.credential_id,body.auth_secret)
+        return {'items':identities.passkeys(user['id'])}
+
+    @browser.delete('/auth/passkeys/{credential}',dependencies=[Depends(identity_enabled)])
+    def passkey_remove(credential:str,user=Depends(account)):
+        if not auth_call(identities.remove_passkey,user['id'],credential):raise Missing('Passkey not found')
+        return {'items':identities.passkeys(user['id'])}
+
+    @browser.post('/auth/passkey/login',dependencies=[Depends(identity_enabled)])
+    def passkey_login(body:PasskeyCredential,request:Request,response:Response):
+        issued,cookie=issue_session(response)
+        identifier=auth_call(identities.passkey_login,body.credential_id,body.auth_secret,client_id(request),on_login=issued)
+        cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
+
+    @browser.post('/auth/passkey/reset-password',dependencies=[Depends(identity_enabled)])
+    def passkey_reset_password(body:PasskeyPasswordReset,request:Request,response:Response):
+        issued,cookie=issue_session(response)
+        identifier=auth_call(identities.reset_password,body.credential_id,body.passkey_auth_secret,body.auth_secret,
+                             body.client_salt,client_id(request),on_enroll=issued)
+        cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
 
     @browser.get('/vault/key-envelope',dependencies=[Depends(identity_enabled)])
     def vault_key(user=Depends(account)):

@@ -28,6 +28,8 @@ NAME_ATTEMPTS = 8
 CLIENT_ATTEMPTS = 30
 _HASH_SLOTS = threading.BoundedSemaphore(2)
 _DUMMY = 'scrypt$v1$32768$8$3$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+MAX_PASSKEYS = 10
+CREDENTIAL_ID = re.compile(r'[A-Za-z0-9_-]{16,1024}')
 
 
 class IdentityError(ValueError):
@@ -36,6 +38,10 @@ class IdentityError(ValueError):
 
 class LoginFailed(IdentityError):
     def __init__(self):super().__init__('Name or password is incorrect.')
+
+
+class PasskeyFailed(LoginFailed):
+    def __init__(self):IdentityError.__init__(self,'This passkey is not registered for a profile, or it could not be confirmed.')
 
 
 class EnrollmentDenied(IdentityError):
@@ -61,6 +67,15 @@ def unb64(value, size):
     raw=base64.urlsafe_b64decode(value+'='*(-len(value)%4))
     if len(raw)!=size or b64(raw)!=value:raise IdentityError('Invalid authentication material.')
     return raw
+
+
+def credential_id(value):
+    """A WebAuthn credential ID as the browser's rawId in unpadded base64url."""
+    if not isinstance(value,str) or not CREDENTIAL_ID.fullmatch(value) or len(value)%4==1:
+        raise IdentityError('Invalid passkey identifier.')
+    raw=base64.urlsafe_b64decode(value+'='*(-len(value)%4))
+    if b64(raw)!=value:raise IdentityError('Invalid passkey identifier.')
+    return value
 
 
 def normalized_name(value):
@@ -111,6 +126,10 @@ class Identity:
                     revision INTEGER NOT NULL DEFAULT 1, created REAL NOT NULL, updated REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS train_auth_limits(
                     key TEXT PRIMARY KEY, window_start REAL NOT NULL, attempts INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS train_passkeys(
+                    credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, verifier TEXT NOT NULL,
+                    created REAL NOT NULL, last_used REAL);
+                CREATE INDEX IF NOT EXISTS train_passkeys_user ON train_passkeys(user_id);
             ''')
 
     def _profiles(self,db,key):
@@ -235,6 +254,71 @@ class Identity:
             db.execute('DELETE FROM train_sessions WHERE user_id=?',(user_id,))
             if on_enroll:on_enroll(db,user_id)
             self._success(db,key)
+
+    # Passkeys. The browser derives a 32-byte secret from the passkey's WebAuthn PRF output, which an authenticator
+    # releases only after user verification; the server keeps a scrypt verifier of it, as for the password secret.
+    # It does not verify WebAuthn assertions: the PRF-derived secret is the credential. The vault KEK comes from the
+    # same PRF output under a separate HKDF label, so this verifier cannot decrypt anything.
+    def passkeys(self,user_id):
+        with self.workouts.db() as db:
+            return [dict(row) for row in db.execute('''SELECT credential_id,created,last_used FROM train_passkeys
+                WHERE user_id=? ORDER BY created,credential_id''',(user_id,))]
+
+    def add_passkey(self,user_id,credential,passkey_secret):
+        credential_id(credential);verifier=hash_auth_secret(passkey_secret)
+        with self.workouts.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM train_credentials WHERE user_id=?',(user_id,)).fetchone():
+                raise EnrollmentDenied()
+            if db.execute('SELECT count(*) FROM train_passkeys WHERE user_id=?',(user_id,)).fetchone()[0]>=MAX_PASSKEYS:
+                raise IdentityError(f'A profile can keep at most {MAX_PASSKEYS} passkeys. Remove one first.')
+            try:db.execute('INSERT INTO train_passkeys(credential_id,user_id,verifier,created) VALUES(?,?,?,?)',
+                           (credential,user_id,verifier,self.clock()))
+            except sqlite3.IntegrityError:raise EnrollmentDenied() from None
+
+    def remove_passkey(self,user_id,credential):
+        credential_id(credential)
+        with self.workouts.db() as db:
+            return db.execute('DELETE FROM train_passkeys WHERE credential_id=? AND user_id=?',(credential,user_id)).rowcount>0
+
+    def _passkey(self,credential,passkey_secret,client_id):
+        """Checks a passkey secret with the login limits. Unknown IDs cost the same scrypt as known ones."""
+        credential_id(credential);unb64(passkey_secret,32);key='passkey:'+credential
+        self._reserve(key,client_id)
+        with self.workouts.db() as db:
+            row=db.execute('SELECT * FROM train_passkeys WHERE credential_id=?',(credential,)).fetchone()
+        valid=verify_auth_secret(passkey_secret,row['verifier'] if row else _DUMMY)
+        if not row or not valid:raise PasskeyFailed()
+        return row,key
+
+    def _still(self,db,row):
+        current=db.execute('SELECT verifier FROM train_passkeys WHERE credential_id=? AND user_id=?',
+                           (row['credential_id'],row['user_id'])).fetchone()
+        if not current or current['verifier']!=row['verifier']:raise PasskeyFailed()
+        db.execute('UPDATE train_passkeys SET last_used=? WHERE credential_id=?',(self.clock(),row['credential_id']))
+
+    def passkey_login(self,credential,passkey_secret,client_id,*,on_login=None):
+        row,key=self._passkey(credential,passkey_secret,client_id)
+        with self.workouts.db() as db:
+            db.execute('BEGIN IMMEDIATE');self._still(db,row)
+            if on_login:on_login(db,row['user_id'])
+            self._success(db,key)
+        return row['user_id']
+
+    def reset_password(self,credential,passkey_secret,new_secret,new_client_salt,client_id,*,on_enroll=None):
+        """A forgotten password: the passkey proves the profile, and replaces the password like change_secret does."""
+        unb64(new_client_salt,16);unb64(new_secret,32)
+        row,key=self._passkey(credential,passkey_secret,client_id)
+        verifier=hash_auth_secret(new_secret)
+        with self.workouts.db() as db:
+            db.execute('BEGIN IMMEDIATE');self._still(db,row)
+            changed=db.execute('''UPDATE train_credentials SET verifier=?,client_salt=?,revision=revision+1,updated=?
+                WHERE user_id=?''',(verifier,new_client_salt,self.clock(),row['user_id'])).rowcount
+            if not changed:raise PasskeyFailed()
+            db.execute('DELETE FROM train_sessions WHERE user_id=?',(row['user_id'],))
+            if on_enroll:on_enroll(db,row['user_id'])
+            self._success(db,key)
+        return row['user_id']
 
     def revoke(self,session):
         if not isinstance(session,str) or len(session)!=43:return

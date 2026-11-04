@@ -10,7 +10,7 @@ import re
 import sqlite3
 
 from ..relay.store import Conflict,Missing
-from .identity import CLIENT_KDF_VERSION,CLIENT_KDF_ITERATIONS,unb64
+from .identity import CLIENT_KDF_VERSION,CLIENT_KDF_ITERATIONS,MAX_PASSKEYS,IdentityError,credential_id,unb64
 
 
 MAX_PLAINTEXT_BYTES=16*1024*1024
@@ -52,8 +52,34 @@ def envelope(value,*,user_id,key_id,kind,object_id,expected_revision,maximum=MAX
     return value
 
 
+def wrapped_key(value,*,user_id,key_id,kind):
+    """A wrapped AES-256 master key: 32 bytes plus its 16-byte GCM tag, bound to this profile and key."""
+    if not isinstance(value,dict):raise ValueError('Invalid encrypted key wrapper.')
+    envelope(value,user_id=user_id,key_id=key_id,kind=kind,object_id=key_id,
+             expected_revision=revision(value.get('revision'),1),maximum=48)
+    if len(base64.urlsafe_b64decode(value['cipherB64']+'='*(-len(value['cipherB64'])%4)))!=48:
+        raise ValueError('Invalid encrypted master key length.')
+    return value
+
+
+def passkey_wrappers(value,user_id,key_id):
+    """Optional master-key copies, one per passkey. Each KEK is derived on the device from that passkey's PRF output
+    and bound to the credential ID, so a wrapper only opens with the passkey it names."""
+    if not isinstance(value,list) or len(value)>MAX_PASSKEYS:raise ValueError('Invalid passkey wrappers.')
+    seen=set()
+    for item in value:
+        fields(item,{'credentialId','wrappedMaster'})
+        try:credential_id(item['credentialId'])
+        except IdentityError:raise ValueError('Invalid passkey wrapper identifier.') from None
+        if item['credentialId'] in seen:raise ValueError('Duplicate passkey wrapper.')
+        seen.add(item['credentialId'])
+        wrapped_key(item['wrappedMaster'],user_id=user_id,key_id=key_id,kind='vault-passkey-key')
+        if item['wrappedMaster']['revision']!=1:raise ValueError('Invalid passkey wrapper revision.')
+
+
 def key_record(value,user_id,client_salt):
-    fields(value,{'version','userId','keyId','password','recovery'})
+    if not isinstance(value,dict):raise ValueError('Invalid encrypted vault fields.')
+    fields(value,{'version','userId','keyId','password','recovery'}|({'passkeys'} if 'passkeys' in value else set()))
     if type(value['version']) is not int or value['version']!=1 or value['userId']!=user_id:
         raise ValueError('Encrypted vault identity does not match this profile.')
     key_id=value['keyId'];unb64(key_id,16)
@@ -63,17 +89,10 @@ def key_record(value,user_id,client_salt):
         or type(params['iterations']) is not int or params['iterations']!=CLIENT_KDF_ITERATIONS or params['salt']!=client_salt):
         raise ValueError('Vault password parameters do not match the enrolled credential.')
     unb64(params['salt'],16);unb64(value['recovery']['salt'],16)
-    password=value['password']['wrappedMaster']
-    if not isinstance(password,dict):raise ValueError('Invalid encrypted password wrapper.')
-    envelope(password,user_id=user_id,key_id=key_id,kind='vault-password-key',object_id=key_id,
-             expected_revision=revision(password.get('revision'),1),maximum=48)
-    recovery=value['recovery']['wrappedMaster']
-    envelope(recovery,user_id=user_id,key_id=key_id,kind='vault-recovery-key',object_id=key_id,expected_revision=1,maximum=48)
-    # A wrapped AES-256 key is 32 bytes plus its 16-byte GCM tag.
-    if len(base64.urlsafe_b64decode(password['cipherB64']+'='*(-len(password['cipherB64'])%4)))!=48:
-        raise ValueError('Invalid encrypted master key length.')
-    if len(base64.urlsafe_b64decode(recovery['cipherB64']+'='*(-len(recovery['cipherB64'])%4)))!=48:
-        raise ValueError('Invalid encrypted master key length.')
+    wrapped_key(value['password']['wrappedMaster'],user_id=user_id,key_id=key_id,kind='vault-password-key')
+    recovery=wrapped_key(value['recovery']['wrappedMaster'],user_id=user_id,key_id=key_id,kind='vault-recovery-key')
+    if recovery['revision']!=1:raise ValueError('Invalid recovery wrapper revision.')
+    if 'passkeys' in value:passkey_wrappers(value['passkeys'],user_id,key_id)
     return value
 
 
@@ -113,7 +132,15 @@ class PrivateVault:
                 return {'revision':previous['revision'],'record':value,**self.status(user_id)}
             if (previous['revision'] if previous else 0)!=base_revision:raise Conflict('The encrypted vault changed; reload it first.')
             if previous and previous['key_id']!=value['keyId']:raise Conflict('Changing the master key requires an explicit data migration.')
-            if value['password']['wrappedMaster']['revision']!=base_revision+1:
+            if previous:
+                before=json.loads(previous['record'])
+                if value['password']==before['password']:
+                    # Adding or removing a passkey re-wraps nothing else.
+                    if value['recovery']!=before['recovery'] or value.get('passkeys',[])==before.get('passkeys',[]):
+                        raise ValueError('A vault update must re-wrap the password or change its passkeys.')
+                elif value['password']['wrappedMaster']['revision']!=before['password']['wrappedMaster']['revision']+1:
+                    raise ValueError('Password wrapper revision must follow the previous wrapper.')
+            elif value['password']['wrappedMaster']['revision']!=1:
                 raise ValueError('Password wrapper revision must match the vault update.')
             db.execute('''INSERT INTO train_vault_keys VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
                 revision=excluded.revision,record=excluded.record,updated=excluded.updated''',
