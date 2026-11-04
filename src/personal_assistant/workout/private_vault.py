@@ -1,7 +1,8 @@
 """Opaque client-encrypted storage. No server master key or decryption endpoint.
 
-Only the vault API uses these tables. Existing workout entities/imports/photos
-are separate plaintext legacy data until the client migration is implemented.
+Only the vault API uses these tables, apart from progress photos: a photo entity with
+vault=true has its bytes here (kind 'photo', same id), and the workout store checks and
+deletes that row with the entity. Other workout entities and imports remain plaintext.
 """
 import base64
 import json

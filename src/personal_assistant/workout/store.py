@@ -38,6 +38,7 @@ class Workouts:
         # Shared by every for_user() copy: wake long polls after the writing transaction commits.
         self.wakeups = Wakeups()
         self._pending_wakeups = {}
+        self._scrub = set()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             initialize(db)
@@ -51,15 +52,23 @@ class Workouts:
     def db(self):
         db = sqlite3.connect(self.path, timeout=20)
         db.row_factory = sqlite3.Row
+        # Deleted photo bytes are overwritten, not left in free pages.
+        db.execute('PRAGMA secure_delete=ON')
         self._pending_wakeups[id(db)] = set()
         try:
             yield db
             db.commit()
+            if id(db) in self._scrub:
+                # Old page images in the write-ahead log would still hold them until it is reused.
+                try: db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                except sqlite3.Error: pass
         except BaseException:
             self._pending_wakeups.pop(id(db), None)
             db.rollback()
             raise
-        finally: db.close()
+        finally:
+            self._scrub.discard(id(db))
+            db.close()
         keys = self._pending_wakeups.pop(id(db), None)
         if keys: self.wakeups.notify(*keys)
 
@@ -95,9 +104,7 @@ class Workouts:
                 timed = any(slot.get('starts_at') for slot in data['scheduled'])
                 if (self.user_id != OWNER or timed) and data['scheduled'] != previous and not self.scheduled_sprints_enabled(db):
                     raise Conflict('Enable scheduled sprints in Iron League settings before adding or changing a schedule.')
-            if op['kind'] == 'photo' and not op['deleted']:
-                if not db.execute('SELECT 1 FROM blobs WHERE user_id=? AND id=?', (self.user_id, data['blob_id'])).fetchone():
-                    raise ValueError('Upload the photo first')
+            if op['kind'] == 'photo' and not op['deleted']: self.check_photo(db, op['id'], data)
             if len(encoded(data).encode()) > 256*1024: raise ValueError('Workout record exceeds 256 KiB')
             now = self.clock()
             revision = db.execute('INSERT INTO changes(user_id,kind,id,deleted,data,at,actor) VALUES(?,?,?,?,?,?,?)',
@@ -117,12 +124,48 @@ class Workouts:
             if op['kind'] == 'sprint' and not op['deleted'] and data.get('status') == 'completed': self.enqueue_sprint_brief(db,op['id'],data)
             db.execute('INSERT INTO mutations VALUES(?,?,?,?)', (self.user_id, op['mutation_id'], request, encoded(result)))
             results.append(result)
-            if op['kind'] == 'photo' and op['deleted'] and old and not old['deleted']:
-                blob = json.loads(old['data'])['blob_id']
-                # Delete original bytes only after the last referencing photo is deleted.
-                if not db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND deleted=0 AND json_extract(data,'$.blob_id')=?", (self.user_id, blob)).fetchone():
-                    db.execute('DELETE FROM blobs WHERE user_id=? AND id=?', (self.user_id, blob))
+            if op['kind'] == 'photo' and old and not old['deleted']: self.release_photo(db, op['id'], json.loads(old['data']), op['deleted'])
         return results
+
+    def has_vault_photo(self, db, identifier):
+        # The encrypted vault exists only when identity is required; without it no photo can be encrypted.
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='train_vault_objects'").fetchone(): return False
+        return bool(db.execute("SELECT 1 FROM train_vault_objects WHERE user_id=? AND kind='photo' AND id=?",
+                               (self.user_id, identifier)).fetchone())
+
+    def check_photo(self, db, identifier, data):
+        def uploaded(blob):
+            return db.execute('SELECT 1 FROM blobs WHERE user_id=? AND id=?', (self.user_id, blob)).fetchone()
+        if data['vault']:
+            if not self.has_vault_photo(db, identifier): raise ValueError('Encrypt and store the photo first')
+        elif not uploaded(data['blob_id']): raise ValueError('Upload the photo first')
+        if data.get('shared_blob_id') and not uploaded(data['shared_blob_id']): raise ValueError('Upload the shared photo first')
+
+    def release_photo(self, db, identifier, previous, deleted):
+        '''Delete plaintext bytes the previous version referenced once no live photo still references them.'''
+        for blob in {previous.get('blob_id'), previous.get('shared_blob_id')} - {None}:
+            if not db.execute('''SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND deleted=0
+                    AND (json_extract(data,'$.blob_id')=? OR json_extract(data,'$.shared_blob_id')=?)''', (self.user_id, blob, blob)).fetchone():
+                db.execute('DELETE FROM blobs WHERE user_id=? AND id=?', (self.user_id, blob))
+                self._scrub.add(id(db))
+        if deleted and previous.get('vault') and self.has_vault_photo(db, identifier):
+            db.execute("DELETE FROM train_vault_objects WHERE user_id=? AND kind='photo' AND id=?", (self.user_id, identifier))
+
+    def end_photo_shares(self, db, identifier, photos):
+        '''After a question is answered, drop the plaintext copies shared only for it.'''
+        row = db.execute('SELECT photo_ids FROM train_reminder_preferences WHERE user_id=?', (self.user_id,)).fetchone()
+        kept = set(json.loads(row['photo_ids'])) if row else set()
+        for photo in photos:
+            entity = db.execute("SELECT * FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0", (self.user_id, photo)).fetchone()
+            if not entity or photo in kept: continue
+            data = json.loads(entity['data'])
+            if not data.get('vault') or not data.get('shared_blob_id'): continue
+            # Another pending question may still need the same shared copy.
+            if db.execute('''SELECT 1 FROM trainer, json_each(trainer.photos) WHERE trainer.user_id=? AND trainer.id!=?
+                    AND trainer.state IN ('queued','running') AND json_each.value=?''', (self.user_id, identifier, photo)).fetchone(): continue
+            mutation = hashlib.sha256(('unshare:'+identifier+':'+photo+':'+str(entity['revision'])).encode()).hexdigest()
+            self.mutate([dict(mutation_id=mutation, kind='photo', id=photo, base_revision=entity['revision'],
+                              data={**data, 'shared_blob_id': None})], 'system', db)
 
     def scheduled_sprints_enabled(self, db=None):
         if db is None:
@@ -221,8 +264,11 @@ class Workouts:
                     raise Conflict('Question ID already used')
                 return {'id': identifier, 'state': old['state']}
             for photo in photos:
-                if not db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0", (self.user_id, photo)).fetchone():
-                    raise ValueError('Selected photo is missing')
+                row = db.execute("SELECT data FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0", (self.user_id, photo)).fetchone()
+                if not row: raise ValueError('Selected photo is missing')
+                data = json.loads(row['data'])
+                if not (data.get('blob_id') or data.get('shared_blob_id')):
+                    raise ValueError('Share the chosen photos for this question first')
             db.execute('INSERT INTO trainer(user_id,id,question,photos,context,created,state) VALUES(?,?,?,?,?,?,?)',
                        (self.user_id, identifier, text, encoded(photos), encoded(context or {}), self.clock(), 'queued'))
             self.wake(db, 'trainer', 'conversation')
@@ -324,6 +370,7 @@ class Workouts:
             changed = db.execute("UPDATE trainer SET answer=?,proposals=?,state=?,answered_at=?,lease_until=NULL,timings=? WHERE user_id=? AND id=? AND token=? AND state='running' AND lease_until>?",
                 (answer, encoded(validated), state, self.clock(), encoded(phases), self.user_id, identifier, token, self.clock())).rowcount
             if not changed: raise Conflict('Trainer lease lost')
+            self.end_photo_shares(db, identifier, json.loads(job['photos']))
             self.wake(db, 'conversation')
         log_phases('trainer', f"purpose={context.get('purpose') or 'question'} state={state} claims={phases.get('claims', 1)}", [
             ('queued_to_claimed', phases.get('first_claimed', phases.get('claimed', job['created'])) - job['created']),

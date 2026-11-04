@@ -451,7 +451,8 @@ def download_photos(client,job,root,base='/relay/v1/workout'):
     for identifier in job['photos']:
         entity=client.call(base+'/entities/photo/'+identifier)
         if entity['deleted']: raise ValueError('Approved photo was deleted')
-        digest=entity['data']['blob_id']
+        digest=entity['data'].get('shared_blob_id') or entity['data'].get('blob_id')
+        if not digest: raise ValueError('Approved photo is not shared')
         token=client.token_file.read_text(encoding='utf-8-sig').strip()
         request=Request(client.origin+base+'/photos/'+digest,headers={'Authorization':'Bearer '+token})
         with client.opener.open(request,timeout=30) as response:
@@ -471,13 +472,13 @@ def photo_context(client, job, base='/relay/v1/workout'):
         entity=client.call(base+'/entities/photo/'+identifier)
         return {} if entity['deleted'] else entity['data']
     photos={identifier:data(identifier) for identifier in job['photos']}
-    blobs={item.get('blob_id') for item in photos.values()}
+    blobs={item.get('shared_blob_id') or item.get('blob_id') for item in photos.values()}-{None}
     earlier=[]
     for row in client.call(base+'/entities?kind=composition&limit=50')['items']:
-        used=[{'id':i,**{k:v for k,v in data(i).items() if k in ('captured_at','blob_id')}} for i in row['data']['photo_ids']]
+        used=[{'id':i,'captured_at':data(i).get('captured_at'),'blob':data(i).get('shared_blob_id') or data(i).get('blob_id')} for i in row['data']['photo_ids']]
         earlier.append({'assessed_at':row['data']['assessed_at'],'low_percent':row['data']['low_percent'],'high_percent':row['data']['high_percent'],
                         'captured_at':sorted(u['captured_at'] for u in used if u.get('captured_at')),
-                        'same_images_as_this_job':[u['id'] for u in used if u.get('blob_id') in blobs]})
+                        'same_images_as_this_job':[u['id'] for u in used if u['id'] in photos or u['blob'] in blobs]})
     return {'photos':[{'id':identifier,**{k:item.get(k) for k in ('captured_at','pose','state','sprint_id','conditions')}} for identifier,item in photos.items()],
             'capture_days':sorted({item['captured_at'][:10] for item in photos.values() if item.get('captured_at')}),
             'earlier_analyses':sorted(earlier,key=lambda e:e['assessed_at'])}

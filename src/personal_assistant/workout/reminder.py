@@ -90,7 +90,10 @@ class TrainReminders:
             row = db.execute("SELECT data FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0",
                              (user_id, photo_id)).fetchone()
             if row:
-                return '/train/api/photos/' + json.loads(row['data'])['blob_id']
+                data = json.loads(row['data'])
+                # An encrypted photo is usable only through the copy its owner shared for notifications.
+                blob = data.get('shared_blob_id') or data.get('blob_id')
+                if blob: return '/train/api/photos/' + blob
         return None
 
     def settings(self, user_id, updates=None):
@@ -104,7 +107,11 @@ class TrainReminders:
                     values['photo_ids'] = [updates['photo_id']] if updates['photo_id'] else []
                 if 'photo_id' in updates or updates.get('photo_ids') is not None:
                     values['photo_ids'] = list(dict.fromkeys(values['photo_ids']))
-                    if any(not self.photo(db, user_id, photo) for photo in values['photo_ids']):
+                    for photo in values['photo_ids']:
+                        if self.photo(db, user_id, photo): continue
+                        if db.execute("SELECT 1 FROM entities WHERE user_id=? AND kind='photo' AND id=? AND deleted=0",
+                                      (user_id, photo)).fetchone():
+                            raise ValueError('Share this photo for reminders first.')
                         raise Missing('Choose your own Iron League photos.')
                 if updates.get('photos_enabled') and not values['roast']:
                     raise Conflict('Enable Diss mode before enabling reminder photos.')

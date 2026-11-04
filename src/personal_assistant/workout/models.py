@@ -250,7 +250,11 @@ class Recovery(Model):
 
 class Photo(Model):
     captured_at: datetime
-    blob_id: str = Field(pattern=r'^[a-f0-9]{64}$')
+    # Plaintext original (legacy) or none: a vault photo's bytes are client-encrypted in train_vault_objects.
+    blob_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    vault: bool = False
+    # A plaintext copy the athlete shared for a purpose (one coach question, or reminder notifications).
+    shared_blob_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     pose: Literal['front', 'side', 'back', 'other'] = 'front'
     state: Literal['relaxed', 'flexed', 'pumped'] = 'relaxed'
     sprint_id: str | None = Field(default=None, max_length=100)
@@ -260,6 +264,9 @@ class Photo(Model):
     @model_validator(mode='after')
     def check(self):
         if self.captured_at.tzinfo is None: raise ValueError('Photo needs timezone')
+        if self.vault and self.blob_id: raise ValueError('An encrypted photo cannot also keep a plaintext original')
+        if not self.vault and not self.blob_id: raise ValueError('Photo needs its uploaded original')
+        if not self.vault and self.shared_blob_id: raise ValueError('Only encrypted photos have a shared copy')
         return self
 
 
