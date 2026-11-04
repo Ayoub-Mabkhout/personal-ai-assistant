@@ -3,22 +3,29 @@
 ## JEV direct routing
 
 Set `dispatcher_mode` to `jev` in the protected laptop worker configuration to
-use one TypeSafe Jev classification call for each new agent task. The router
-receives the original request, available skill descriptions, and read-only Codex
-and Claude allowance snapshots. It chooses an allowlisted agent/model/effort
-profile and task type. Code supplies the workspace, original prompt and required
-skills, launches one fresh worker, and publishes that worker's answer directly.
-There is no Luna planning turn or model review after the worker finishes.
+use one TypeSafe Jev classification call for each new agent task. Code chooses
+the account first (`orchestrator/routing_policy.py`, no model call):
 
-The routing guidelines prefer the least demanding sufficient model, respect
-explicit model/effort requests, and weigh remaining five-hour and weekly allowance.
-Luna/Haiku are restricted to lightweight work. Live itinerary planning, multi-tool
-research and combining opening hours with walking times require at least the
-Sonnet tier. Sol and Opus are policy peers for general capability, with Opus
-preferred for demanding creative work. Allowance selects among suitable models;
-it never justifies falling below the task's capability floor.
-Unknown telemetry is labelled unknown, never treated as free capacity. Unavailable
-agents cannot be launched. Email continues to require the Codex Gmail tools.
+1. An explicit request in the user's own words ("use Opus", "route this to
+   Codex", "model: gpt-6-astra", "at high effort") is binding. Quoted text,
+   comparisons and hypotheticals ("should I use Haiku?") are not requests;
+   negations exclude instead. Conflicting or unknown versions are refused.
+2. Mail work (a mailbox noun near a mail action) pins Codex, whose Gmail tools
+   Claude lacks.
+3. Otherwise the account with the better allowance score wins: mostly the
+   tighter of its five-hour and weekly headroom, plus a bonus for allowance about
+   to reset unused. Exhausted or unusable accounts are skipped; stale or missing
+   readings count as modest unknown headroom, never as free capacity.
+
+Jev then sees only that account's profiles, without allowance figures, and picks
+the least demanding sufficient model and effort plus a task type. Code supplies
+the workspace, original prompt and required skills, launches one fresh worker,
+and publishes that worker's answer directly. There is no Luna planning turn or
+model review after the worker finishes.
+
+Luna/Haiku are restricted to lightweight work. Sol and Opus are policy peers for
+general capability, with Opus preferred for demanding creative work. Astra is
+reserved for exceptional reasoning difficulty.
 Routing reads cached allowance data without spending a separate model call to
 refresh it. Worker calls still record their usual capacity observations.
 

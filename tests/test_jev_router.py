@@ -54,12 +54,17 @@ class JevRouterTests(unittest.TestCase):
         self.assertEqual(set(body['questions']),{'disposition','profile','task_type'})
         self.assertTrue(all(q['type']=='choice' for q in body['questions'].values()))
         self.assertEqual(result,{'action':'dispatch','agent':'codex','model':'gpt-6-luna',
-            'effort':'low','task_type':'general','profile':'codex_luna_low','confidence':.95})
+            'effort':'low','task_type':'general','profile':'codex_luna_low','confidence':.95,'routing_reason':'capacity_and_reset'})
+        # Code chose the account, so Jev sees neither allowance figures nor the other account's profiles.
+        self.assertEqual(body['state']['selected_account'],'codex')
+        self.assertNotIn('agent_capacity',body['state'])
+        self.assertTrue(all(name.startswith('codex_') for name in body['questions']['profile']['criteria']))
 
     def test_every_profile_round_trips_to_an_allowlisted_mapping(self):
         for name,profile in PROFILES.items():
             with self.subTest(profile=name):
-                selected=self.decide(FakeHTTP(answer(profile=name)))
+                other='codex' if profile['agent']=='claude' else 'claude'
+                selected=self.decide(FakeHTTP(answer(profile=name)),agent_availability={other:False})
                 self.assertEqual({k:selected[k] for k in profile},profile)
 
     def test_key_file_takes_precedence_over_environment(self):
@@ -95,7 +100,14 @@ class JevRouterTests(unittest.TestCase):
 
     def test_email_cannot_use_claude_tools(self):
         with self.assertRaisesRegex(JevError,'email tools'):
-            self.decide(FakeHTTP(answer(profile='claude_sonnet_medium',task_type='email')))
+            self.decide(FakeHTTP(answer(profile='claude_sonnet_medium',task_type='email')),agent_availability={'codex':False})
+        # A mail request is pinned to Codex before Jev is asked, whatever the allowance.
+        http=FakeHTTP(answer(task_type='email'))
+        result=self.decide(http,user_request='Find the invoice email from the landlord',
+            agent_capacity={'codex':{'five_hour':{'remaining_percent':5}},'claude':{'five_hour':{'remaining_percent':95}}})
+        self.assertEqual((result['agent'],result['routing_reason']),('codex','mail_tools'))
+        with self.assertRaisesRegex(JevError,'Codex mailbox tools'):
+            self.decide(FakeHTTP(),user_request='Use Claude to search my inbox for the invoice')
         self.assertEqual(self.decide(FakeHTTP(answer(task_type='email')))['task_type'],'email')
 
     def test_invalid_response_shapes_are_safe_errors(self):
