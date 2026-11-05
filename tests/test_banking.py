@@ -389,6 +389,20 @@ class RelayBankingTests(unittest.TestCase):
         self.client.close()
         self.temp.cleanup()
 
+    def test_phone_gets_fresh_authenticated_specialist_readiness(self):
+        endpoint = '/v1/banking/specialist/heartbeat'
+        chat = '/groceries/v1/mobile/money/conversations'
+
+        def state():
+            return self.client.get(chat, headers=self.mobile).json()['specialist']
+
+        self.assertFalse(state()['available'])
+        self.assertEqual(self.client.put(endpoint, json={'state': 'ready'}, headers=self.mobile).status_code, 401)
+        self.assertEqual(self.client.put(endpoint, json={'state': 'ready'}, headers=self.owner).status_code, 200)
+        self.assertEqual(state(), {'available': True, 'state': 'ready'})
+        self.client.put(endpoint, json={'state': 'blocked'}, headers=self.owner).raise_for_status()
+        self.assertEqual(state(), {'available': False, 'state': 'blocked'})
+
     def test_full_history_over_one_mib_reaches_installed_phone_with_bounded_response(self):
         # The older 1 MiB request/storage cap rejected legitimate multi-year
         # history. Keep the new payload below Companion's existing 2 MiB cap.

@@ -136,6 +136,10 @@ class PhoneVoiceTests(unittest.TestCase):
         replay, created = self.agents.submit(job['payload'], source='phone_voice')
         self.assertFalse(created)
         self.assertEqual(replay['payload']['execution_host'], 'server')
+        queued, _ = self.agents.submit({'id': 'portable-while-blocked', 'timezone': 'UTC',
+                                       'command': 'Draft a second weekend plan'})
+        self.assertEqual(queued['payload']['execution_host'], 'server')
+        self.assertEqual(self.agents.status()['assistant'], 'blocked')
         self.agents.heartbeat('ready', 'server')
         for i, command in enumerate(('Draft a reply to my latest email', 'Laptop: draft a short weekend plan')):
             local, _ = self.agents.submit({'id': f'local-voice-{i}', 'timezone': 'UTC', 'command': command})

@@ -65,6 +65,37 @@ class CapacityTests(unittest.TestCase):
         capacity.save_claude(self.config,[claude_event(five=1.0,status='rejected')],now=NOW)
         self.assertEqual(capacity.snapshot(self.config,now=NOW)['claude']['limit_reached'],'five_hour')
 
+    def test_rejected_claude_limit_without_windows_recovers_at_reported_reset(self):
+        event = {'type': 'rate_limit_event', 'rate_limit_info': {
+            'status': 'rejected', 'rateLimitType': 'five_hour', 'resetsAt': NOW + 30}}
+        capacity.save_claude(self.config, [event], now=NOW)
+        reading = capacity.claude(self.config, NOW, refresh=False)
+        self.assertEqual(capacity.exhausted_until(reading), NOW + 30)
+        self.assertFalse(capacity.exhausted(capacity.claude(self.config, NOW + 30, refresh=False)))
+
+    def test_worker_blocks_claims_until_one_account_resets(self):
+        from unittest.mock import Mock
+        from personal_assistant.orchestrator.service import AgentWorker
+        from personal_assistant.worker.runtime import Worker
+
+        worker = AgentWorker.__new__(AgentWorker)
+        worker.executor = Mock()
+        worker.executor.available.return_value = True
+        worker.client = Mock()
+        worker.status = Mock()
+        worker.flush_outbox = Mock()
+        self.rollout('blocked', [record('2026-10-09T11:00:00Z', five=(100.0, NOW + 10))])
+        capacity.save_claude(self.config, [claude_event(five=1.0, status='rejected')], now=NOW)
+        agent = Orchestrator({**self.config, 'codex': self.config['claude'], 'repository': str(self.home)})
+        with patch.object(Worker, 'tick', return_value=True) as available_tick:
+            worker.executor.agent_availability.return_value = agent.agent_availability(NOW)
+            self.assertFalse(worker.tick())
+            worker.client.call.assert_called_once_with('/v1/worker/heartbeat', {'readiness': 'blocked'})
+            available_tick.assert_not_called()
+            worker.executor.agent_availability.return_value = agent.agent_availability(NOW + 10)
+            self.assertTrue(worker.tick())
+            available_tick.assert_called_once_with()
+
     def test_stale_claude_figures_refresh_in_the_background_only_when_enabled(self):
         with patch('threading.Thread') as thread:
             capacity.snapshot(self.config,now=NOW)

@@ -107,7 +107,8 @@ final class TaskVoice {
                 if(mine==null)continue;String state=mine.optString("state");if(!state.equals(seen)){seen=state;NativeTasks.changed(c);}
                 if(!TaskTurns.outcome(state).equals("wait")){if(host.talking())host.reply(TaskTurns.spoken(state,mine.optString("summary")),false);return;}
                 JSONObject connection=detail.optJSONObject("connection");
-                if("queued".equals(state)&&connection!=null&&!"ready".equals(connection.optString("laptop","ready"))&&System.currentTimeMillis()-start>20000){end(c,task,host,"Sent. The laptop is not connected, so the answer will appear in this task later.");return;}
+                String worker=detail.optString("execution_host","laptop");
+                if("queued".equals(state)&&connection!=null&&!"ready".equals(connection.optString(worker,"ready"))&&System.currentTimeMillis()-start>20000){end(c,task,host,"Saved. The task will start when its worker is available.");return;}
             }catch(Exception ignored){}
         }
         if(host.talking())end(c,task,host,"The task is still working. Its answer will appear in this task.");

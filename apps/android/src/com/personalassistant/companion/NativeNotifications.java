@@ -55,7 +55,7 @@ final class NativeNotifications {
         return channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE;
     }
     static void channels(NotificationManager manager){
-        NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from tasks running on your laptop");
+        NotificationStyle.channel(manager,"task_updates","Task updates",NotificationManager.IMPORTANCE_HIGH,"Progress, results and questions from assistant tasks");
         NotificationStyle.channel(manager,"calendar_reminders","Calendar reminders",NotificationManager.IMPORTANCE_HIGH,"Upcoming events from your assistant's calendar");
         NotificationStyle.channel(manager,"phone_actions","Phone actions",NotificationManager.IMPORTANCE_HIGH,"Alarms and other requests your assistant sends to this phone");
         NotificationStyle.channel(manager,"train_competition","Iron League rank-ups",NotificationManager.IMPORTANCE_DEFAULT,"Rank-ups shared by your Iron League friends");
@@ -91,7 +91,7 @@ final class NativeNotifications {
             int split=message.indexOf("\n\n");String request=split<0?"":message.substring(0,split).trim(),status=split<0?message.trim():message.substring(split+2).trim();
             text=status.isEmpty()?request:status;
             if(!request.isEmpty()&&!status.isEmpty()){SpannableStringBuilder rich=new SpannableStringBuilder(request);rich.setSpan(new StyleSpan(Typeface.BOLD),0,rich.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);expanded=rich.append("\n").append(status);}
-            label=kind.equals("command")?"Command":"Laptop task";
+            label=kind.equals("command")?"Command":"Assistant task";
             Object[] look=look(body.optString("state"));glyph=(String)look[0];tone=(int[])look[1];
         }else if(type.equals("reminder")){
             // Reminder messages are the event title, then its time and optional location.
@@ -107,7 +107,7 @@ final class NativeNotifications {
             .setGroup(type.equals("task")?"assistant_tasks":"assistant_events").setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).setShowWhen(true);
         if(type.equals("reminder"))notification.setCategory(Notification.CATEGORY_EVENT);else if(active)notification.setCategory(Notification.CATEGORY_PROGRESS);
         // The lock screen shows only the kind of update, never the request, result or event.
-        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":type.equals("train_rank")?"Iron League rank-up":"Phone action").setSubText(type.equals("task")?"Laptop task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
+        if(hidden)notification.setPublicVersion(new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_stat_assistant).setColor(ACCENT).setContentTitle(type.equals("task")?(headline.toString().startsWith("Task")?headline:"Task update"):type.equals("reminder")?"Calendar reminder":type.equals("train_rank")?"Iron League rank-up":"Phone action").setSubText(type.equals("task")?"Assistant task":null).setShowWhen(true).setWhen((long)(body.optDouble("created",System.currentTimeMillis()/1000.0)*1000)).build());
         if(body.optString("state").equals("running"))notification.setProgress(0,0,true);
         if(!task.isEmpty()){
             notification.addAction(new Notification.Action.Builder(null,"Details",pending).build());

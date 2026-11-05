@@ -349,8 +349,12 @@ The worker must explicitly select requested deliverables and check upload succes
 
 ## Server CLI worker
 
-With a ready server worker, the relay sends new requests it recognizes as
-self-contained drafting, planning, or research to the VPS. Requests with local
+With a configured server worker, the relay sends new requests it recognizes as
+self-contained drafting, planning, or research to the VPS. The server queue
+holds these requests if the worker is disconnected or both engines are out of
+allowance. The worker checks subscription telemetry between claims and resumes
+claiming after an observed reset. Checks read local provider telemetry without
+calling a model. Requests with local
 context, attachments, or an explicit `Laptop:` prefix use the laptop. Use
 `Server:` to explicitly queue work on the VPS. Follow-ups stay on the original
 worker host. The server has its own readiness status, claim credential, and

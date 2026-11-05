@@ -82,7 +82,7 @@ final class CalendarScreen {
     /** Entries added on the phone that the laptop has not applied yet, and any it could not add. */
     void requests(){JSONArray all=data.optJSONArray("requests");for(int i=0;all!=null&&i<all.length();i++){JSONObject q=all.optJSONObject(i);if(q==null||"added".equals(q.optString("state")))continue;boolean failed="failed".equals(q.optString("state"));
         String day="";try{day=LocalDate.parse(q.optString("date")).format(SHORT);}catch(Exception ignored){}
-        page.addView(new MainParts.Banner(ui,failed?"danger":"info",failed?"alert":"clock",q.optString("title")+" · "+day,failed?"Not added: "+q.optString("detail"):"Waiting for your laptop to add it",null),MainParts.params(ui,-1,-2,0,0,0,10));}}
+        page.addView(new MainParts.Banner(ui,failed?"danger":"info",failed?"alert":"clock",q.optString("title")+" · "+day,failed?"Not added: "+q.optString("detail"):"Waiting to sync to your calendar",null),MainParts.params(ui,-1,-2,0,0,0,10));}}
 
     /** One entry in full; changes go through the assistant, which owns the calendar. */
     void details(JSONObject e){Sheet s=new Sheet(e.optString("title"));
@@ -126,7 +126,7 @@ final class CalendarScreen {
 
     void submit(Sheet s,String title,LocalDate day,String kind,LocalTime start,LocalTime end){JSONObject body=new JSONObject();String id="ph-"+UUID.randomUUID().toString().replace("-","");
         try{body.put("id",id).put("title",title).put("date",day.toString()).put("all_day",!"timed".equals(kind)).put("kind","birthday".equals(kind)?"birthday":"event");if("timed".equals(kind))body.put("start",start.format(TIME)).put("end",end.format(TIME));}catch(JSONException ignored){}
-        Toast.makeText(activity,"Sending to your laptop…",Toast.LENGTH_SHORT).show();
+        Toast.makeText(activity,"Queuing calendar entry…",Toast.LENGTH_SHORT).show();
         new Thread(()->{String failure=null;try{Cloud.call(activity,"calendar/requests",body,true);}catch(Exception e){failure=e instanceof Cloud.HttpError&&((Cloud.HttpError)e).status==422?"Check the title and times.":"Couldn't reach your server. Try again.";}
             String message=failure;activity.runOnUiThread(()->{if(message!=null){Toast.makeText(activity,message,Toast.LENGTH_LONG).show();return;}s.dismiss();try{JSONArray q=data.optJSONArray("requests");if(q==null)data.put("requests",q=new JSONArray());q.put(new JSONObject(body.toString()).put("state","pending"));}catch(JSONException ignored){}render();refresh();});}).start();}
 

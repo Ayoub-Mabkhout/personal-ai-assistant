@@ -92,7 +92,7 @@ final class NativeTaskScreens {
                 LinearLayout card=ui.card();card.addView(ui.savedChip("Saved on this phone"));ui.space(card,8);card.addView(ui.heading(draft.optString("text")));JSONArray files=draft.optJSONArray("attachments");for(int k=0;files!=null&&k<files.length();k++){try{JSONObject file=TaskAttachments.metadata(a,files.getString(k));card.addView(ui.detail(file.optString("name")+" · "+TaskAttachments.size(file.optLong("size"))));}catch(Exception ignored){}}
                 card.addView(ui.detail("Waiting for connection. Refresh retries the upload."));rows.addView(card);
             }
-            if(items.isEmpty()&&rows.getChildCount()==0){rows.addView(query.isEmpty()?ui.empty("history","No tasks yet","Laptop requests and their answers will appear here.","Refresh",this::reload):ui.empty("search","No matching tasks","Try another word from the request or answer.","Clear search",()->search.setText("")));return;}
+            if(items.isEmpty()&&rows.getChildCount()==0){rows.addView(query.isEmpty()?ui.empty("history","No tasks yet","Requests and their answers will appear here.","Refresh",this::reload):ui.empty("search","No matching tasks","Try another word from the request or answer.","Clear search",()->search.setText("")));return;}
             for(JSONObject item:items)rows.addView(card(item));
             if(first)AppUi.stagger(rows);
         }

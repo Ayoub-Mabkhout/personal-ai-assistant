@@ -46,6 +46,18 @@ class AgentWorker(Worker):
     def flush_outbox(self):
         with self.outbox_lock:super().flush_outbox()
 
+    def tick(self):
+        availability = getattr(self.executor, 'agent_availability', None)
+        if availability and self.executor.available() and not any(
+            provider['usable'] for provider in availability().values()
+        ):
+            self.long_poll = False
+            self.client.call('/v1/worker/heartbeat', {'readiness': 'blocked'})
+            self.status('blocked', reason='model_allowance')
+            self.flush_outbox()
+            return False
+        return super().tick()
+
     def run_slot(self):
         # The service holds one process-wide Singleton around every slot. Each
         # tick retains the existing lease keeper, cancellation and crash ledger.
@@ -53,7 +65,7 @@ class AgentWorker(Worker):
         while not self.shutdown.is_set():
             try:
                 worked=self.tick();delay=2
-                if not (worked or self.long_poll):self.shutdown.wait(self.config.get('poll_seconds',4))
+                if not (worked or self.long_poll):self.shutdown.wait(max(1,self.config.get('poll_seconds',4)))
             except TransportError as error:
                 self.status('authentication_blocked' if error.status in (401,403) else 'disconnected',http_status=error.status)
                 logging.warning('Agent slot %s relay connection: %s',self.slot,error)

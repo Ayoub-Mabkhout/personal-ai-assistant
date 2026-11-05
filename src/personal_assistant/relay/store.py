@@ -186,7 +186,7 @@ class Queue:
                 if original_encoded != encoded or record['source'] != source:
                     raise Conflict('This command ID already has different content.')
                 return record, False
-            if self.server_enabled and not self.session_root(payload) and self.use_server(db, payload):
+            if self.server_enabled and not self.session_root(payload) and self.use_server(payload):
                 payload['execution_host'] = 'server'
                 encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
             if created > self.clock() + 300:
@@ -232,21 +232,20 @@ class Queue:
             if self.server_enabled:
                 server = db.execute('SELECT * FROM server_worker WHERE id=1').fetchone()
                 result['server'] = self.worker_state(server)
+            if self.serial:
+                result['assistant'] = result.get('server', state)
             return result
 
     def worker_state(self, row):
         return row['readiness'] if row and self.clock() - row['seen'] < 60 else 'unavailable'
 
-    def use_server(self, db, payload):
+    def use_server(self, payload):
         command = payload['command'].strip()
         if re.match(r'^server:\s*\S', command, re.IGNORECASE):
             return True
         if payload.get('workspace') or payload.get('attachments') or payload.get('reply_context'):
             return False
-        if not PORTABLE_REQUEST.match(command) or LOCAL_CONTEXT.search(command):
-            return False
-        server = db.execute('SELECT * FROM server_worker WHERE id=1').fetchone()
-        return self.worker_state(server) == 'ready'
+        return bool(PORTABLE_REQUEST.match(command) and not LOCAL_CONTEXT.search(command))
 
     def execution_host(self, db, payload):
         root = self.session_root(payload)

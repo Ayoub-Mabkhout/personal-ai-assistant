@@ -19,6 +19,7 @@ import re
 import sqlite3
 import threading
 import time
+from typing import Literal
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -54,6 +55,11 @@ class ConversationQuestion(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class MoneyHeartbeat(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    state: Literal['ready', 'blocked']
+
+
 class ConversationAnswer(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     text: str = Field(min_length=1, max_length=12000)
@@ -83,6 +89,7 @@ class Banking:
                 retry_after REAL NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,text TEXT NOT NULL,created REAL NOT NULL,
                 collected REAL,answer TEXT,answered REAL);
+            CREATE TABLE IF NOT EXISTS specialist_status(id INTEGER PRIMARY KEY CHECK(id=1),state TEXT NOT NULL,seen REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS merchant_logo_assets(id TEXT PRIMARY KEY,png BLOB NOT NULL);''')
         db.close()
 
@@ -98,6 +105,17 @@ class Banking:
             raise
         finally:
             db.close()
+
+    def specialist_heartbeat(self, state):
+        with self.db() as db:
+            db.execute('INSERT OR REPLACE INTO specialist_status VALUES(1,?,?)', (state, self.clock()))
+        return {'state': state}
+
+    def specialist_status(self):
+        with self.db() as db:
+            row = db.execute('SELECT state,seen FROM specialist_status WHERE id=1').fetchone()
+        state = row[0] if row and self.clock() - row[1] < 60 else 'unavailable'
+        return {'available': state == 'ready', 'state': state}
 
     def logo(self, identity):
         if not re.fullmatch(r'[a-f0-9]{64}', identity):
@@ -396,6 +414,10 @@ def banking_router(banking, submit, device, owner_auth=None):
     def publish(body: dict):
         return banking.publish(body)
 
+    @owner.put('/specialist/heartbeat')
+    def specialist_heartbeat(body: MoneyHeartbeat):
+        return banking.specialist_heartbeat(body.state)
+
     @owner.get('/answers')
     def answers():
         return banking.answers()
@@ -478,7 +500,7 @@ def banking_router(banking, submit, device, owner_auth=None):
 
     @phone.get('/conversations')
     def phone_conversations(before: str | None = Query(default=None, pattern=r'^[A-Za-z0-9_-]{8,64}$')):
-        return banking.conversations(before=before)
+        return {**banking.conversations(before=before), 'specialist': banking.specialist_status()}
 
     @phone.post('/conversations')
     def phone_question(body: ConversationQuestion):

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import signal
+import shutil
 import sys
 import threading
 import time
@@ -25,6 +26,8 @@ from personal_assistant.banking.agent import audit  # noqa: E402
 from personal_assistant.banking.ledger import cents, summarise  # noqa: E402
 from personal_assistant.relay.client import OwnerClient  # noqa: E402
 from personal_assistant.worker.runtime import Singleton  # noqa: E402
+
+from personal_assistant.orchestrator import capacity
 
 CONVERSATIONS = '/relay/v1/banking/conversations'
 
@@ -72,10 +75,11 @@ def run_once(config, ledger, relay, sync_banks=True):
                              ('questions', lambda: collect_questions(relay, ledger))):
             try: report[name] = action()
             except Exception as error: delivery_errors.append('%s: %s' % (name, type(error).__name__))
-        if sync_banks or report.get('answers') or report.get('questions') or ledger.jobs():
+        model_ready = config.get('_money_model_ready', True)
+        if sync_banks or report.get('answers') or report.get('questions') or (model_ready and ledger.jobs()):
             ledger.set_setting('money_summary_dirty', True)
         try:
-            report['decided'] = audit(ledger, config)[0]
+            report['decided'] = audit(ledger, config)[0] if model_ready else 0
         finally:
             try: report['replies'] = publish_replies(relay, ledger)
             except Exception as error: delivery_errors.append('replies: %s' % type(error).__name__)
@@ -97,12 +101,30 @@ def watch(config, ledger, interval):
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
     next_sync = 0.0
+    relay = OwnerClient(config)
+
+    def model_ready():
+        # This specialist has one persistent Codex session.
+        executable = config.get('codex') or shutil.which('codex')
+        return bool(executable and Path(executable).is_file()
+                    and not capacity.exhausted(capacity.snapshot(config, refresh=False)['codex']))
+
+    def heartbeat():
+        while not stop.is_set():
+            try:
+                relay.call('/relay/v1/banking/specialist/heartbeat',
+                           {'state': 'ready' if model_ready() else 'blocked'}, method='PUT')
+            except Exception as error:
+                print('Money heartbeat failed: %s' % type(error).__name__, file=sys.stderr, flush=True)
+            stop.wait(15)
+
+    threading.Thread(target=heartbeat, name='money-heartbeat', daemon=True).start()
     while not stop.is_set():
         try:
             sync_due = time.monotonic() >= next_sync
             if sync_due:
                 next_sync = time.monotonic() + interval
-            report = run_once(config, ledger, OwnerClient(config), sync_banks=sync_due)
+            report = run_once({**config, '_money_model_ready': model_ready()}, ledger, relay, sync_banks=sync_due)
             if sync_due or any(report.get(key) for key in ('answers', 'questions', 'replies')):
                 print(json.dumps({'status': 'ok', 'accounts': len(report['sync']), 'decided': report['decided'],
                                   'questions': report['questions'], 'replies': report['replies']}), flush=True)

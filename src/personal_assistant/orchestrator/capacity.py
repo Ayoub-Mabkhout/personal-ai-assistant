@@ -89,7 +89,7 @@ def codex(config,now):
 def claude_record(event,now):
     """Cacheable figures from a headless Claude rate_limit_event."""
     info=event.get('rate_limit_info') or {}
-    return {'observed_at':now,'status':info.get('status'),'type':info.get('rateLimitType'),
+    return {'observed_at':now,'status':info.get('status'),'type':info.get('rateLimitType'),'resets_at':info.get('resetsAt'),
             'windows':{k:{'utilization':v.get('utilization'),'resets_at':v.get('resetsAt')} for k,v in (info.get('unifiedWindows') or {}).items()}}
 
 
@@ -141,7 +141,11 @@ def claude(config,now,refresh=True):
     if record is None:return {'available':False,'note':'No Claude limit figures yet; a background check was started.'}
     names={'five_hour':'five_hour','seven_day':'weekly'}
     result={names.get(k,k):window(None if v.get('utilization') is None else round(v['utilization']*100,1),v.get('resets_at'),now) for k,v in record['windows'].items()}
-    return {'available':True,**result,'limit_reached':None if record.get('status') in (None,'allowed','allowed_warning') else record.get('type') or record.get('status'),
+    rejected = record.get('status') not in (None, 'allowed', 'allowed_warning')
+    if rejected and record.get('resets_at') is not None:
+        name = names.get(record.get('type'), record.get('type')) or 'reported_limit'
+        result.setdefault(name, window(100.0, record['resets_at'], now))
+    return {'available':True,**result,'limit_reached':(record.get('type') or record.get('status')) if rejected else None,
             'observed_minutes_ago':round((now-record['observed_at'])/60)}
 
 
@@ -160,6 +164,17 @@ def exhausted(reading):
     windows=[v for v in reading.values() if isinstance(v,dict)]
     if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0 for w in windows):return True
     return bool(reading.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
+
+
+def exhausted_until(reading):
+    """Latest known reset among windows that currently block this account."""
+    if not exhausted(reading):
+        return None
+    return max(
+        (datetime.fromisoformat(value['resets_at']).timestamp() for value in reading.values()
+         if isinstance(value, dict) and value.get('remaining_percent') == 0 and value.get('resets_at')),
+        default=None,
+    )
 
 
 def codex_limited(history,stderr=''):

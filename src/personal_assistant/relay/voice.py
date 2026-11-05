@@ -244,9 +244,17 @@ class VoiceService:
             return {**base,'reply':'Conversation mode on.','status':'conversation_started','mode':'conversation'}
         if control=='command':
             return {**base,'reply':'Conversation ended.','status':'ended','mode':'command'}
-        if re.fullmatch(r'(?:is (?:my |the )?laptop (?:connected|online)|(?:check )?(?:laptop )?connection status)[?.! ]*',cleaned,re.I):
-            status=self.agents.status();state=status['laptop']
-            return {**base,'reply':'The laptop is ready.' if state=='ready' else 'The laptop is '+state+'. Commands are saved on the server.','status':'completed','connection':status}
+        connection_question = re.fullmatch(
+            r'(?:is (?:my |the )?(laptop|assistant|server|cloud worker) (?:connected|online)|'
+            r'(?:check )?(?:(laptop|assistant|server|cloud worker) )?connection status)[?.! ]*', cleaned, re.I)
+        if connection_question:
+            status=self.agents.status()
+            target=next((part.lower() for part in connection_question.groups() if part),'assistant')
+            host='laptop' if target=='laptop' else 'server' if target in ('server','cloud worker') else 'assistant'
+            state=status.get(host,'unavailable')
+            label='laptop' if host=='laptop' else 'cloud worker' if host=='server' else 'assistant'
+            reply=f'The {label} is ready.' if state=='ready' else f'The {label} is offline. New requests can still be queued.'
+            return {**base,'reply':reply,'status':'completed','connection':status}
         if re.fullmatch(r'(?:show|read|what(?: is|\'s)(?: on)?) (?:me )?(?:my |the )?shopping list[?.! ]*',cleaned,re.I):
             names=[r['name'] for r in self.groceries.snapshot()['items'] if not r['complete']]
             return {**base,'reply':', '.join(names) if names else 'Your shopping list is empty.','status':'completed'}

@@ -562,7 +562,10 @@ class Orchestrator:
         """A usage-limit error takes the agent out of rotation for a cooldown, like the workout coach."""
         with _ENGINE_LOCK:
             state=self.engine_state()
-            state[agent+'_retry_after']=time.time()+60*float(self.config.get('dispatcher_engine_retry_minutes',ENGINE_RETRY_MINUTES))
+            now=time.time()
+            reading=capacity.snapshot(self.config,now=now,refresh=False).get(agent)
+            reset=capacity.exhausted_until(reading)
+            state[agent+'_retry_after']=reset or now+60*float(self.config.get('dispatcher_engine_retry_minutes',ENGINE_RETRY_MINUTES))
             state[agent+'_limited_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
             write_json(self.engine_path,state)
 
