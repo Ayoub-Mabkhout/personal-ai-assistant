@@ -164,6 +164,15 @@ class WorkoutTests(unittest.TestCase):
         self.assertNotIn('token',history[0])
         self.now+=91;self.assertFalse(self.store.status()['available'])
 
+    def test_blocked_coach_reports_usage_limit_until_its_heartbeat_goes_stale(self):
+        self.store.heartbeat('blocked','No coach engine has allowance')
+        self.assertEqual(self.store.status()['state'],'blocked')
+        self.assertFalse(self.store.status()['available'])
+        self.store.heartbeat('busy')
+        self.assertEqual((self.store.status()['available'],self.store.status()['state']),(True,'busy'))
+        self.now+=91
+        self.assertEqual(self.store.status()['state'],'unavailable')
+
     def test_trainer_proposals_require_approval_and_recheck_revision(self):
         self.store.heartbeat();self.store.question('question_one','Make a template')
         claim=self.store.claim()

@@ -247,8 +247,11 @@ class Workouts:
         if db is None:
             with self.db() as conn: return self.status(conn)
         row = db.execute('SELECT * FROM specialist WHERE user_id=? AND id=1', (self.user_id,)).fetchone()
-        online = bool(row and self.clock()-row['seen']<90 and row['state'] in ('ready', 'busy'))
-        return {'available': online, 'state': row['state'] if online else 'unavailable',
+        fresh = bool(row and self.clock()-row['seen']<90)
+        online = fresh and row['state'] in ('ready', 'busy')
+        # A fresh 'blocked' heartbeat means no coach engine has allowance (usage limit): say so instead of "offline".
+        state = row['state'] if fresh and row['state'] in ('ready', 'busy', 'blocked') else 'unavailable'
+        return {'available': online, 'state': state,
                 'last_seen': row['seen'] if row else None, 'transport': 'persistent_codex_session'}
 
     def question(self, identifier, text, photos=None, photo_approval=False, context=None):
