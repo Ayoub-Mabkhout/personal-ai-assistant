@@ -252,9 +252,20 @@ This task-specific route is separate from explicit file drops to phone Downloads
 
 ## Worker status and specialist chats
 
-The header reports relay-backed worker readiness. The native Coach and Money
-specialist chats report their own worker readiness and use the same composer
-for typing, dictation, and file uploads. A sent file is shared with the
+The header reports relay-backed worker readiness from `voice/status`
+(`connection.assistant`, then `server`, then `laptop`). Every chip resolves:
+online, usage limit (a fresh `blocked` heartbeat), offline, not paired, phone
+offline, server unreachable, or no response after 12 seconds. One shared
+request serves all worker chips; a new chip shows the last result at once and a
+regained window focus (cold start, resume, closing a sheet) refreshes it. The
+native Coach and Money specialist chats report their own worker readiness and
+use the same composer for typing, dictation, and file uploads.
+
+Both chats follow the task conversation: the user's message appears at once as
+Sending, then Sent; each message has one reply bubble that moves from queued to
+streamed partial text to the final answer. An unconfirmed message stays saved
+on the phone with its ID, survives closing the chat, and offers Retry (same ID,
+so a lost response cannot duplicate it) or Edit. A sent file is shared with the
 selected specialist for that message. Text and PDF previews are bounded.
 Supported images travel with the model turn. Original files remain available
 in the chat.
