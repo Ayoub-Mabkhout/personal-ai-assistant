@@ -4,6 +4,7 @@ import argparse
 import os
 import secrets
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 import uvicorn
@@ -25,29 +26,38 @@ def build_app(directory: Path, token: str):
     job_id = uuid4().hex
     queue.submit({"id": job_id, "command": "Add pilot oats to the fixture shopping list.",
                   "timezone": "UTC"}, source="managed_cloud_pilot")
-    queue.heartbeat("ready")
-    lease = queue.claim(300)["lease_token"]
+    lease = None
+    lock = Lock()
+
+    def job_lease():
+        nonlocal lease
+        with lock:
+            if lease is None:
+                queue.heartbeat("ready")
+                lease = queue.claim(300)["lease_token"]
+            return lease
     mcp = FastMCP("Assistant cloud pilot", stateless_http=True, json_response=True)
 
     @mcp.tool()
     def add_pilot_grocery() -> dict:
         """Add pilot oats to the disposable grocery list. Safe to retry."""
+        token = job_lease()
         with queue.connection(write=True) as db:
-            queue.owned(db, job_id, lease)
+            queue.owned(db, job_id, token)
             return groceries.mutate({"id": job_id, "operation": "add",
                                      "items": [{"name": "pilot oats"}]})
 
     @mcp.tool()
     def report_progress(sequence: int, text: str) -> dict:
         """Publish a user-visible progress snapshot. Start sequence at zero."""
-        return queue_snapshot(queue, job_id, Snapshot(token=lease, sequence=sequence, text=text))
+        return queue_snapshot(queue, job_id, Snapshot(token=job_lease(), sequence=sequence, text=text))
 
     @mcp.tool()
     def finish_task(answer: str) -> dict:
         """Save the final answer in the existing task result format."""
         if not answer.strip() or len(answer) > 24000:
             raise ValueError("Supply a non-empty answer of up to 24000 characters.")
-        result = queue.finish(job_id, lease, "completed", {"summary": answer})
+        result = queue.finish(job_id, job_lease(), "completed", {"summary": answer})
         return {"id": result["id"], "state": result["state"]}
 
     app = mcp.streamable_http_app()
@@ -72,7 +82,7 @@ def main():
     args = parser.parse_args()
     token = os.environ.get("ASSISTANT_CLOUD_PILOT_TOKEN", "")
     app, job_id = build_app(args.fixture_directory, token)
-    print(f"Pilot job {job_id}, lease expires in five minutes", flush=True)
+    print(f"Pilot job {job_id}, five-minute lease starts on first tool call", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 

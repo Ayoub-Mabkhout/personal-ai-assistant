@@ -3,7 +3,7 @@
 The relay keeps task state and app data. The managed agent runs in the
 provider's environment and calls the relay over Streamable HTTP MCP. This
 pilot uses fresh fixture databases and a single job with a five-minute
-lease. It has no access to production accounts or data.
+lease that starts on the first tool call. It has no access to production accounts or data.
 
 1. In a disposable Python environment, install the project with the server
    extra and the MCP SDK (`pip install -e ".[server]" "mcp==1.30.0"`).
