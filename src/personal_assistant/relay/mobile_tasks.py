@@ -68,9 +68,14 @@ class MobileTasks:
         from .answer_streams import read_many
         with queue.connection() as db:
             partials=read_many(db,'agent',[root['id'],job['id'],*[t['id'] for t in turns]]) if kind=='agent' else {}
-        result={'id': job['id'], 'kind': kind, 'state': job['state'],
+        host=root['payload'].get('execution_host','laptop')
+        connection=queue.status()
+        if host=='server':
+            # Older Companion builds treat a missing laptop field as no laptop dependency.
+            connection.pop('laptop',None)
+        result={'id': job['id'], 'kind': kind, 'state': job['state'], 'execution_host': host,
                 'request': job['payload']['command'], 'created': job['created'], 'updated': job['updated'],
-                'summary': (job['result'] or {}).get('summary', ''), 'connection': queue.status(),
+                'summary': (job['result'] or {}).get('summary', ''), 'connection': connection,
                 'history': [{'at': e['at'], 'kind': e['kind']} for e in queue.history(identifier)
                             if e['kind'] != 'phone_notification_accepted'],
                 'root_id': root['id'], 'original_request': root['payload']['command'],

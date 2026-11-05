@@ -102,13 +102,14 @@ async function refresh(){
 }
 
 function renderTask(task){
-  const state=task.conversation_state||task.state,tone=stateTone(state),laptop=task.connection?.laptop;
+  const state=task.conversation_state||task.state,tone=stateTone(state);
+  const host=task.execution_host==='server'?'server':'laptop',readiness=task.connection?.[host];
   followupToken=task.followup_token;
   swapText($('status'),labels[state]||state);
   $('status-chip').className='chip s-'+tone;$('hero').className='hero card s-'+tone;$('status-icon').setAttribute('href','#i-'+stateIcon(state));
-  swapText($('state-note'),stateNote(task,state,laptop));
+  swapText($('state-note'),stateNote(task,state,host,readiness));
   $('updated').textContent='Updated '+when(task.conversation_updated||task.updated);
-  $('activity-bar').hidden=!(state==='running'&&laptop!=='unavailable');
+  $('activity-bar').hidden=!(state==='running'&&readiness!=='unavailable');
   $('day').textContent=dayLabel(new Date(task.created*1000));
   $('request').textContent=task.request;$('request-meta').textContent='You · '+when(task.created);
   renderResult(task);
@@ -123,9 +124,10 @@ function renderTask(task){
   if($('instruction').disabled)growField();
   return state;
 }
-function stateNote(task,state,laptop){
-  if(state==='queued')return laptop==='unavailable'?'Laptop offline. Your task is saved and waiting.':laptop==='blocked'?'The laptop cannot run tasks right now. Your task is saved.':'Waiting to start.';
-  if(state==='running')return laptop==='unavailable'?'Laptop disconnected. Waiting for it to reconnect.':'The laptop is working on your task.';
+function stateNote(task,state,host,readiness){
+  const label=host==='server'?'Server':'Laptop';
+  if(state==='queued')return readiness==='unavailable'?`${label} offline. Your task is saved and waiting.`:readiness==='blocked'?`The ${host} cannot run tasks right now. Your task is saved.`:`Waiting to start on the ${host}.`;
+  if(state==='running')return readiness==='unavailable'?`${label} disconnected. Waiting for it to reconnect.`:`The ${host} is working on your task.`;
   if(state==='needs_input')return task.can_followup?'The assistant needs your input. Reply below to continue.':'The assistant needs your input to continue.';
   return {completed:task.summary?'Finished. The answer is below.':'Finished.',failed:'This task did not finish.',cancelled:'This task was cancelled.',expired:'This task expired.'}[state]||'';
 }

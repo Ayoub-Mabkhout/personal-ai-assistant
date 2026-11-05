@@ -13,6 +13,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .wakeups import Wakeups, log_phases
 
 CLAIMABLE = 'claimable'
+PORTABLE_REQUEST = re.compile(
+    r"^(?:please\s+)?(?:draft|write|brainstorm|explain|describe|suggest|recommend|"
+    r"plan|compare|outline|research|give me ideas for)\b", re.IGNORECASE
+)
+LOCAL_CONTEXT = re.compile(
+    r"\b(?:my|our|local|laptop|phone|workspace|repository|repo|codebase|branch|"
+    r"attach\w*|files?|folders?|screenshots?|inbox|emails?|outlook|gmail|"
+    r"calendars?|shopping list|whatsapp|accounts?|transactions?|"
+    r"bank\w*|thesis|company|customer\w*|internal|earlier|previous|above|"
+    r"this|these|that|those)\b|[a-z]:[\\/]", re.IGNORECASE
+)
 
 
 class Conflict(ValueError):
@@ -159,8 +170,8 @@ class Queue:
             ZoneInfo(payload['timezone'])
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError('Unknown timezone.') from exc
-        if self.server_enabled and self.server_request(payload['command']) and not self.session_root(payload):
-            payload = {**payload, 'execution_host': 'server'}
+        # Destination is assigned by the relay and remains fixed across retries.
+        payload = {key: value for key, value in payload.items() if key != 'execution_host'}
         created = timestamp(payload['created_at']) if payload.get('created_at') else self.clock()
         expires = timestamp(payload['expires_at']) if payload.get('expires_at') else None
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
@@ -168,9 +179,16 @@ class Queue:
             self.maintenance(db)
             existing = db.execute('SELECT * FROM jobs WHERE id=?', (request_id,)).fetchone()
             if existing:
-                if existing['payload'] != encoded or existing['source'] != source:
+                record = self.record(existing)
+                original = dict(record['payload'])
+                original.pop('execution_host', None)
+                original_encoded = json.dumps(original, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+                if original_encoded != encoded or record['source'] != source:
                     raise Conflict('This command ID already has different content.')
-                return self.record(existing), False
+                return record, False
+            if self.server_enabled and not self.session_root(payload) and self.use_server(db, payload):
+                payload['execution_host'] = 'server'
+                encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
             if created > self.clock() + 300:
                 raise ValueError('Creation time is too far in the future.')
             if expires is not None and expires <= created:
@@ -208,17 +226,27 @@ class Queue:
         with self.connection(True) as db:
             self.maintenance(db)
             row = db.execute('SELECT * FROM worker WHERE id=1').fetchone()
-            state = row['readiness'] if row and self.clock() - row['seen'] < 60 else 'unavailable'
+            state = self.worker_state(row)
             queued = db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0]
             result = {'laptop': state, 'last_seen': row['seen'] if row else None, 'queued': queued}
             if self.server_enabled:
                 server = db.execute('SELECT * FROM server_worker WHERE id=1').fetchone()
-                result['server'] = server['readiness'] if server and self.clock() - server['seen'] < 60 else 'unavailable'
+                result['server'] = self.worker_state(server)
             return result
 
-    @staticmethod
-    def server_request(command):
-        return bool(re.match(r'^\s*server:\s*\S', command, re.IGNORECASE))
+    def worker_state(self, row):
+        return row['readiness'] if row and self.clock() - row['seen'] < 60 else 'unavailable'
+
+    def use_server(self, db, payload):
+        command = payload['command'].strip()
+        if re.match(r'^server:\s*\S', command, re.IGNORECASE):
+            return True
+        if payload.get('workspace') or payload.get('attachments') or payload.get('reply_context'):
+            return False
+        if not PORTABLE_REQUEST.match(command) or LOCAL_CONTEXT.search(command):
+            return False
+        server = db.execute('SELECT * FROM server_worker WHERE id=1').fetchone()
+        return self.worker_state(server) == 'ready'
 
     def execution_host(self, db, payload):
         root = self.session_root(payload)

@@ -20,18 +20,19 @@ TITLES={'queued':'Task queued','running':'Task in progress','completed':'Task co
     'failed':'Task failed','needs_input':'Task needs your input','cancelled':'Task cancelled','expired':'Task expired'}
 
 
-def notification(kind,job,connection,public_url,visibility='private',task_links=None):
+def notification(kind,job,connection,public_url,visibility='private',task_links=None,host='laptop'):
     state=job['state'];short=job['id'][-8:]
+    readiness=connection.get(host,'unavailable')
     request=' '.join(job['payload']['command'].split())[:160]
     if state=='queued':
-        if connection['laptop']=='unavailable': status='Laptop offline. Saved on the server; waiting for it to reconnect.'
-        elif connection['laptop']=='blocked': status='Laptop cannot run tasks right now. Saved on the server and waiting.'
-        else: status='Acknowledged and saved on the server. Waiting to start.'
-    elif state=='running': status='Laptop disconnected. Waiting to reconcile progress when it reconnects.' if connection['laptop']=='unavailable' else 'The laptop is working on this task.'
+        if readiness=='unavailable': status=f'{host.title()} offline. Saved on the server; waiting for it to reconnect.'
+        elif readiness=='blocked': status=f'{host.title()} cannot run tasks right now. Saved on the server and waiting.'
+        else: status=f'Task saved. Waiting to start on the {host}.'
+    elif state=='running': status=f'{host.title()} disconnected. Waiting to reconcile progress when it reconnects.' if readiness=='unavailable' else f'The {host} is working on this task.'
     else: status=(job.get('result') or {}).get('summary') or TITLES[state]+'.'
     page_id=(job['payload'].get('resume_task') or {}).get('root_id',job['id'])
     link=task_links.url(public_url,kind,page_id) if task_links else public_url.rstrip('/')+'/tasks/'+kind+'/'+page_id
-    title='Task connection interrupted' if state=='running' and connection['laptop']=='unavailable' else TITLES[state]
+    title='Task connection interrupted' if state=='running' and readiness=='unavailable' else TITLES[state]
     from .replies import reply_action
     return {'title':title+' · '+short,'message':request+'\n\n'+str(status)[:1800],
         'data':{'tag':'assistant-'+kind+'-'+job['id'],'group':'assistant-tasks','channel':'Assistant tasks',
@@ -66,7 +67,9 @@ class NotificationPump:
                 # A final state that waited this long for a recipient is history, not news for a newly paired phone.
                 if self.max_age and job['state'] not in ACTIVE and row['revision']!=row['delivered_revision'] and queue.clock()-(row['changed'] or queue.clock())>self.max_age:
                     queue.notification_expired(job['id'],row['revision']);continue
-                payload=notification(kind,job,connection,self.public_url,self.visibility,self.task_links)
+                with queue.connection() as db:
+                    host=queue.execution_host(db,job['payload'])
+                payload=notification(kind,job,connection,self.public_url,self.visibility,self.task_links,host)
                 encoded=json.dumps(payload,sort_keys=True)
                 namespace=getattr(self.sender,'fingerprint_namespace','')
                 fingerprint=hashlib.sha256((namespace+encoded).encode()).hexdigest()

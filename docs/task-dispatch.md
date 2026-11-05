@@ -349,10 +349,11 @@ The worker must explicitly select requested deliverables and check upload succes
 
 ## Server CLI worker
 
-When the relay is configured with a distinct server worker token, start a task
-with `Server:` to send it to the VPS. Follow-ups stay on the same worker host,
-including while the laptop is asleep. Existing tasks and ordinary submissions
-use the laptop. The server gets its own readiness status, claim credential and
+With a ready server worker, the relay sends new requests it recognizes as
+self-contained drafting, planning, or research to the VPS. Requests with local
+context, attachments, or an explicit `Laptop:` prefix use the laptop. Use
+`Server:` to explicitly queue work on the VPS. Follow-ups stay on the original
+worker host. The server has its own readiness status, claim credential, and
 runtime directory. Its attachment access is limited to server task files.
 
 Supply the server token through `ASSISTANT_AGENT_SERVER_TOKEN_FILE` or the

@@ -53,13 +53,13 @@ def conversation_control(text):
     return None
 
 
-def queued_reply(request,laptop):
+def queued_reply(request,readiness,host='laptop'):
     # The authoritative acknowledgement identifies the submitted instruction.
     # Keep speech bounded without rewriting its intent or changing queued content.
     spoken=re.sub(r'\s+',' ',request).strip().rstrip('.!? ')
     if len(spoken)>400:spoken=spoken[:397].rstrip()+'…'
-    reply='Queued command to the laptop: '+spoken+'.'
-    if laptop!='ready':reply+=' Waiting for the laptop.'
+    reply=f'Queued command to the {host}: '+spoken+'.'
+    if readiness!='ready':reply+=f' Waiting for the {host}.'
     return reply
 
 
@@ -281,7 +281,8 @@ class VoiceService:
                 if context.get('recent_turns'):payload['reply_context']=context
         job,_=self.agents.submit(payload,source='phone_voice')
         status=self.agents.status()
-        return {**base,'reply':queued_reply(cleaned,status['laptop']),'status':job['state'],'connection':status}
+        host=job['payload'].get('execution_host','laptop')
+        return {**base,'reply':queued_reply(cleaned,status.get(host,'unavailable'),host),'status':job['state'],'connection':status}
 
 
 def voice_router(service):

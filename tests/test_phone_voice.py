@@ -109,6 +109,38 @@ class PhoneVoiceTests(unittest.TestCase):
         self.assertEqual([event['kind'] for event in self.agents.history(first['task_id'])],['submitted'])
         with self.commands.connection() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],0)
 
+    def test_portable_voice_task_runs_on_server_with_laptop_offline(self):
+        from personal_assistant.relay.mobile_tasks import MobileTasks
+        from personal_assistant.relay.notifications import NotificationPump
+
+        self.agents = Queue(self.root/'server-agents.sqlite3', serial=True, server_enabled=True, notifications=True)
+        self.service.agents = self.agents
+        self.agents.heartbeat('ready', 'server')
+        self.text = 'Hey Chat, draft a short weekend plan.'
+        response = self.post(self.body()).json()
+        self.assertEqual(response['connection']['laptop'], 'unavailable')
+        self.assertIn('Queued command to the server', response['reply'])
+        identifier = response['task_id']
+        detail = MobileTasks({'agent': self.agents}).detail('agent', identifier)
+        self.assertEqual(detail['execution_host'], 'server')
+        self.assertNotIn('laptop', detail['connection'])
+        sent = []
+        NotificationPump({'agent': self.agents}, lambda message: sent.append(message), 'https://example.com').tick()
+        self.assertIn('Waiting to start on the server', sent[0]['message'])
+        self.agents.heartbeat('ready')
+        self.assertIsNone(self.agents.claim(session_lanes=True))
+        self.assertEqual(self.agents.claim(session_lanes=True, execution_host='server')['id'], identifier)
+
+        job = self.agents.get(identifier)
+        self.agents.heartbeat('blocked', 'server')
+        replay, created = self.agents.submit(job['payload'], source='phone_voice')
+        self.assertFalse(created)
+        self.assertEqual(replay['payload']['execution_host'], 'server')
+        self.agents.heartbeat('ready', 'server')
+        for i, command in enumerate(('Draft a reply to my latest email', 'Laptop: draft a short weekend plan')):
+            local, _ = self.agents.submit({'id': f'local-voice-{i}', 'timezone': 'UTC', 'command': command})
+            self.assertNotIn('execution_host', local['payload'])
+
     def test_conversation_controls_are_direct_and_do_not_capture_substantive_requests(self):
         for n,phrase in enumerate(("Hey Chat, start conversation mode.","Let's talk!",'Enter a conversation mode.','That was all.','That’s all.','End the conversation.')):
             self.text=phrase;result=self.post(self.body('mode-control-'+str(n))).json()
