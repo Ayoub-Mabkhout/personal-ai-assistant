@@ -263,6 +263,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         app.state.file_drops=drops
         for drop_router in file_drop_router(drops,(submit_token,worker_token),device_auth(groceries_api.devices)):
             app.include_router(drop_router)
+    task_attachments = getattr(app.state, 'task_attachments', None)
     from .banking import Banking,ConsentReminderPump,banking_router
     banking=Banking(Path(path).with_name('banking.sqlite3'),**({'clock':clock} if clock else {}))
     app.state.banking=banking
@@ -270,14 +271,14 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         money_reminder_pump=ConsentReminderPump(banking,sender,visibility=notifications.get('visibility','private'))
     app.state.money_reminder_pump=money_reminder_pump
     banking_owner,banking_public,banking_phone,banking_conversation,banking_owner_view=banking_router(
-        banking,submit,device_auth(groceries_api.devices) if groceries else submit,owner_auth)
+        banking,submit,device_auth(groceries_api.devices) if groceries else submit,owner_auth,task_attachments)
     app.include_router(banking_owner);app.include_router(banking_public);app.include_router(banking_conversation);app.include_router(banking_owner_view)
     if groceries: app.include_router(banking_phone)
     from personal_assistant.workout.store import Workouts
     from personal_assistant.workout.api import routers as workout_routers
     workouts=Workouts(Path(path).with_name('workout.sqlite3'),**({'clock':clock} if clock else {}))
     app.state.workouts=workouts
-    for routes in workout_routers(workouts,submit,device_auth(groceries_api.devices) if groceries else None):
+    for routes in workout_routers(workouts,submit,device_auth(groceries_api.devices) if groceries else None,task_attachments):
         app.include_router(routes)
     if train_assets is not None:
         from personal_assistant.workout.web import mount_train

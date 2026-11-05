@@ -248,3 +248,16 @@ The worker uses `scripts/attach_task_file.py FILE --task CURRENT_JOB_ID`, rather
 than placing a laptop-only path in its answer. Successful uploads are visible
 while the task finishes, and stable content-based IDs make retries idempotent.
 This task-specific route is separate from explicit file drops to phone Downloads.
+
+
+## Worker status and specialist chats
+
+The header reports relay-backed worker readiness. The native Coach and Money
+specialist chats report their own worker readiness and use the same composer
+for typing, dictation, and file uploads. A sent file is shared with the
+selected specialist for that message. Text and PDF previews are bounded.
+Supported images travel with the model turn. Original files remain available
+in the chat.
+
+The Iron League website's existing coach and approved progress-photo flows
+remain separate from Companion's phone attachment path.

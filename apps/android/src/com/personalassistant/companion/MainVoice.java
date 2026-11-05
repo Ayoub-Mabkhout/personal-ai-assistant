@@ -1,7 +1,6 @@
 package com.personalassistant.companion;
 
 import android.content.SharedPreferences;
-import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.*;
 import android.widget.*;
@@ -11,21 +10,15 @@ import org.json.*;
 final class MainVoice {
     private static final long ANSWER_FRESH_MS=30*60000L;
     private final MainActivity a;private final AppUi ui;
-    final AppUi.VoiceButton talk;final AppUi.Meter meter;final AppUi.StatusChip connection;final Switch background;final AppUi.Pill stop,conversation,testWake;final Button resume;final ChatTimeline chat;
+    final AppUi.VoiceButton talk;final AppUi.Meter meter;final Switch background;final AppUi.Pill stop,conversation,testWake;final Button resume;final ChatTimeline chat;
     private final TextView status,detail,hint,words,answer,answerMeta,testCount,heard;private final Button answerTask;private String shownAnswer="";private final View liveCard,answerCard,testCard;private final LinearLayout actions;
     private long answerRevision=-1,answerTime;private String answerText="",answerKind="",answerId="";boolean changing;
-    private String workerState="";private boolean checkingWorker;private long nextWorkerCheck;
     /** Meridian hero: the weather pill over the sky and today's daylight under the orb; absent in the other appearance modes. */
     final boolean meridian;private final TextView weather;private final LinearLayout hero;final MeridianTimeline timeline;
 
     MainVoice(MainActivity a,AppUi ui,LinearLayout page){
         this.a=a;this.ui=ui;
-        LinearLayout top=ui.row();top.setPadding(0,0,ui.dp(88),0);View mark=new View(a);mark.setBackground(ui.aurora(150,true));mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);top.addView(mark,new LinearLayout.LayoutParams(ui.dp(22),ui.dp(22)));
-        meridian=AppUi.DAYLIGHT.equals(ui.mode);TextView brand=ui.type("Companion",17,24,700,-.012f,meridian?0xFFFFFFFF:ui.text);if(meridian)brand.setShadowLayer(ui.dpf(4),0,ui.dpf(1),0x66140828);
-        top.addView(brand,MainParts.weighted(ui,1,10,0,0,0));
-        connection=ui.statusChip("Connect phone","neutral");FrameLayout hit=new FrameLayout(a);hit.setPadding(ui.dp(4),0,ui.dp(4),0);hit.setBackground(ui.pressable(null,24));hit.setClickable(true);hit.setFocusable(true);hit.setOnClickListener(v->a.openConnection());hit.addView(connection,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|Gravity.END));top.addView(hit,new LinearLayout.LayoutParams(-2,ui.dp(48)));page.addView(top);
-        connection.setContentDescription("Assistant worker status");
-        connection.post(this::watchWorker);
+        meridian=AppUi.DAYLIGHT.equals(ui.mode);
         weather=ui.type("",12.5f,16,600,0,0xFFFFFFFF);weather.setTag("weather_pill");weather.setShadowLayer(ui.dpf(6),0,0,0x40140828);weather.setCompoundDrawablePadding(ui.dp(6));weather.setPadding(ui.dp(10),ui.dp(5),ui.dp(12),ui.dp(5));
         weather.setBackground(ui.outline(0x2E140828,99,0x40FFFFFF,1));weather.setVisibility(View.GONE);page.addView(weather,MainParts.params(ui,-2,-2,0,0,0,0));
 
@@ -84,40 +77,6 @@ final class MainVoice {
 
     private static void label(TextView view,String value){if(!view.getText().toString().equals(value))view.setText(value);}
 
-    private void watchWorker(){
-        if(a.isDestroyed()||!connection.isAttachedToWindow())return;
-        if(connection.isShown()&&connection.hasWindowFocus())refreshWorker(a.paired());
-        connection.postDelayed(this::watchWorker,15000);
-    }
-
-    private void refreshWorker(boolean paired){
-        if(!paired||!VoiceOutbox.networkReady(a)){
-            workerState="";nextWorkerCheck=0;renderWorker(paired);return;
-        }
-        if(checkingWorker||SystemClock.elapsedRealtime()<nextWorkerCheck)return;
-        checkingWorker=true;nextWorkerCheck=SystemClock.elapsedRealtime()+15000;
-        new Thread(()->{
-            String state="unavailable";
-            try{
-                JSONObject status=(JSONObject)Cloud.call(a,"voice/status",null,true);
-                JSONObject workers=status.getJSONObject("connection");
-                state=workers.optString("assistant",workers.optString("server",workers.optString("laptop","unavailable")));
-            }catch(Exception ignored){}
-            String result=state;
-            a.runOnUiThread(()->{checkingWorker=false;if(connection.isAttachedToWindow()){workerState=result;renderWorker(a.paired());}});
-        },"assistant-status").start();
-    }
-
-    private void renderWorker(boolean paired){
-        String link=!paired?"Connect phone":!VoiceOutbox.networkReady(a)?"Offline":
-            workerState.isEmpty()?"Checking…":"ready".equals(workerState)?"Online":"Offline";
-        if(!link.equals(connection.getText().toString())){
-            AppUi.update(connection,link);
-            connection.tone(link.equals("Online")?"success":link.equals("Offline")?"warning":"neutral");
-            connection.setContentDescription(paired?"Assistant worker "+link:"Connect phone");
-        }
-    }
-
     void update(String title,String text,String orb,boolean loading,boolean mic,boolean testing,boolean wake,boolean paired,boolean conversationOn){
         SharedPreferences p=Cloud.prefs(a);boolean live=VoiceStatus.live(orb),engaged=mic||loading;
         talk.state(orb);talk.level(AppUi.level(a),live&&mic);AppUi.update(status,title);AppUi.update(detail,text);
@@ -125,8 +84,6 @@ final class MainVoice {
         String partial=p.getString("voice_last_partial",""),spoken=partial.isEmpty()?p.getString("voice_user_text",""):partial;liveCard.setVisibility(live&&!spoken.isEmpty()?View.VISIBLE:View.GONE);if(!spoken.isEmpty())label(words,spoken);
         boolean fresh=freshAnswer();answerCard.setVisibility(fresh&&!live?View.VISIBLE:View.GONE);
         if(fresh){if(!answerText.equals(shownAnswer)){shownAnswer=answerText;RichText.show(ui,answer,answerText);AppUi.fade(answer);}AppUi.update(answerMeta,"Assistant \u00b7 "+AppUi.stamp(answerTime));answerTask.setVisibility(!answerId.isEmpty()&&answerKind.equals("acknowledgement")?View.VISIBLE:View.GONE);}
-        renderWorker(paired);
-        if(connection.isShown())refreshWorker(paired);
         changing=true;background.setChecked(testing?p.getBoolean("ui_test_background_desired",false):wake);changing=false;
         testCard.setVisibility(testing?View.VISIBLE:View.GONE);label(testWake,testing?"Finish test":"Test wake");label(conversation,conversationOn?"End conversation":"Start conversation");
         long wakes=AppUi.number(a,"voice_wake_count")-AppUi.number(a,"ui_test_wake_baseline");AppUi.update(testCount,wakes>0?"Heard Hey Chat "+wakes+" time"+(wakes==1?"":"s"):"Waiting for a wake...");label(heard,partial.isEmpty()?"No words detected yet.":"Heard: "+partial);

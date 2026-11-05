@@ -3,6 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import urllib.request
 from personal_assistant.relay.client import NoRedirect
 
@@ -39,6 +42,44 @@ def download(config, identifiers, directory):
             finally:temporary.unlink(missing_ok=True)
         result.append({**row,'path':str(target.resolve())})
     return result
+
+
+SPECIALIST_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+
+
+def specialist_images(rows):
+    return [row for row in rows if row['mime'] in SPECIALIST_IMAGE_TYPES and row['size'] <= 8 * 1024 * 1024]
+
+
+def specialist_content(rows):
+    """Give shell-disabled specialists bounded excerpts of verified, explicitly shared files."""
+    images = {row['id'] for row in specialist_images(rows)}
+    readable = []
+    for row in rows:
+        item = {key: row[key] for key in ('id', 'name', 'mime', 'size')}
+        path = Path(row['path'])
+        if row['id'] in images:
+            item['content'] = 'Image supplied with this turn.'
+        elif row['mime'].startswith('text/') or path.suffix.lower() in ('.txt', '.md', '.csv', '.tsv', '.json', '.log'):
+            with path.open('rb') as stream:
+                item['text_excerpt'] = stream.read(12000).decode('utf-8-sig', errors='replace').replace('\x00', '')
+        elif row['mime'] == 'application/pdf' or path.suffix.lower() == '.pdf':
+            executable = shutil.which('pdftotext')
+            if executable:
+                try:
+                    with tempfile.TemporaryFile() as output:
+                        subprocess.run([executable, '-f', '1', '-l', '12', '-enc', 'UTF-8', str(path), '-'],
+                                       stdout=output, stderr=subprocess.DEVNULL, timeout=15, check=True)
+                        output.seek(0)
+                        text = output.read(12000).decode('utf-8', errors='replace').strip()
+                    if text:
+                        item['text_excerpt'] = text
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        if 'text_excerpt' not in item and 'content' not in item:
+            item['content'] = 'No readable preview. Ask for an excerpt or a supported format if needed.'
+        readable.append(item)
+    return readable
 
 
 def instructions(rows):

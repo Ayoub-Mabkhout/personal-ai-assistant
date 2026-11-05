@@ -73,6 +73,12 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(capacity.exhausted_until(reading), NOW + 30)
         self.assertFalse(capacity.exhausted(capacity.claude(self.config, NOW + 30, refresh=False)))
 
+    def test_missing_reset_does_not_keep_a_worker_blocked_forever(self):
+        event = {'type': 'rate_limit_event', 'rate_limit_info': {'status': 'rejected', 'rateLimitType': 'five_hour'}}
+        capacity.save_claude(self.config, [event], now=NOW)
+        self.assertTrue(capacity.exhausted(capacity.claude(self.config, NOW, refresh=False)))
+        self.assertFalse(capacity.exhausted(capacity.claude(self.config, NOW + 1800, refresh=False)))
+
     def test_worker_blocks_claims_until_one_account_resets(self):
         from unittest.mock import Mock
         from personal_assistant.orchestrator.service import AgentWorker

@@ -21,9 +21,9 @@ public final class QuickTaskActivity extends Activity {
         if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(true);setTurnScreenOn(true);}
         else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE|WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        boolean locked=getSystemService(KeyguardManager.class).isDeviceLocked();
         LinearLayout box=ui.column();box.setPadding(ui.dp(24),ui.dp(24),ui.dp(24),ui.dp(16));
-        LinearLayout header=ui.row();header.addView(ui.display("New task"),new LinearLayout.LayoutParams(0,-2,1));if(locked)header.addView(ui.badge("Phone locked"));box.addView(header);ui.space(box,6);
+        LinearLayout header=ui.row();header.addView(ui.display("New task"),new LinearLayout.LayoutParams(0,-2,1));header.addView(AssistantStatus.worker(this,ui,null));box.addView(header);ui.space(box,6);
+        if(getSystemService(KeyguardManager.class).isDeviceLocked())box.addView(ui.badge("Phone locked"),new LinearLayout.LayoutParams(-2,-2));
         box.addView(ui.detail("Type or dictate what you need. It goes to your assistant like a spoken request."));ui.space(box,16);
         input=new EditText(this);input.setHint("Find my latest electricity invoice…");input.setTextColor(ui.text);input.setHintTextColor(ui.muted);input.setTextSize(18);input.setTypeface(AppUi.face(500));
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(3);input.setGravity(Gravity.TOP|Gravity.START);

@@ -17,6 +17,7 @@ class Question(Model):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,100}$')
     text: str = Field(min_length=1,max_length=8000)
     photos: list[str] = Field(default_factory=list,max_length=6)
+    attachments: list[str] = Field(default_factory=list,max_length=10)
     photo_approval: bool = False
     context: dict = Field(default_factory=dict)
 
@@ -60,20 +61,20 @@ async def bounded(request, limit):
     return bytes(raw)
 
 
-def routers(store, submit, device=None):
+def routers(store, submit, device=None, attachments=None):
     owner = APIRouter(prefix='/v1/workout',dependencies=[Depends(submit)])
     phone = APIRouter(prefix='/groceries/v1/mobile/workout',dependencies=[Depends(device)]) if device else None
 
     def get_store(): return store
 
     install(owner, get_store)
-    if phone: install(phone, get_store)
+    if phone: install(phone, get_store, attachments=attachments, device=device)
 
     install_worker(owner, get_store)
     return [owner,phone] if phone else [owner]
 
 
-def install(router, get_store, *, browser=False):
+def install(router, get_store, *, browser=False, attachments=None, device=None):
     @router.get('/changes')
     def changes(after: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200), store=Depends(get_store)):
         return store.changes(after,limit)
@@ -135,13 +136,26 @@ def install(router, get_store, *, browser=False):
         view, seconds = await long_poll(changed, store.wakeups, ('conversation', store.user_id), seconds, request, recheck=15)
         if view is None:  # timed out unchanged: answer with the current (same-version) view
             view = await run_in_threadpool(store.conversation_view, limit, before)
+        if attachments is not None:
+            for item in view['items']:
+                identifiers = item.get('context', {}).get('chat_attachments')
+                if identifiers:
+                    item['attachments'] = attachments.describe(identifiers)
         return {**view, 'wait_seconds': seconds}
 
+    def no_phone():
+        return None
+
     @router.post('/trainer/questions')
-    def question(body: Question, store=Depends(get_store)):
-        context = body.context
+    def question(body: Question, store=Depends(get_store), phone=Depends(device or no_phone)):
+        context = {key: value for key, value in body.context.items() if key != 'chat_attachments'}
         if browser:
             context = {key: context[key] for key in ('current_workout_id', 'sprint_id', 'template_id') if key in context}
+        if body.attachments:
+            if attachments is None or not phone:
+                raise HTTPException(422, 'Attach files from the paired Companion app.')
+            attachments.bind(body.attachments, 'coach-' + body.id, phone)
+            context['chat_attachments'] = body.attachments
         return store.question(body.id,body.text,body.photos,body.photo_approval,context)
 
     @router.post('/trainer/{identifier}/approve')

@@ -129,8 +129,11 @@ def settle(relay, ledger):
     return applied
 
 
-def ask_question(ledger, request_id, text, transaction=None):
-    return ledger.enqueue('question', request_id, {'text': text, 'transaction': transaction})
+def ask_question(ledger, request_id, text, transaction=None, attachments=None):
+    payload = {'text': text, 'transaction': transaction}
+    if attachments:
+        payload['attachments'] = attachments
+    return ledger.enqueue('question', request_id, payload)
 
 
 def explain(ledger, request_id, transaction, text=''):

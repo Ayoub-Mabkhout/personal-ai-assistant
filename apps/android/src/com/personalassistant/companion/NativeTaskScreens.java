@@ -30,6 +30,7 @@ final class NativeTaskScreens {
             this.a=a;ui=new AppUi(a);dialog=ui.sheet();root=ui.column();root.setBackground(ui.pageBackground());
             bar=ui.row();bar.setPadding(ui.dp(17),ui.dp(6),ui.dp(17),ui.dp(6));bar.addView(ui.iconButton("back","Back from "+title,dialog::dismiss),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));
             TextView heading=ui.type(title,20,26,700,-.01f,ui.text);heading.setSingleLine(true);if(Build.VERSION.SDK_INT>=28)heading.setAccessibilityHeading(true);heading.setEllipsize(TextUtils.TruncateAt.END);LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(0,-2,1);hp.leftMargin=hp.rightMargin=ui.dp(10);bar.addView(heading,hp);
+            bar.addView(AssistantStatus.worker(a,ui,null));
             refresh=ui.iconButton("refresh","Refresh",this::reload);bar.addView(refresh,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));root.addView(bar);
             status=ui.type("",12.5f,18,500,0,ui.muted);status.setTag("native_task_status");status.setVisibility(View.GONE);status.setPadding(ui.dp(24),ui.dp(2),ui.dp(24),ui.dp(8));status.setCompoundDrawablePadding(ui.dp(6));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);root.addView(status);
             scroll=new ScrollView(a);scroll.setFillViewport(true);body=ui.column();body.setPadding(ui.dp(20),ui.dp(4),ui.dp(20),ui.dp(24));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));

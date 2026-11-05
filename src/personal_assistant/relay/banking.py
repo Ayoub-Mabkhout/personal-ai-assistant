@@ -53,6 +53,7 @@ class ConversationQuestion(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,64}$')
     text: str = Field(min_length=1, max_length=4000)
+    attachments: list[str] = Field(default_factory=list, max_length=10)
 
 
 class MoneyHeartbeat(BaseModel):
@@ -89,6 +90,7 @@ class Banking:
                 retry_after REAL NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,text TEXT NOT NULL,created REAL NOT NULL,
                 collected REAL,answer TEXT,answered REAL);
+            CREATE TABLE IF NOT EXISTS conversation_files(id TEXT PRIMARY KEY,files TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS specialist_status(id INTEGER PRIMARY KEY CHECK(id=1),state TEXT NOT NULL,seen REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS merchant_logo_assets(id TEXT PRIMARY KEY,png BLOB NOT NULL);''')
         db.close()
@@ -284,19 +286,29 @@ class Banking:
     def ask(self, question):
         with self.db() as db:
             row = db.execute('SELECT text FROM conversations WHERE id=?', (question.id,)).fetchone()
-            if row and row[0] != question.text:
-                raise HTTPException(409, 'Conversation ID already has different text.')
+            if row and (row[0] != question.text or self.files(db, question.id) != question.attachments):
+                raise HTTPException(409, 'Conversation ID already has different content.')
             if not row:
                 db.execute('INSERT INTO conversations(id,text,created) VALUES(?,?,?)',
                            (question.id, question.text, self.clock()))
+                if question.attachments:
+                    db.execute('INSERT INTO conversation_files VALUES(?,?)', (question.id, json.dumps(question.attachments)))
         return self.conversation(question.id)
+
+    @staticmethod
+    def files(db, identifier):
+        row = db.execute('SELECT files FROM conversation_files WHERE id=?', (identifier,)).fetchone()
+        return json.loads(row[0]) if row else []
 
     def conversation(self, identifier):
         with self.db() as db:
             row = db.execute('SELECT id,text,created,answer,answered FROM conversations WHERE id=?', (identifier,)).fetchone()
-        if not row:
-            raise HTTPException(404, 'Conversation not found.')
+            if not row:
+                raise HTTPException(404, 'Conversation not found.')
+            files = self.files(db, identifier)
         result=dict(zip(('id', 'text', 'created', 'answer', 'answered'), row))
+        if files:
+            result['attachments'] = files
         if row[3] is None:
             from .answer_streams import read_many
             with self.db() as db:result.update(read_many(db,'money',[identifier]).get(identifier,{}))
@@ -315,7 +327,8 @@ class Banking:
     def pending_conversations(self):
         with self.db() as db:
             rows = db.execute('SELECT id,text,created FROM conversations WHERE collected IS NULL ORDER BY created,id LIMIT 100').fetchall()
-        return {'items': [dict(zip(('id', 'text', 'created'), row)) for row in rows]}
+            items = [{'id': row[0], 'text': row[1], 'created': row[2], 'attachments': self.files(db, row[0])} for row in rows]
+        return {'items': items}
 
     def unanswered_conversations(self, after=None):
         with self.db() as db:
@@ -325,7 +338,8 @@ class Banking:
             rows = db.execute('''SELECT id,text,created FROM conversations WHERE answer IS NULL
                 AND (created,id)>(?,?) ORDER BY created,id LIMIT 100''',
                 tuple(boundary) if boundary else (0, '')).fetchall()
-        return {'items': [dict(zip(('id', 'text', 'created'), row)) for row in rows]}
+            items = [{'id': row[0], 'text': row[1], 'created': row[2], 'attachments': self.files(db, row[0])} for row in rows]
+        return {'items': items}
 
     def collect_conversation(self, identifier):
         with self.db() as db:
@@ -389,7 +403,7 @@ class ConsentReminderPump:
         if self.thread: self.thread.join(timeout=12)
 
 
-def banking_router(banking, submit, device, owner_auth=None):
+def banking_router(banking, submit, device, owner_auth=None, attachments=None):
     owner = APIRouter(prefix='/v1/banking', dependencies=[Depends(submit)])
     public = APIRouter()
     phone = APIRouter(prefix='/groceries/v1/mobile/money', dependencies=[Depends(device)])
@@ -449,6 +463,8 @@ def banking_router(banking, submit, device, owner_auth=None):
     @conversation.post('')
     def owner_question(body: ConversationQuestion, request: Request, authorization: str | None = Header(default=None)):
         authorize(request, authorization)
+        if body.attachments:
+            raise HTTPException(422, 'Attach files from the paired Companion app.')
         return banking.ask(body)
 
     @conversation.get('/pending', dependencies=[Depends(submit)])
@@ -500,14 +516,25 @@ def banking_router(banking, submit, device, owner_auth=None):
 
     @phone.get('/conversations')
     def phone_conversations(before: str | None = Query(default=None, pattern=r'^[A-Za-z0-9_-]{8,64}$')):
-        return {**banking.conversations(before=before), 'specialist': banking.specialist_status()}
+        result = banking.conversations(before=before)
+        result['items'] = [phone_message(item) for item in result['items']]
+        return {**result, 'specialist': banking.specialist_status()}
+
+    def phone_message(item):
+        if attachments is not None and item.get('attachments'):
+            item['attachments'] = attachments.describe(item['attachments'])
+        return item
 
     @phone.post('/conversations')
-    def phone_question(body: ConversationQuestion):
-        return banking.ask(body)
+    def phone_question(body: ConversationQuestion, phone=Depends(device)):
+        if body.attachments:
+            if attachments is None:
+                raise HTTPException(503, 'File attachments unavailable.')
+            attachments.bind(body.attachments, 'money-' + body.id, phone)
+        return phone_message(banking.ask(body))
 
     @phone.get('/conversations/{identifier}')
     def phone_conversation(identifier: str):
-        return banking.conversation(identifier)
+        return phone_message(banking.conversation(identifier))
 
     return owner, public, phone, conversation, owner_view

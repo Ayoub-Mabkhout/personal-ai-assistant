@@ -162,8 +162,13 @@ def exhausted(reading):
     """True when a capacity reading shows no allowance left in any window (windows that reset since count as free)."""
     if not reading or not reading.get('available'):return False
     windows=[v for v in reading.values() if isinstance(v,dict)]
-    if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0 for w in windows):return True
-    return bool(reading.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
+    # A provider may reject a run without publishing a reset. Retry after the
+    # same bounded cooldown used for a CLI limit error with no telemetry.
+    recent = (reading.get('observed_minutes_ago') or 0) < 30
+    if any(w.get('remaining_percent') is not None and w['remaining_percent']<=0
+           and (w.get('resets_at') or recent) for w in windows):
+        return True
+    return recent and bool(reading.get('limit_reached')) and not any(w.get('reset_since_observed') for w in windows)
 
 
 def exhausted_until(reading):

@@ -22,7 +22,7 @@ final class TaskAttachments {
     static JSONObject metadata(Context c,String id)throws Exception{return new JSONObject(Cloud.prefs(c).getString("task_attachment:"+id,"{}"));}
     static JSONArray ids(JSONArray rows)throws Exception{JSONArray ids=new JSONArray();for(int n=0;n<rows.length();n++)ids.put(rows.getJSONObject(n).getString("id"));return ids;}
     static String size(long bytes){return bytes>=1024*1024?String.format(java.util.Locale.ROOT,"%.1f MB",bytes/1048576.0):Math.max(1,(bytes+1023)/1024)+" KB";}
-    static void choose(Activity a,String draft){new AlertDialog.Builder(a).setTitle("Attach to task").setItems(new String[]{"Photos and screenshots","Files and documents"},(d,n)->a.startActivity(new Intent(a,AttachmentPickerActivity.class).putExtra("draft",draft).putExtra("images",n==0))).show();}
+    static void choose(Activity a,String draft){new AlertDialog.Builder(a).setTitle("Add attachment").setItems(new String[]{"Photos and screenshots","Files and documents"},(d,n)->a.startActivity(new Intent(a,AttachmentPickerActivity.class).putExtra("draft",draft).putExtra("images",n==0))).show();}
     static void add(Context c,String key,Uri uri)throws Exception{
         if(draft(c,key).length()>=COUNT)throw new Exception("Up to 10 files per message");
             String name="Attachment",mime=c.getContentResolver().getType(uri);long declared=-1;

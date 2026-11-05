@@ -44,6 +44,29 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(detail['attachments'][0]['name'],'Example picture.png')
         self.assertEqual(self.upload(data=b'different content').status_code,409)
 
+    def test_specialist_chats_attach_only_files_uploaded_by_the_sending_phone(self):
+        data = b'private specialist chat fixture'
+        self.upload('specialist-file', data=data).raise_for_status()
+        base = '/groceries/v1/mobile/'
+        item = {'id': 'specialist-chat', 'text': 'Review the attached file', 'attachments': ['specialist-file']}
+        money = base + 'money/conversations'
+        coach = base + 'workout/trainer/questions'
+        for endpoint in (money, coach):
+            self.assertEqual(self.client.post(endpoint, json=item, headers=self.other).status_code, 404)
+            self.client.post(endpoint, json=item, headers=self.phone).raise_for_status()
+            self.client.post(endpoint, json=item, headers=self.phone).raise_for_status()
+            self.assertEqual(self.client.post(endpoint, json={**item, 'attachments': []}, headers=self.phone).status_code, 409)
+
+        chat = self.client.get(base + 'workout/trainer/conversation', headers=self.phone).json()['items']
+        self.assertEqual(chat[0]['attachments'][0]['id'], 'specialist-file')
+        money_item = self.client.get(money, headers=self.phone).json()['items'][0]
+        self.assertEqual(money_item['attachments'][0]['id'], 'specialist-file')
+        pending = self.client.get('/v1/banking/conversations/pending', headers=self.owner).json()['items']
+        self.assertEqual(pending[0]['attachments'], ['specialist-file'])
+        original = '/v1/agent/attachments/specialist-file/content'
+        self.assertEqual(self.client.get(original, headers=self.worker).content, data)
+        self.assertEqual(self.client.get(original, headers={'Authorization': 'Bearer ' + 'v' * 40}).status_code, 404)
+
     def test_server_can_only_read_and_return_attachments_for_its_tasks(self):
         self.upload()
         laptop = self.new_task().json()["task_id"]

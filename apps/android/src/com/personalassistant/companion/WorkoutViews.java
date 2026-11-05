@@ -90,7 +90,8 @@ final class WorkoutViews {
     /** Full-height sheet with a back control. */
     static final class Sheet {
         final AppUi ui;final Dialog dialog;final LinearLayout root,body,bar;final ScrollView scroll;
-        Sheet(AppUi ui,String heading){this.ui=ui;dialog=ui.sheet();root=ui.column();root.setBackgroundColor(ui.background);root.setFitsSystemWindows(true);bar=ui.row();bar.setPadding(ui.dp(8),ui.dp(8),ui.dp(12),ui.dp(4));bar.addView(ui.iconButton("back","Back",dialog::dismiss),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));TextView h=ui.type(heading,20,26,700,0,ui.text);h.setMaxLines(2);bar.addView(h,MainParts.weighted(ui,1,4,0,0,0));root.addView(bar);
+        Sheet(AppUi ui,String heading){this(ui,heading,true);}
+        Sheet(AppUi ui,String heading,boolean worker){this.ui=ui;dialog=ui.sheet();root=ui.column();root.setBackgroundColor(ui.background);root.setFitsSystemWindows(true);bar=ui.row();bar.setPadding(ui.dp(8),ui.dp(8),ui.dp(12),ui.dp(4));bar.addView(ui.iconButton("back","Back",dialog::dismiss),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));TextView h=ui.type(heading,20,26,700,0,ui.text);h.setMaxLines(2);bar.addView(h,MainParts.weighted(ui,1,4,0,0,0));if(worker&&ui.context instanceof android.app.Activity)bar.addView(AssistantStatus.worker((android.app.Activity)ui.context,ui,null));root.addView(bar);
             scroll=new ScrollView(ui.context);body=ui.column();body.setPadding(ui.dp(16),ui.dp(8),ui.dp(16),ui.dp(28));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));dialog.setContentView(root);}
         Sheet show(){dialog.show();Window w=dialog.getWindow();if(w!=null)w.setLayout(-1,-1);return this;}
     }

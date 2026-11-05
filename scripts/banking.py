@@ -40,7 +40,7 @@ def collect_questions(relay, ledger):
         if not items:
             return collected
         for item in items:
-            service.ask_question(ledger, item['id'], item['text'])
+            service.ask_question(ledger, item['id'], item['text'], attachments=item.get('attachments'))
             relay.call(CONVERSATIONS + '/' + item['id'] + '/ack', {}, method='POST')
             collected += 1
 
@@ -52,7 +52,7 @@ def publish_replies(relay, ledger):
         path = CONVERSATIONS + '/unanswered' + ('?after=' + after if after else '')
         items = relay.call(path)['items']
         for item in items:
-            sequence = service.ask_question(ledger, item['id'], item['text'])
+            sequence = service.ask_question(ledger, item['id'], item['text'], attachments=item.get('attachments'))
             answer = ledger.audit_output(sequence)
             if answer:
                 relay.call(CONVERSATIONS + '/' + item['id'] + '/answer', {'text': answer}, method='PUT')
