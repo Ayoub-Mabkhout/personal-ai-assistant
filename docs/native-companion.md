@@ -261,6 +261,12 @@ regained window focus (cold start, resume, closing a sheet) refreshes it. The
 native Coach and Money specialist chats report their own worker readiness and
 use the same composer for typing, dictation, and file uploads.
 
+Every native chat (New task, task follow-ups, Coach and Money) uses one shared
+composer (`Composer.java`): a rounded container with attachment chips in one
+scrolling row, a frameless multiline field that grows to six lines and then
+scrolls, Add attachment on the left, and Dictate plus a round Send on the right,
+all with 48dp touch targets.
+
 Both chats follow the task conversation: the user's message appears at once as
 Sending, then Sent; each message has one reply bubble that moves from queued to
 streamed partial text to the final answer. An unconfirmed message stays saved

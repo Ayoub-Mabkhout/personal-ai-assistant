@@ -1,8 +1,6 @@
 package com.personalassistant.companion;
 
 import android.view.*;
-import android.view.inputmethod.EditorInfo;
-import android.text.InputType;
 import android.widget.*;
 import java.util.*;
 
@@ -11,9 +9,9 @@ final class SpecialistChat {
     final MainActivity activity;
     final AppUi ui;
     final LinearLayout view,files;
+    final Composer composer;
     final EditText input;
-    final AppUi.Fab send;
-    final ImageButton mic,attach;
+    final ImageButton send,mic,attach;
     final String draft,voice;
     private String fileSignature,shownMode;
     private boolean enabled=true;
@@ -23,28 +21,11 @@ final class SpecialistChat {
         this.activity=activity;this.ui=ui;this.draft=draft;this.voice=voice;
         view=ui.column();
         view.setTag("specialist_composer");
-        view.setBackground(ui.sheetFace());
-        view.setPadding(ui.dp(16),ui.dp(12),ui.dp(16),ui.dp(14));
-        files=ui.column();
-        view.addView(files);
-        input=ui.field(hint,text,true);
-        input.setSingleLine(false);
-        input.setMaxLines(5);
-        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        input.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(limit)});
-        LinearLayout compose=ui.row();
-        compose.setGravity(Gravity.BOTTOM);
-        attach=ui.iconButton("attach","Attach photos or files",()->{if(this.enabled)TaskAttachments.choose(activity,draft);});
-        if(attachments){LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44));ap.rightMargin=ui.dp(4);ap.bottomMargin=ui.dp(4);compose.addView(attach,ap);}
-        compose.addView(input,new LinearLayout.LayoutParams(0,-2,1));
-        mic=ui.iconButton("voice","Dictate message",this::dictate);
-        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48));mp.leftMargin=ui.dp(6);mp.bottomMargin=ui.dp(2);
-        compose.addView(mic,mp);
-        send=ui.fab("send","Send message",submit);
-        LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52));fp.leftMargin=ui.dp(8);
-        compose.addView(send,fp);
-        view.addView(compose,new LinearLayout.LayoutParams(-1,-2));
+        view.setPadding(ui.dp(12),ui.dp(6),ui.dp(12),ui.dp(10));
+        composer=new Composer(ui,hint,text,limit,attachments?()->{if(this.enabled)TaskAttachments.choose(activity,draft);}:null,
+            "Dictate message",this::dictate,"Send message",submit);
+        view.addView(composer.view,new LinearLayout.LayoutParams(-1,-2));
+        files=composer.files;input=composer.input;send=composer.send;mic=composer.mic;attach=composer.attach;
         if(attachments)refreshFiles();
     }
 
@@ -57,10 +38,8 @@ final class SpecialistChat {
 
     void enabled(boolean value){
         enabled=value;
-        input.setEnabled(value);input.setAlpha(value?1f:.55f);
-        attach.setEnabled(value);
-        mic.setEnabled(value);mic.setAlpha(value?1f:.45f);
-        send.setEnabled(value);
+        composer.editable(value);
+        composer.sendable(value);
     }
 
     void dictate(){
@@ -87,11 +66,7 @@ final class SpecialistChat {
             TaskTurns.Insertion result=TaskTurns.insert(text.toString(),lo,hi,words);text.replace(lo,hi,result.piece);input.setSelection(Math.min(result.caret,input.length()));
         }
         String mode=dictating()?"dictate":"";
-        if(!mode.equals(shownMode)){
-            shownMode=mode;boolean on=!mode.isEmpty();
-            mic.setImageDrawable(ui.glyph(on?"stop":"voice",on?ui.accent:ui.text,22));
-            mic.setContentDescription(on?"Finish dictation":"Dictate message");
-        }
+        if(!mode.equals(shownMode)){shownMode=mode;composer.dictating(!mode.isEmpty(),"Dictate message","Finish dictation");}
     }
 
     void clearFiles(){

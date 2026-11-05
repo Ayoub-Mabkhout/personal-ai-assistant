@@ -108,7 +108,7 @@ final class NativeTaskScreens {
     }
 
     private static final class Detail extends Screen {
-        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved,voiceNote;final EditText instruction;final AppUi.Fab send;final ImageButton mic;final AppUi.Pill talk;final Set<String> queued=new HashSet<>();
+        final String kind,id;final boolean agent;final LinearLayout meta,messages,pendingMessages,composer;final AppUi.StatusChip chip;final TextView provenance,saved,voiceNote;final EditText instruction;final Composer entry;final ImageButton send,mic;final AppUi.Pill talk;final Set<String> queued=new HashSet<>();
         String rendered,version="";boolean busy,loaded,canContinue=true,waiting,primed,follow,jump,placeholder,watching,active;int total=-1,watchEpoch,backoff;long lastDay;LinearLayout attachmentDraft;
         final Runnable watchLoop=this::watch;
         // Voice: the service owns the microphone; "requested" bridges the moment between a tap and the service starting.
@@ -121,16 +121,14 @@ final class NativeTaskScreens {
             messages=ui.column();messages.setTag("task_messages");body.addView(messages);pendingMessages=ui.column();pendingMessages.setTag("task_pending_messages");body.addView(pendingMessages);
             composer=ui.column();composer.setTag("task_followup_card");composer.setBackground(ui.sheetFace());ui.lift(composer,28,10,true);
             LinearLayout head=ui.row();head.addView(ui.type("Continue this task",13,18,700,0,ui.text),new LinearLayout.LayoutParams(0,-2,1));
-            talk=ui.chip("Talk about this task","chat",this::talk);talk.setTag("task_voice_talk");head.addView(talk,new LinearLayout.LayoutParams(-2,ui.dp(48)));composer.addView(head);ui.space(composer,4);
-            instruction=ui.field("Add your instruction",Cloud.prefs(a).getString("task_draft:"+id,""),true);instruction.setSingleLine(false);instruction.setMaxLines(5);instruction.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);instruction.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);instruction.setTag("task_followup_input");
-            send=ui.fab("send","Send follow-up",this::submit);send.setTag("task_followup_send");
-            mic=ui.iconButton("voice","Dictate an instruction",this::dictate);mic.setTag("task_voice_dictate");
-            LinearLayout compose=ui.row();compose.setGravity(Gravity.BOTTOM);compose.addView(instruction,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48));mp.leftMargin=ui.dp(6);mp.bottomMargin=ui.dp(2);compose.addView(mic,mp);LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(ui.dp(52),ui.dp(52));fp.leftMargin=ui.dp(8);compose.addView(send,fp);composer.addView(compose);
+            talk=ui.chip("Talk about this task","chat",this::talk);talk.setTag("task_voice_talk");head.addView(talk,new LinearLayout.LayoutParams(-2,ui.dp(48)));composer.addView(head);ui.space(composer,6);
+            // The shared composer: attachments, frameless field, Add attachment, Dictate and Send in one container.
+            entry=new Composer(ui,"Add your instruction",Cloud.prefs(a).getString("task_draft:"+id,""),0,()->TaskAttachments.choose(a,"task:"+id),"Dictate an instruction",this::dictate,"Send follow-up",this::submit);
+            instruction=entry.input;instruction.setTag("task_followup_input");send=entry.send;send.setTag("task_followup_send");mic=entry.mic;mic.setTag("task_voice_dictate");attachmentDraft=entry.files;
+            composer.addView(entry.view,new LinearLayout.LayoutParams(-1,-2));
             voiceNote=ui.type("",12.5f,18,500,0,ui.muted);voiceNote.setTag("task_voice_status");voiceNote.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);voiceNote.setVisibility(View.GONE);voiceNote.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(voiceNote);
             saved=ui.type("",12.5f,18,500,0,ui.muted);saved.setTag("task_followup_status");saved.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);saved.setVisibility(View.GONE);saved.setPadding(ui.dp(8),ui.dp(8),ui.dp(8),0);composer.addView(saved);
             composer.setVisibility(agent?View.VISIBLE:View.GONE);root.addView(composer,new LinearLayout.LayoutParams(-1,-2));insets();refreshSend();
-            attachmentDraft=ui.column();composer.addView(attachmentDraft,1,new LinearLayout.LayoutParams(-1,-2));
-            head.addView(ui.iconButton("attach","Attach photos or files",()->TaskAttachments.choose(a,"task:"+id)),0,new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44)));
             TaskAttachments.renderDraft(a,ui,attachmentDraft,"task:"+id,this::refreshSend);
             instruction.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){Cloud.prefs(a).edit().putString("task_draft:"+id,s.toString()).apply();refreshSend();}public void afterTextChanged(Editable e){}});
             body.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(follow){boolean snap=jump;jump=false;end(snap);}});
@@ -168,7 +166,7 @@ final class NativeTaskScreens {
             boolean micOn=canContinue&&!talking,talkOn=canContinue&&!dictating;if(mic.isEnabled()!=micOn){mic.setEnabled(micOn);mic.setAlpha(micOn?1f:.45f);}if(talk.isEnabled()!=talkOn)talk.setEnabled(talkOn);
             if(!ticking&&(!mode.isEmpty()||now<noteUntil||now<requestedUntil)){ticking=true;main.postDelayed(tick,1000);}
         }
-        void refreshSend(){send.setEnabled(canContinue&&!instruction.getText().toString().trim().isEmpty());}
+        void refreshSend(){entry.sendable(canContinue&&!instruction.getText().toString().trim().isEmpty());}
         void end(boolean snap){follow=false;int to=Math.max(0,body.getHeight()-(scroll.getHeight()-scroll.getPaddingTop()-scroll.getPaddingBottom()));if(snap||!AppUi.motion())scroll.scrollTo(0,to);else scroll.smoothScrollTo(0,to);}
         boolean atEnd(){return scroll.getScrollY()+scroll.getHeight()>=body.getHeight()-ui.dp(80);}
         void settle(){int now=messages.getChildCount()+pendingMessages.getChildCount();if(now>total&&(total<0||atEnd())){follow=true;jump=total<0;}total=now;}

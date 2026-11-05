@@ -55,9 +55,13 @@ class TaskVoiceSourceTests(unittest.TestCase):
         screens = source('NativeTaskScreens.java')
         for tag in ('task_followup_input', 'task_followup_send', 'task_voice_dictate', 'task_voice_talk', 'task_voice_status'):
             self.assertIn('setTag("%s")' % tag, screens)
-        self.assertIn('ui.iconButton("voice","Dictate an instruction",this::dictate)', screens)
+        self.assertIn('"Dictate an instruction",this::dictate,"Send follow-up",this::submit', screens)
         self.assertIn('ui.chip("Talk about this task","chat",this::talk)', screens)
-        self.assertIn('new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48));mp.leftMargin', screens)
+        # The shared composer gives the microphone, Add attachment and Send 48dp targets.
+        composer = source('Composer.java')
+        for control in ('attach', 'mic', 'send'):
+            self.assertRegex(composer, r'actions\.addView\(%s,(new LinearLayout\.LayoutParams\(ui\.dp\(48\),ui\.dp\(48\)\)|sp)\)' % control)
+        self.assertIn('LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48))', composer)
         self.assertIn('"Stop dictation"', screens)
         # Typed follow-ups still use the durable stable-ID outbox.
         self.assertIn('NativeTasks.enqueueFollowupWithId(a,id,text,', screens)

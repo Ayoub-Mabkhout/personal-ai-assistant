@@ -13,7 +13,7 @@ import org.json.*;
 public final class QuickTaskActivity extends Activity {
     /** Dictation target shared with task details: words are transcribed and appended to this draft, nothing is sent. */
     private static final String VOICE="quick-task";
-    private AppUi ui;private EditText input;private TextView status;private Button send;private ImageButton mic;private boolean sending;private LinearLayout attachments;
+    private AppUi ui;private ScrollView scroll;private Composer composer;private EditText input;private TextView status;private ImageButton send,mic;private boolean sending;private LinearLayout attachments;
     private final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable tick=new Runnable(){public void run(){if(isFinishing())return;take();main.postDelayed(this,500);}};
     @Override public void onCreate(Bundle state){
@@ -25,22 +25,23 @@ public final class QuickTaskActivity extends Activity {
         LinearLayout header=ui.row();header.addView(ui.display("New task"),new LinearLayout.LayoutParams(0,-2,1));header.addView(AssistantStatus.worker(this,ui,null));box.addView(header);ui.space(box,6);
         if(getSystemService(KeyguardManager.class).isDeviceLocked())box.addView(ui.badge("Phone locked"),new LinearLayout.LayoutParams(-2,-2));
         box.addView(ui.detail("Type or dictate what you need. It goes to your assistant like a spoken request."));ui.space(box,16);
-        input=new EditText(this);input.setHint("Find my latest electricity invoice…");input.setTextColor(ui.text);input.setHintTextColor(ui.muted);input.setTextSize(18);input.setTypeface(AppUi.face(500));
-        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);input.setMinLines(3);input.setGravity(Gravity.TOP|Gravity.START);
-        input.setPadding(ui.dp(16),ui.dp(14),ui.dp(16),ui.dp(14));input.setBackground(ui.outline(ui.surface,20,ui.stroke,1));input.setText(Cloud.prefs(this).getString("quick_task_draft",""));input.setSelection(input.length());
-        box.addView(input,new LinearLayout.LayoutParams(-1,-2));ui.space(box,14);
-        attachments=ui.column();box.addView(attachments,new LinearLayout.LayoutParams(-1,-2));
-        LinearLayout actions=ui.row();
-        mic=ui.iconButton("voice","Dictate",this::dictate);mic.setTag("quick_task_mic");actions.addView(mic,new LinearLayout.LayoutParams(ui.dp(56),ui.dp(56)));
-        actions.addView(ui.iconButton("attach","Attach photos or files",()->TaskAttachments.choose(this,"new-task")),new LinearLayout.LayoutParams(ui.dp(48),ui.dp(56)));
-        send=new Button(this);send.setAllCaps(false);send.setText("Send");send.setTextSize(16);send.setTypeface(AppUi.face(700));send.setTextColor(0xff2a1a5e);
-        send.setBackground(ui.pressable(ui.outline(0xffefe9f8,18,0,0),18));send.setOnClickListener(v->send());
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,ui.dp(56),1);sp.setMarginStart(ui.dp(12));actions.addView(send,sp);box.addView(actions);ui.space(box,14);
+        // The shared chat composer: attachments and a frameless multiline field inside one container, Add attachment on the left, Dictate and Send on the right.
+        composer=new Composer(ui,"Find my latest electricity invoice…",Cloud.prefs(this).getString("quick_task_draft",""),0,()->TaskAttachments.choose(this,"new-task"),"Dictate",this::dictate,"Send task",this::send);
+        input=composer.input;input.setTag("quick_task_input");input.setMinLines(3);input.setSelection(input.length());attachments=composer.files;mic=composer.mic;mic.setTag("quick_task_mic");send=composer.send;send.setTag("quick_task_send");
+        box.addView(composer.view,new LinearLayout.LayoutParams(-1,-2));ui.space(box,14);
         status=ui.detail("");status.setGravity(Gravity.CENTER);box.addView(status,new LinearLayout.LayoutParams(-1,-2));
         box.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));
         box.addView(ui.ghostButton("Close",this::back),new LinearLayout.LayoutParams(-1,-2));
-        ScrollView scroll=new ScrollView(this);scroll.setFitsSystemWindows(true);scroll.setFillViewport(true);scroll.setBackground(ui.pageBackground());scroll.addView(box);setContentView(scroll);
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackground(ui.pageBackground());scroll.addView(box);setContentView(scroll);this.scroll=scroll;
+        // System bars and the keyboard pad the page; while typing, the whole composer (Send included) stays above the keyboard.
+        scroll.setOnApplyWindowInsetsListener((v,insets)->{int[] bars=TaskViews.bars(insets);v.setPadding(bars[0],bars[1],bars[2],bars[3]);return insets;});
+        View.OnLayoutChangeListener keep=(v,l,t,r,b,ol,ot,or,ob)->{if(input.hasFocus())scroll.post(this::revealComposer);};
+        composer.view.addOnLayoutChangeListener(keep);scroll.addOnLayoutChangeListener(keep);
         input.requestFocus();
+    }
+    private void revealComposer(){
+        if(scroll==null)return;int visible=scroll.getHeight()-scroll.getPaddingTop()-scroll.getPaddingBottom(),bottom=composer.view.getBottom()+ui.dp(12);
+        if(visible>0&&bottom-scroll.getScrollY()>visible)scroll.scrollTo(0,bottom-visible);
     }
     @Override public void onStart(){super.onStart();main.removeCallbacks(tick);main.post(tick);}
     @Override public void onStop(){main.removeCallbacks(tick);super.onStop();}
@@ -51,7 +52,7 @@ public final class QuickTaskActivity extends Activity {
         if(sending){String transfer=Cloud.prefs(this).getString("task_attachment_transfer","");if(!transfer.isEmpty())status.setText(transfer);}
         String words=TaskVoice.take(this,VOICE);if(!words.isEmpty()){input.append((input.length()==0?"":" ")+words);input.setSelection(input.length());}
         String note=TaskVoice.takeNote(this,VOICE);if(!note.isEmpty())status.setText(note);
-        boolean on="dictate".equals(TaskVoice.mode(this,VOICE));mic.setContentDescription(on?"Finish dictation":"Dictate");mic.setActivated(on);mic.setAlpha(on?1f:.85f);
+        boolean on="dictate".equals(TaskVoice.mode(this,VOICE));if(on!=mic.isActivated()){mic.setActivated(on);composer.dictating(on,"Dictate","Finish dictation");}
     }
     private void dictate(){
         if("dictate".equals(TaskVoice.mode(this,VOICE))){stopDictation();status.setText("Finishing dictation…");return;}
@@ -74,15 +75,15 @@ public final class QuickTaskActivity extends Activity {
         if("dictate".equals(TaskVoice.mode(this,VOICE))){status.setText("Finish dictation with the microphone, then tap Send.");return;}
         String text=input.getText().toString().trim();if(text.isEmpty()){status.setText("Type or dictate a request first.");return;}if(sending)return;
         if(Cloud.prefs(this).getString("token","").isEmpty()){status.setText("Pair Companion first, while unlocked.");return;}
-        sending=true;send.setEnabled(false);status.setText("Saving task and attachments…");
+        sending=true;composer.sendable(false);status.setText("Saving task and attachments…");
         // A stable ID per draft makes a retry after a dropped connection replay safely instead of queueing twice.
-        final String request;try{request=NativeTasks.enqueueNew(this,text);}catch(Exception error){sending=false;send.setEnabled(true);status.setText("Could not save this task. Your draft is still here.");return;}
+        final String request;try{request=NativeTasks.enqueueNew(this,text);}catch(Exception error){sending=false;composer.sendable(true);status.setText("Could not save this task. Your draft is still here.");return;}
         input.setText("");attachments.setTag(null);TaskAttachments.renderDraft(this,ui,attachments,"new-task",()->{});
         new Thread(()->{String reply;boolean ok;
             try{NativeTasks.flush(this);JSONObject receipt=new JSONObject(Cloud.prefs(this).getString("task_new_receipt:"+request,"{}"));reply=receipt.optString("reply","Task received by the server.");ok=receipt.length()>0;}
             catch(Exception e){reply="Saved on this phone. Task and files will send when connected. "+(e.getMessage()==null?"":e.getMessage());ok=false;}
             final String shown=reply;final boolean sent=ok;
-            runOnUiThread(()->{sending=false;send.setEnabled(true);status.setText(shown);
+            runOnUiThread(()->{sending=false;composer.sendable(true);status.setText(shown);
                 if(sent){NativeTasks.changed(this);input.postDelayed(this::finish,1800);}});
         }).start();
     }
