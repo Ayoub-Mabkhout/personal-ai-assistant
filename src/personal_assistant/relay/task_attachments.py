@@ -93,10 +93,32 @@ class TaskAttachments:
         return self.describe(ids)
 
 
-def attachment_router(store, device, tokens, queue=None):
+def attachment_router(store, device, tokens, queue=None, server_token=None):
     api=APIRouter()
     def worker(authorization:str|None=Header(default=None)):
-        if not authorization or not any(secrets.compare_digest(authorization,'Bearer '+token) for token in tokens):raise HTTPException(401,'Authentication required.')
+        auth = authorization.encode() if authorization else b''
+        if server_token and secrets.compare_digest(auth, ('Bearer ' + server_token).encode()):
+            return 'server'
+        if not any(secrets.compare_digest(auth, ('Bearer ' + token).encode()) for token in tokens):
+            raise HTTPException(401,'Authentication required.')
+        return 'owner'
+
+    def check_server_task(task):
+        job = queue.get(task)
+        with queue.connection() as db:
+            if queue.execution_host(db, job['payload']) != 'server':
+                raise HTTPException(404, 'Task not found.')
+
+    def check_server_attachment(identifier):
+        with store.db() as db:
+            tasks = [row[0] for row in db.execute('SELECT task FROM attachment_tasks WHERE id=?', (identifier,))]
+        for task in tasks:
+            try:
+                check_server_task(task)
+            except (HTTPException, ValueError):
+                continue
+            return
+        raise HTTPException(404, 'Attachment not found.')
 
     async def receive(identifier, request, phone, x_attachment_manifest):
         try:
@@ -124,9 +146,10 @@ def attachment_router(store, device, tokens, queue=None):
     async def upload(identifier:str,request:Request,phone=Depends(device),x_attachment_manifest:str=Header(default='')):
         return await receive(identifier,request,phone,x_attachment_manifest)
 
-    @api.put('/v1/agent/tasks/{task}/attachments/{identifier}',dependencies=[Depends(worker)])
-    async def response_file(task:str,identifier:str,request:Request,x_attachment_manifest:str=Header(default='')):
+    @api.put('/v1/agent/tasks/{task}/attachments/{identifier}')
+    async def response_file(task:str,identifier:str,request:Request,x_attachment_manifest:str=Header(default=''), actor=Depends(worker)):
         if queue is None or not re.fullmatch(ID,task):raise HTTPException(404,'Task not found.')
+        if actor == 'server':check_server_task(task)
         job=queue.get(task)
         row=await receive(identifier,request,'worker',x_attachment_manifest)
         created=store.add_response(task,identifier)
@@ -141,11 +164,14 @@ def attachment_router(store, device, tokens, queue=None):
         row=store.get(identifier,phone)
         return FileResponse(store.directory/identifier,media_type=row['mime'],filename=row['name'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 
-    @api.get('/v1/agent/attachments/{identifier}',dependencies=[Depends(worker)])
-    def worker_metadata(identifier:str):return store.get(identifier,associated=True)
+    @api.get('/v1/agent/attachments/{identifier}')
+    def worker_metadata(identifier:str, actor=Depends(worker)):
+        if actor == 'server':check_server_attachment(identifier)
+        return store.get(identifier,associated=True)
 
-    @api.get('/v1/agent/attachments/{identifier}/content',dependencies=[Depends(worker)])
-    def worker_file(identifier:str):
+    @api.get('/v1/agent/attachments/{identifier}/content')
+    def worker_file(identifier:str, actor=Depends(worker)):
+        if actor == 'server':check_server_attachment(identifier)
         row=store.get(identifier,associated=True)
         return FileResponse(store.directory/identifier,media_type=row['mime'],filename=row['name'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
     return api

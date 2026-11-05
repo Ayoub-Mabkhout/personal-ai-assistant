@@ -188,3 +188,37 @@ class SessionLaneTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class ServerWorkerLaneTests(unittest.TestCase):
+    def test_server_credential_claims_only_explicit_server_tasks_and_their_followups(self):
+        from personal_assistant.relay.continuations import Continuations, Followup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            submit, laptop, server = ({"Authorization": "Bearer " + key * 40} for key in "slv")
+            app = create_app(root / "queue.sqlite3", "s" * 40, "l" * 40, server_worker_token="v" * 40)
+            with TestClient(app) as client:
+                prefix = "/v1/agent/worker/"
+                self.assertEqual(client.post("/v1/worker/heartbeat", headers=server, json={"readiness": "ready"}).status_code, 401)
+                for headers in (laptop, server):
+                    self.assertEqual(client.post(prefix + "heartbeat", headers=headers, json={"readiness": "ready"}).status_code, 200)
+                for identifier, prompt in (("laptop-job", "ordinary task"), ("server-job", "Server: synthetic task")):
+                    self.assertEqual(client.post("/v1/agent/prompts", headers=submit,
+                                                json={"id": identifier, "prompt": prompt}).status_code, 201)
+
+                def claim(headers):
+                    return client.post(prefix + "claim", headers=headers, json={"session_lanes": True}).json()["job"]
+
+                remote = claim(server)
+                self.assertEqual(remote["id"], "server-job")
+                self.assertEqual(claim(laptop)["id"], "laptop-job")
+                queue = Queue(root / "agent-queue.sqlite3", serial=True, server_enabled=True)
+                reply, _ = Continuations(queue).accept("server-job", Followup(id="server-reply", instruction="continue"))
+                self.assertIsNone(claim(server))
+                result = client.post(prefix + "server-job/result", headers=server, json={
+                    "lease_token": remote["lease_token"], "state": "completed",
+                    "result": {"summary": "done", "workers": [{"agent": "codex", "session_id": "synthetic"}]},
+                })
+                self.assertEqual(result.status_code, 200)
+                self.assertIsNone(claim(laptop))
+                self.assertEqual(claim(server)["id"], reply["id"])

@@ -346,3 +346,17 @@ job. Native details expose separate `response_attachments` for the original answ
 and every continuation. Upload retries preserve IDs and do not duplicate files.
 No directory scanning or automatic collection of logs/intermediate files occurs.
 The worker must explicitly select requested deliverables and check upload success.
+
+## Server CLI worker
+
+When the relay is configured with a distinct server worker token, start a task
+with `Server:` to send it to the VPS. Follow-ups stay on the same worker host,
+including while the laptop is asleep. Existing tasks and ordinary submissions
+use the laptop. The server gets its own readiness status, claim credential and
+runtime directory. Its attachment access is limited to server task files.
+
+Supply the server token through `ASSISTANT_AGENT_SERVER_TOKEN_FILE` or the
+protected `/data/agent-server-worker.token` file. Give that credential to the
+VPS worker as its `worker_token_file`. Run the same orchestrator service with
+one execution slot, independent provider subscription sign-ins, a dedicated
+checkout, and an explicit JEV key file. Restart the relay to load the token.

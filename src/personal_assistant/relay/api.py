@@ -126,10 +126,10 @@ class Result(BaseModel):
     timings: WorkerTimings | None = None
 
 
-async def claim_job(job_queue, lease_seconds, wait, request, session_lanes=False):
+async def claim_job(job_queue, lease_seconds, wait, request, session_lanes=False, execution_host='laptop'):
     from .store import CLAIMABLE
     from .wakeups import long_poll, requested_wait
-    job, waited = await long_poll(lambda: job_queue.claim(lease_seconds, session_lanes=session_lanes), job_queue.wakeups, CLAIMABLE,
+    job, waited = await long_poll(lambda: job_queue.claim(lease_seconds, session_lanes=session_lanes, execution_host=execution_host), job_queue.wakeups, CLAIMABLE,
                                   requested_wait(wait), request)
     # wait_seconds tells a client this relay supports long polling (and what it honoured).
     return {'job': job, 'wait_seconds': waited}
@@ -139,11 +139,13 @@ def timings_of(value):
     return value.timings.model_dump(exclude_none=True) if value.timings else None
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False,server_worker_token=None):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
+    if server_worker_token is not None and (len(server_worker_token) < 32 or server_worker_token in (submit_token, worker_token)):
+        raise ValueError('Use a separate server agent token of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
-    agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications),
+    agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications), server_enabled=bool(server_worker_token),
                         **({'clock':clock} if clock else {}))
     pump=None; reminder_pump=None; money_reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
     if groceries:
@@ -237,8 +239,15 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
         return verify
     submit = authorization(submit_token)
     worker = authorization(worker_token)
+    def agent_worker(authorization_header: str | None = Header(default=None, alias='Authorization')):
+        if (server_worker_token and authorization_header
+                and secrets.compare_digest(authorization_header.encode(), ('Bearer ' + server_worker_token).encode())):
+            return 'server'
+        worker(authorization_header)
+        return 'laptop'
+
     from .answer_streams import router as answer_stream_router
-    app.include_router(answer_stream_router(agent_queue,worker))
+    app.include_router(answer_stream_router(agent_queue,agent_worker))
     from .replies import reply_router
     app.include_router(reply_router({'command':queue,'agent':agent_queue},submit))
     from .features import Features,device_auth,features_router
@@ -247,7 +256,7 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     app.include_router(features_router(features,submit,'/v1/features'))
     if groceries:
         from .task_attachments import attachment_router
-        app.include_router(attachment_router(task_attachments,device_auth(groceries_api.devices),(submit_token,worker_token),agent_queue))
+        app.include_router(attachment_router(task_attachments,device_auth(groceries_api.devices),(submit_token,worker_token),agent_queue,server_worker_token))
         app.include_router(features_router(features,device_auth(groceries_api.devices),'/groceries/v1/mobile/features'))
         from .file_drops import FileDrops,file_drop_router
         drops=FileDrops(mobile_events,Path(path).with_name('file-drops'),**(file_drops or {}))
@@ -362,20 +371,20 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     def notify_command(request_id:str):
         return queue.notify_again(request_id)
 
-    @app.post('/v1/agent/worker/heartbeat', dependencies=[Depends(worker)])
-    def agent_heartbeat(value:Heartbeat):
-        return agent_queue.heartbeat(value.readiness)
+    @app.post('/v1/agent/worker/heartbeat')
+    def agent_heartbeat(value:Heartbeat, execution_host=Depends(agent_worker)):
+        return agent_queue.heartbeat(value.readiness, execution_host)
 
-    @app.post('/v1/agent/worker/claim', dependencies=[Depends(worker)])
-    async def agent_claim(value:AgentLease, request:Request, wait:float=Query(default=0, ge=0)):
-        result=await claim_job(agent_queue, value.lease_seconds, wait, request, value.session_lanes)
+    @app.post('/v1/agent/worker/claim')
+    async def agent_claim(value:AgentLease, request:Request, wait:float=Query(default=0, ge=0), execution_host=Depends(agent_worker)):
+        result=await claim_job(agent_queue, value.lease_seconds, wait, request, value.session_lanes, execution_host)
         return {**result,'session_lanes':value.session_lanes}
 
-    @app.post('/v1/agent/worker/{request_id}/renew', dependencies=[Depends(worker)])
+    @app.post('/v1/agent/worker/{request_id}/renew', dependencies=[Depends(agent_worker)])
     def agent_renew(request_id:str,value:Renew):
         return agent_queue.renew(request_id,value.lease_token,value.lease_seconds)
 
-    @app.post('/v1/agent/worker/{request_id}/result', dependencies=[Depends(worker)])
+    @app.post('/v1/agent/worker/{request_id}/result', dependencies=[Depends(agent_worker)])
     def agent_result(request_id:str,value:Result):
         return agent_queue.finish(request_id,value.lease_token,value.state,value.result,timings_of(value))
 
@@ -426,9 +435,11 @@ def from_environment():
         from personal_assistant.workout.web_push import WebPush
         subject_file = train_key.with_name('train-web-push-subject.txt')
         train_push = WebPush(train_key, subject_file.read_text(encoding='utf-8').strip())
+    server_worker_file = Path(os.environ.get('ASSISTANT_AGENT_SERVER_TOKEN_FILE', '/data/agent-server-worker.token'))
     return create_app(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3'),
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
+                      server_worker_token=server_worker_file.read_text(encoding='utf-8').strip() if server_worker_file.is_file() else None,
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
                       mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
                       owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'),

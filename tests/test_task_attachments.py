@@ -16,7 +16,7 @@ class AttachmentTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.created=datetime.now(timezone.utc).isoformat()
-        self.app=create_app(self.root/'queue.sqlite3','s'*40,'w'*40,groceries={'path':self.root/'groceries.sqlite3','internal_token':'g'*40,'assets':self.root})
+        self.app=create_app(self.root/'queue.sqlite3','s'*40,'w'*40,groceries={'path':self.root/'groceries.sqlite3','internal_token':'g'*40,'assets':self.root},server_worker_token='v'*40)
         devices=self.app.state.mobile_events.devices
         def phone():return {'Authorization':'Bearer '+devices.exchange(devices.pairing()['code'],'Test phone')['token']}
         self.phone=phone();self.other=phone();self.worker={'Authorization':'Bearer '+'w'*40};self.owner={'Authorization':'Bearer '+'s'*40}
@@ -43,6 +43,23 @@ class AttachmentTests(unittest.TestCase):
         detail=self.client.get('/groceries/v1/mobile/tasks/agent/'+task,headers=self.phone).json()
         self.assertEqual(detail['attachments'][0]['name'],'Example picture.png')
         self.assertEqual(self.upload(data=b'different content').status_code,409)
+
+    def test_server_can_only_read_and_return_attachments_for_its_tasks(self):
+        self.upload()
+        laptop = self.new_task().json()["task_id"]
+        self.upload("server-file-001", data=b"server fixture")
+        response = self.client.post("/groceries/v1/mobile/tasks", headers=self.phone, json={
+            "id": "server-task-001", "text": "Server: read this file",
+            "created_at": self.created, "attachments": ["server-file-001"],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["reply"].startswith("Queued to the server:"))
+        server = response.json()["task_id"]
+        self.worker = {"Authorization": "Bearer " + "v" * 40}
+        self.assertEqual(self.client.get("/v1/agent/attachments/attachment-001/content", headers=self.worker).status_code, 404)
+        self.assertEqual(self.client.get("/v1/agent/attachments/server-file-001/content", headers=self.worker).content, b"server fixture")
+        self.assertEqual(self.response_upload(laptop).status_code, 404)
+        self.assertEqual(self.response_upload(server).status_code, 200)
 
     def test_bad_checksum_incomplete_upload_and_phone_scope_do_not_queue_a_task(self):
         self.assertEqual(self.upload(sha256='0'*64).status_code,422)

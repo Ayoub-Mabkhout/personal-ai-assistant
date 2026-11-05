@@ -31,11 +31,12 @@ def timestamp(value):
 
 
 class Queue:
-    def __init__(self, path, clock=time.time, serial=False, notifications=False):
+    def __init__(self, path, clock=time.time, serial=False, notifications=False, server_enabled=False):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
         self.serial = serial
+        self.server_enabled = server_enabled
         self.notifications_enabled = notifications
         self.wakeups = Wakeups()
         with self.connection() as db:
@@ -53,6 +54,10 @@ class Queue:
                     at REAL NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS worker (
+                    id INTEGER PRIMARY KEY CHECK(id=1), seen REAL NOT NULL,
+                    readiness TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS server_worker (
                     id INTEGER PRIMARY KEY CHECK(id=1), seen REAL NOT NULL,
                     readiness TEXT NOT NULL
                 );
@@ -154,6 +159,8 @@ class Queue:
             ZoneInfo(payload['timezone'])
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError('Unknown timezone.') from exc
+        if self.server_enabled and self.server_request(payload['command']) and not self.session_root(payload):
+            payload = {**payload, 'execution_host': 'server'}
         created = timestamp(payload['created_at']) if payload.get('created_at') else self.clock()
         expires = timestamp(payload['expires_at']) if payload.get('expires_at') else None
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
@@ -188,11 +195,12 @@ class Queue:
             return [{**dict(r), 'data': json.loads(r['data'])} for r in
                     db.execute('SELECT * FROM events WHERE job_id=? ORDER BY seq', (request_id,))]
 
-    def heartbeat(self, readiness):
+    def heartbeat(self, readiness, execution_host='laptop'):
         if readiness not in ('ready', 'blocked'):
             raise ValueError('Readiness must be ready or blocked.')
         with self.connection(True) as db:
-            db.execute('INSERT INTO worker(id,seen,readiness) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET seen=excluded.seen,readiness=excluded.readiness',
+            table = 'server_worker' if execution_host == 'server' else 'worker'
+            db.execute(f'INSERT INTO {table}(id,seen,readiness) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET seen=excluded.seen,readiness=excluded.readiness',
                        (self.clock(), readiness))
         return self.status()
 
@@ -202,7 +210,22 @@ class Queue:
             row = db.execute('SELECT * FROM worker WHERE id=1').fetchone()
             state = row['readiness'] if row and self.clock() - row['seen'] < 60 else 'unavailable'
             queued = db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0]
-            return {'laptop': state, 'last_seen': row['seen'] if row else None, 'queued': queued}
+            result = {'laptop': state, 'last_seen': row['seen'] if row else None, 'queued': queued}
+            if self.server_enabled:
+                server = db.execute('SELECT * FROM server_worker WHERE id=1').fetchone()
+                result['server'] = server['readiness'] if server and self.clock() - server['seen'] < 60 else 'unavailable'
+            return result
+
+    @staticmethod
+    def server_request(command):
+        return bool(re.match(r'^\s*server:\s*\S', command, re.IGNORECASE))
+
+    def execution_host(self, db, payload):
+        root = self.session_root(payload)
+        if root:
+            row = db.execute('SELECT payload FROM jobs WHERE id=?', (root,)).fetchone()
+            payload = json.loads(row['payload']) if row else {}
+        return 'server' if payload.get('execution_host') == 'server' else 'laptop'
 
     @staticmethod
     def session_root(payload):
@@ -218,7 +241,7 @@ class Queue:
         payload = json.loads(row['payload'])
         root = self.session_root(payload)
         if not root:
-            return 'general'
+            return 'general:' + self.execution_host(db, payload)
         # Older intelligent routing could make two roots share the same CLI session.
         # Include completed follow-ups because an allowance fallback can move a context.
         results = db.execute('''SELECT result FROM jobs WHERE result IS NOT NULL AND
@@ -233,12 +256,15 @@ class Queue:
                 return 'session:'+agent+':'+session
         return 'task:'+root
 
-    def lane_candidate(self, db):
+    def lane_candidate(self, db, execution_host='laptop'):
         running = db.execute("SELECT * FROM jobs WHERE state='running'").fetchall()
         occupied = {self.execution_lane(db, row) for row in running}
         active_roots = {self.session_root(json.loads(row['payload'])) or row['id'] for row in running}
         for row in db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY rowid").fetchall():
-            root = self.session_root(json.loads(row['payload']))
+            payload = json.loads(row['payload'])
+            if self.execution_host(db, payload) != execution_host:
+                continue
+            root = self.session_root(payload)
             if root:
                 original = db.execute('SELECT state FROM jobs WHERE id=?', (root,)).fetchone()
                 if root in active_roots or (original and original['state'] in ('queued','running')):
@@ -247,18 +273,25 @@ class Queue:
                 return row
         return None
 
-    def claim(self, lease_seconds=60, session_lanes=False):
+    def claim(self, lease_seconds=60, session_lanes=False, execution_host='laptop'):
         self.validate_duration(lease_seconds)
         with self.connection(True) as db:
             self.maintenance(db)
-            worker = db.execute('SELECT * FROM worker WHERE id=1').fetchone()
+            table = 'server_worker' if execution_host == 'server' else 'worker'
+            worker = db.execute(f'SELECT * FROM {table} WHERE id=1').fetchone()
             if not worker or worker['readiness'] != 'ready' or self.clock() - worker['seen'] >= 60:
                 return None
             if self.serial and not session_lanes and db.execute("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").fetchone():
                 return None
             order = 'rowid' if self.serial else 'created,id'
-            row = self.lane_candidate(db) if self.serial and session_lanes else db.execute(
-                "SELECT * FROM jobs WHERE state='queued' ORDER BY "+order+" LIMIT 1").fetchone()
+            if self.serial and session_lanes:
+                row = self.lane_candidate(db, execution_host)
+            elif self.serial:
+                candidates = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY " + order)
+                row = next((item for item in candidates
+                            if self.execution_host(db, json.loads(item['payload'])) == execution_host), None)
+            else:
+                row = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY " + order + " LIMIT 1").fetchone()
             if row is None:
                 return None
             token = str(uuid4())

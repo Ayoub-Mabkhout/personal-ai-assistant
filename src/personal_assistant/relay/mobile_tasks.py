@@ -134,7 +134,8 @@ def mobile_task_router(devices, queues,attachments=None):
         payload={'id':identifier,'command':body.text,'created_at':body.created_at,'timezone':body.timezone}
         if body.attachments:payload['attachments']=body.attachments
         job,created=queues['agent'].submit(payload,source='phone_typed')
-        return {'task_id':job['id'],'status':job['state'],'reply':'Queued to the laptop: '+body.text,'created':created,'connection':queues['agent'].status()}
+        destination = 'the server' if job['payload'].get('execution_host') == 'server' else 'the laptop'
+        return {'task_id':job['id'],'status':job['state'],'reply':f'Queued to {destination}: '+body.text,'created':created,'connection':queues['agent'].status()}
 
     @api.get('/tasks/{kind}/{identifier}')
     async def detail(kind: str, identifier: str,request:Request,
