@@ -47,6 +47,13 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(codex['five_hour'],{'used_percent':12.0,'remaining_percent':88.0,'resets_in_minutes':20,'resets_at':'2027-01-15T08:20:00+00:00'})
         self.assertEqual(codex['weekly']['remaining_percent'],40.0)
 
+    def test_newer_account_poll_takes_precedence_over_last_task_trace(self):
+        self.rollout('old', [record('2026-10-09T10:00:00Z')])
+        limits = json.loads(record('2026-10-09T11:00:00Z', five=(100.0, NOW + 300)))['payload']['rate_limits']
+        capacity.save_reading(capacity.codex_cache(self.config),
+                              {'stamp': '2026-10-09T11:00:00+00:00', 'limits': limits})
+        self.assertTrue(capacity.exhausted(capacity.codex(self.config, NOW)))
+
     def test_reset_window_reads_as_unused_and_placeholder_limits_are_ignored(self):
         self.rollout('a',[record('2026-10-09T11:00:00Z',five=(95.0,NOW-60)),record('2026-10-09T11:00:01Z',limit_id='premium',five=None)])
         codex=capacity.snapshot(self.config,now=NOW)['codex']

@@ -9,6 +9,7 @@ Claude figure is old, a minimal background Haiku call refreshes it at most hourl
 from datetime import datetime,timezone
 import json
 import os
+import queue
 from pathlib import Path
 import shutil
 import subprocess
@@ -70,12 +71,83 @@ def window(used,resets,now):
             **({'reset_since_observed':True} if reset else {})}
 
 
+def codex_cache(config):
+    return Path(config['orchestrator_dir'])/'codex-capacity.json'
+
+
+def refresh_codex(config):
+    """Read the subscription's account limits without starting a model turn."""
+    executable = config.get('codex')
+    if not executable:
+        return
+    prefix = [config.get('node', 'node'), executable] if Path(executable).suffix == '.js' else [executable]
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith('OPENAI_') and key != 'CODEX_API_KEY'}
+    env['CODEX_HOME'] = str(codex_home(config))
+    incoming = queue.Queue()
+
+    def read(stream):
+        for line in stream:
+            try:
+                incoming.put(json.loads(line))
+            except ValueError:
+                continue
+        incoming.put({})
+
+    with tempfile.TemporaryDirectory(prefix='codex-capacity-') as directory:
+        with subprocess.Popen(prefix+['app-server','--stdio'], cwd=directory, env=env,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0) as process:
+            reader = threading.Thread(target=read, args=(process.stdout,), daemon=True)
+            reader.start()
+
+            def send(body):
+                process.stdin.write((json.dumps(body)+'\n').encode())
+                process.stdin.flush()
+
+            def receive(identity):
+                while response := incoming.get(timeout=8):
+                    if response.get('id') == identity:
+                        return response.get('result') or {}
+                return {}
+
+            try:
+                send({'id':1,'method':'initialize','params':{'clientInfo':{'name':'assistant-capacity','version':'1'}}})
+                if not receive(1):
+                    return
+                send({'method':'initialized'})
+                send({'id':2,'method':'account/rateLimits/read'})
+                result = receive(2)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                reader.join(timeout=1)
+    limits = (result.get('rateLimitsByLimitId') or {}).get('codex') or result.get('rateLimits')
+    if not limits:
+        return
+    mapped = {'limit_id': 'codex', 'plan_type': limits.get('planType'),
+              'rate_limit_reached_type': limits.get('rateLimitReachedType')}
+    for name in ('primary', 'secondary'):
+        value = limits.get(name)
+        if value:
+            mapped[name] = {'window_minutes': value.get('windowDurationMins'),
+                            'used_percent': value.get('usedPercent'), 'resets_at': value.get('resetsAt')}
+    save_reading(codex_cache(config), {'stamp': datetime.now(timezone.utc).isoformat(), 'limits': mapped})
+
+
 def codex(config,now):
     newest={}
     for path in recent_rollouts(codex_home(config)):
         for key,(stamp,limits) in latest_limits(path).items():
             if key not in newest or (stamp or '')>(newest[key][0] or ''):newest[key]=(stamp,limits)
     stamp,limits=newest.get('codex',(None,None))
+    if config.get('orchestrator_dir'):
+        path = codex_cache(config)
+        if path.is_file():
+            cached = json.loads(path.read_text(encoding='utf-8'))
+            if cached['stamp'].replace('+00:00','Z') > (stamp or '').replace('+00:00','Z'):
+                stamp,limits = cached['stamp'],cached['limits']
     if not limits:return {'available':False,'note':'No recent Codex rate-limit record was found.'}
     result={}
     for name in ('primary','secondary'):
@@ -98,9 +170,13 @@ def save_claude(config,events,now=None):
     now=now or datetime.now(timezone.utc).timestamp()
     latest=[e for e in events if e.get('type')=='rate_limit_event']
     if not latest:return
-    path=claude_cache(config);path.parent.mkdir(parents=True,exist_ok=True)
+    save_reading(claude_cache(config), claude_record(latest[-1],now))
+
+
+def save_reading(path, record):
+    path.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,prefix=path.name+'.',suffix='.new',delete=False) as stream:
-        temporary=Path(stream.name);json.dump(claude_record(latest[-1],now),stream)
+        temporary=Path(stream.name);json.dump(record,stream)
     try:temporary.replace(path)
     finally:temporary.unlink(missing_ok=True)
 

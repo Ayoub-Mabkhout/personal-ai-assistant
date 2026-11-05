@@ -100,7 +100,9 @@ def watch(config, ledger, interval):
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
-    next_sync = 0.0
+    with ledger.db() as db:
+        last_sync = db.execute('SELECT MAX(at) FROM syncs').fetchone()[0]
+    next_sync = time.monotonic() + max(0, last_sync + interval - time.time()) if last_sync else 0.0
     relay = OwnerClient(config)
 
     def model_ready():

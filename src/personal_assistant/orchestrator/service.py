@@ -10,6 +10,7 @@ import threading
 from datetime import datetime,timezone
 from personal_assistant.worker.runtime import RelayClient,Worker,Singleton,TransportError
 from .runtime import Orchestrator
+from . import capacity
 
 
 class AgentClient:
@@ -84,6 +85,16 @@ def execution_slots(config):
     return value
 
 
+def refresh_capacity(config, shutdown, interval):
+    while not shutdown.is_set():
+        try:
+            capacity.refresh_codex(config)
+        except Exception as error:
+            logging.warning('Codex allowance refresh failed (%s).', type(error).__name__)
+        if shutdown.wait(interval):
+            break
+
+
 def run_service(config):
     directory=Path(config['runtime_dir']);directory.mkdir(parents=True,exist_ok=True)
     shutdown=threading.Event();outbox_lock=threading.Lock()
@@ -94,6 +105,10 @@ def run_service(config):
     for worker in workers:worker.shutdown=shutdown
     for number in (signal.SIGINT,signal.SIGTERM):signal.signal(number,lambda *_:shutdown.set())
     with Singleton(directory/'worker.lock'):
+        interval = config.get('codex_capacity_poll_seconds')
+        if interval:
+            threading.Thread(target=refresh_capacity, args=(config, shutdown, max(30, interval)),
+                             name='codex-capacity', daemon=True).start()
         threads=[threading.Thread(target=worker.run_slot,name='agent-slot-'+str(worker.slot),daemon=True) for worker in workers]
         for thread in threads:thread.start()
         try:

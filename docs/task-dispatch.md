@@ -353,8 +353,10 @@ With a configured server worker, the relay sends new requests it recognizes as
 self-contained drafting, planning, or research to the VPS. The server queue
 holds these requests if the worker is disconnected or both engines are out of
 allowance. The worker checks subscription telemetry between claims and resumes
-claiming after an observed reset. Checks read local provider telemetry without
-calling a model. Requests with local
+claiming after an observed reset. Configure `codex_capacity_poll_seconds`
+to periodically query Codex account limits without a model call. Claude's
+normal CLI runs report usage and reset times. Quota rechecks can use those
+records without sending extra model requests. Requests with local
 context, attachments, or an explicit `Laptop:` prefix use the laptop. Use
 `Server:` to explicitly queue work on the VPS. Follow-ups stay on the original
 worker host. The server has its own readiness status, claim credential, and
