@@ -139,13 +139,13 @@ def timings_of(value):
     return value.timings.model_dump(exclude_none=True) if value.timings else None
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False,server_worker_token=None):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False,server_worker_token=None,server_default=False):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     if server_worker_token is not None and (len(server_worker_token) < 32 or server_worker_token in (submit_token, worker_token)):
         raise ValueError('Use a separate server agent token of at least 32 characters.')
     queue = Queue(path, notifications=bool(notifications), **({'clock': clock} if clock else {}))
-    agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications), server_enabled=bool(server_worker_token),
+    agent_queue = Queue(Path(path).with_name('agent-queue.sqlite3'), serial=True, notifications=bool(notifications), server_enabled=bool(server_worker_token),server_default=server_default,
                         **({'clock':clock} if clock else {}))
     pump=None; reminder_pump=None; money_reminder_pump=None; sender=None; release_pump=None; native_pump=None; mobile_events=None; native_provider=None; mode=None; retailer_check=None
     if groceries:
@@ -441,6 +441,7 @@ def from_environment():
                       credential('ASSISTANT_SUBMIT_TOKEN_FILE'),
                       credential('ASSISTANT_WORKER_TOKEN_FILE'), groceries=grocery_config,notifications=notifications,task_links=task_links,voice=voice,
                       server_worker_token=server_worker_file.read_text(encoding='utf-8').strip() if server_worker_file.is_file() else None,
+                      server_default=server_worker_file.with_name('agent-server-default').is_file(),
                       release_publish_token_file=os.environ.get('ASSISTANT_RELEASE_PUBLISH_TOKEN_FILE'),
                       mobile_settings_file=os.environ.get('ASSISTANT_MOBILE_SETTINGS_CONFIG'),
                       owner_credentials_file=os.environ.get('ASSISTANT_OWNER_CREDENTIALS_FILE','/data/owner-login.json'),

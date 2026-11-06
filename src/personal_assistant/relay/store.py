@@ -42,12 +42,13 @@ def timestamp(value):
 
 
 class Queue:
-    def __init__(self, path, clock=time.time, serial=False, notifications=False, server_enabled=False):
+    def __init__(self, path, clock=time.time, serial=False, notifications=False, server_enabled=False, server_default=False):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
         self.serial = serial
         self.server_enabled = server_enabled
+        self.server_default = server_default
         self.notifications_enabled = notifications
         self.wakeups = Wakeups()
         with self.connection() as db:
@@ -243,7 +244,11 @@ class Queue:
         command = payload['command'].strip()
         if re.match(r'^server:\s*\S', command, re.IGNORECASE):
             return True
-        if payload.get('workspace') or payload.get('attachments') or payload.get('reply_context'):
+        if payload.get('workspace') or re.match(r'^laptop:\s*\S', command, re.IGNORECASE):
+            return False
+        if self.server_default:
+            return True
+        if payload.get('attachments') or payload.get('reply_context'):
             return False
         return bool(PORTABLE_REQUEST.match(command) and not LOCAL_CONTEXT.search(command))
 
