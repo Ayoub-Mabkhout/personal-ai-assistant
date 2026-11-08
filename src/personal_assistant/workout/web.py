@@ -15,6 +15,7 @@ from .analytics import overview
 from .api import install, install_worker
 from .imports import seed_starter_exercises
 from .models import Model
+from . import proofs
 from .scheduled import MISSED_AFTER, timed_slots
 from .schema import OWNER
 
@@ -271,6 +272,48 @@ def shared_profile(account, stats, store, share_schedule):
     }
 
 
+class FeedComment(Model):
+    text: str = Field(min_length=1, max_length=1000)
+    client_id: str = Field(pattern=r'^[A-Za-z0-9_-]{8,100}$')
+
+
+def install_feed(router, store, get_viewer):
+    # SQLite integer IDs are signed 64-bit. Keep out-of-range IDs out of database bindings.
+    maximum_id = 2**63 - 1
+    photo_prefix = router.prefix + '/feed'
+
+    @router.get('/feed', dependencies=[Depends(private_response)])
+    def feed(viewer=Depends(get_viewer), before: int=Query(default=maximum_id, ge=1, le=maximum_id),
+             limit: int=Query(default=20, ge=1, le=50)):
+        return proofs.feed(store, viewer, photo_prefix, before, limit)
+
+    @router.get('/feed/{post_id}/photo')
+    def feed_photo(post_id: int, viewer=Depends(get_viewer)):
+        if not 1 <= post_id <= maximum_id:
+            raise Missing('Workout post not found.')
+        return Response(proofs.photo(store, viewer, post_id), media_type='image/jpeg',
+                        headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+
+    @router.get('/feed/{post_id}/comments', dependencies=[Depends(private_response)])
+    def feed_comments(post_id: int, viewer=Depends(get_viewer), after: int=Query(default=0, ge=0, le=maximum_id),
+                      limit: int=Query(default=50, ge=1, le=100)):
+        if not 1 <= post_id <= maximum_id:
+            raise Missing('Workout post not found.')
+        return proofs.comments(store, viewer, post_id, after, limit)
+
+    @router.post('/feed/{post_id}/comments', dependencies=[Depends(private_response)])
+    def feed_comment(post_id: int, body: FeedComment, viewer=Depends(get_viewer)):
+        if not 1 <= post_id <= maximum_id:
+            raise Missing('Workout post not found.')
+        return proofs.add_comment(store, viewer, post_id, body.text, body.client_id)
+
+    @router.delete('/feed/{post_id}/comments/{comment_id}', status_code=204)
+    def remove_feed_comment(post_id: int, comment_id: int, viewer=Depends(get_viewer)):
+        if not 1 <= post_id <= maximum_id or not 1 <= comment_id <= maximum_id:
+            raise Missing('Comment not found.')
+        proofs.delete_comment(store, viewer, post_id, comment_id)
+
+
 def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobile_events=None,require_identity=False):
     from .competition import Competition
     from .reminder import TrainReminders, install_reminders
@@ -464,9 +507,14 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
     def users():
         return {'items': accounts.roster()}
 
-    install(browser, browser_store, browser=True)
+    install(browser, browser_store, browser=True, proof_routes=require_identity)
     install_reminders(browser, reminders, account)
-    install(coach, coach_store)
+    if require_identity:
+        def browser_viewer(user=Depends(account)):
+            return user['id']
+
+        install_feed(browser, workouts, browser_viewer)
+    install(coach, coach_store, proof_routes=False)
     install_worker(coach, coach_store)
     for router in (browser, owner, coach):
         app.include_router(router)
@@ -492,6 +540,11 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         def native_invite(body: Invite):
             """A one-use, seven-day link from the owner's phone: a new member, or a member's own profile to sign in again."""
             return {**accounts.invite(body.user_id), 'expires_in_days': 7}
+
+        def native_viewer():
+            return OWNER
+
+        install_feed(native, workouts, native_viewer)
 
         @native.get('/{user_id}')
         def native_profile(user_id: str):

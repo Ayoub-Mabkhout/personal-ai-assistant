@@ -3,7 +3,8 @@ import re
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import Field
+from pydantic import Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 from .models import Model, Mutation
 from .analytics import overview
 from .imports import reconcile
@@ -11,6 +12,12 @@ from .imports import reconcile
 
 class Sync(Model):
     operations: list[Mutation] = Field(min_length=1,max_length=100)
+
+
+class Finish(Model):
+    operation: Mutation
+    photo_base64: str = Field(min_length=1, max_length=1398104)
+    share: bool
 
 
 class Question(Model):
@@ -74,7 +81,7 @@ def routers(store, submit, device=None, attachments=None):
     return [owner,phone] if phone else [owner]
 
 
-def install(router, get_store, *, browser=False, attachments=None, device=None):
+def install(router, get_store, *, browser=False, attachments=None, device=None, proof_routes=True):
     @router.get('/changes')
     def changes(after: int=Query(default=0,ge=0),limit: int=Query(default=100,ge=1,le=200), store=Depends(get_store)):
         return store.changes(after,limit)
@@ -88,6 +95,22 @@ def install(router, get_store, *, browser=False, attachments=None, device=None):
 
     @router.post('/sync')
     def sync(body: Sync, store=Depends(get_store)): return {'results':store.mutate([m.model_dump() for m in body.operations])}
+
+    if proof_routes:
+        @router.get('/workout-proof-policy')
+        def workout_proof_policy(response: Response, store=Depends(get_store)):
+            response.headers['Cache-Control'] = 'private, no-store'
+            return {'required': store.require_proof}
+
+        @router.post('/workout-finish')
+        async def workout_finish(request: Request, store=Depends(get_store)):
+            try:
+                body = Finish.model_validate_json(await bounded(request, 2 * 1024 * 1024))
+            except ValidationError:
+                # Validation errors must not echo the encoded image.
+                raise HTTPException(422, 'Send a completed workout and a JPEG camera photo.') from None
+            result = await run_in_threadpool(store.finish_workout, body.operation, body.photo_base64, body.share)
+            return {'results': result}
 
     @router.get('/overview')
     def summary(store=Depends(get_store)):

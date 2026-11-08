@@ -128,3 +128,24 @@ Which engine answered (and any fallback) is written to the private `traces/<job>
 The relay accepts coach messages while the laptop is offline. Replies appear in Coach chat after the worker reconnects. With automatic briefs enabled, the relay can queue a next-session brief or a sprint review when the app loads the private overview, with input debounce, deduplication and cooldown. Check Next workout for the session brief and open the sprint for its review. Finishing a workout queues its brief with the synced workout. If the phone is offline, its outbox holds the workout until it syncs. The completed brief appears in History under that workout.
 
 Briefs use short plain text, at most two sentences, with a length cap. Reading a cached brief never runs the model. Photos are never analysed automatically. New clients should preserve all revision/outbox behavior, and deployments retain protected Firebase/signing configuration. Deploy schema changes before releasing clients that send `set_plan`, `superset` or exercise `pose` fields.
+
+### Camera completion and friends feed
+
+The web and paired-phone finish endpoints commit the workout and shared JPEG in
+one transaction. A retry must use the same mutation ID, image, and sharing
+choice. The camera UI captures a JPEG in the app. An ordinary browser or phone
+HTTP request cannot attest that its JPEG came from a live camera. The server
+validates the image, bounds dimensions and bytes, and re-encodes it without
+metadata. A private finish discards the image after validation.
+
+A shared finish appears to signed-in Iron League members while its author has
+progress sharing enabled. The feed projects exercise names and completed sets
+without exposing workout notes, body measurements, or the private photo vault.
+Post photos and comments use the same visibility checks. Deleting or reopening
+a workout removes its post, shared image and comments.
+
+For rollout, deploy the endpoints with the requirement off. Once both camera-capable
+clients are available, place the empty `train-require-proof` marker alongside the
+relay queue database and restart the relay. Existing completed workouts remain
+editable and historical imports still work. Remove the marker and restart the
+relay to restore the old completion flow if a client needs more upgrade time.

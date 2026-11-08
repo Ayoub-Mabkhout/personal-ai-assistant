@@ -31,6 +31,14 @@ def initialize(db):
             column_list = ','.join(legacy)
             db.execute(f'INSERT INTO {table}(user_id,{column_list}) SELECT ?,{column_list} FROM legacy_{table}', (OWNER,))
             db.execute(f'DROP TABLE legacy_{table}')
+    db.execute('''CREATE TABLE IF NOT EXISTS workout_proofs(
+        id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,workout_id TEXT NOT NULL,
+        body BLOB NOT NULL,UNIQUE(user_id,workout_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS workout_feed_comments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,post_id INTEGER NOT NULL,author_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,text TEXT NOT NULL,created_at REAL NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0,UNIQUE(post_id,author_id,client_id))''')
+    db.execute('CREATE INDEX IF NOT EXISTS workout_feed_comments_post ON workout_feed_comments(post_id,id)')
     db.execute('CREATE INDEX IF NOT EXISTS workout_changes_user_revision ON changes(user_id,revision)')
     db.execute('CREATE INDEX IF NOT EXISTS workout_trainer_user_created ON trainer(user_id,created)')
     if 'timings' not in {row['name'] for row in db.execute('PRAGMA table_info(trainer)')}:

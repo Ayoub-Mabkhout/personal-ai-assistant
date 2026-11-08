@@ -11,6 +11,7 @@ import time
 from ..relay.store import Conflict, Missing
 from ..relay.wakeups import Wakeups, log_phases
 from .models import MODELS, Mutation, validate
+from .proofs import clean_photo, delete_proof, save_proof
 from .schema import OWNER, initialize
 
 
@@ -31,9 +32,10 @@ def encoded(value):
 
 
 class Workouts:
-    def __init__(self, path, clock=time.time):
+    def __init__(self, path, clock=time.time, require_proof=False):
         self.path, self.clock = Path(path), clock
         self.user_id = OWNER
+        self.require_proof = require_proof
         self.competition = False
         # Shared by every for_user() copy: wake long polls after the writing transaction commits.
         self.wakeups = Wakeups()
@@ -79,17 +81,27 @@ class Workouts:
         if pending is None: self.wakeups.notify(*keys)  # not one of our transactions: no commit to wait for
         else: pending.update(keys)
 
-    def mutate(self, operations, actor='owner', db=None):
+    def finish_workout(self, operation, photo_base64, shared):
+        if operation.kind != 'workout' or operation.deleted or operation.data.get('status') != 'completed':
+            raise ValueError('Finish needs one completed workout mutation.')
+        body, checksum = clean_photo(photo_base64)
+        return self.mutate([operation.model_dump()], proof=(body, checksum, shared))
+
+    def mutate(self, operations, actor='owner', db=None, *, proof=None):
         if db is None:
             with self.db() as conn:
                 conn.execute('BEGIN IMMEDIATE')
-                return self.mutate(operations, actor, conn)
+                return self.mutate(operations, actor, conn, proof=proof)
         results = []
         for value in operations:
             op = Mutation.model_validate(value).model_dump()
             if op['kind'] not in MODELS:
                 raise ValueError('Unknown entity kind')
-            request = encoded(op)
+            if proof is not None:
+                photo_body, photo_checksum, share_photo = proof
+                request = encoded({**op, 'camera_proof': [photo_checksum, share_photo]})
+            else:
+                request = encoded(op)
             prior = db.execute('SELECT * FROM mutations WHERE user_id=? AND id=?', (self.user_id, op['mutation_id'])).fetchone()
             if prior:
                 if prior['request'] != request: raise Conflict('Mutation ID reused with different data')
@@ -113,6 +125,17 @@ class Workouts:
                 (self.user_id, op['kind'], op['id'], revision, op['deleted'], encoded(data), now))
             result = dict(kind=op['kind'], id=op['id'], revision=revision, deleted=op['deleted'], data=data, updated=now)
             if op['kind'] == 'workout':
+                was_completed = bool(old and not old['deleted'] and json.loads(old['data']).get('status') == 'completed')
+                completed = data.get('status') == 'completed'
+                if proof is not None:
+                    if was_completed:
+                        raise Conflict('This workout is already finished.')
+                    if share_photo:
+                        save_proof(db, self.user_id, op['id'], revision, photo_body)
+                elif completed and not was_completed and self.require_proof and not actor.startswith('import:'):
+                    raise Conflict('Take a camera photo to finish this workout.')
+                if not completed and was_completed and delete_proof(db, self.user_id, op['id']):
+                    self._scrub.add(id(db))
                 if op['deleted']:
                     if db.execute("DELETE FROM trainer WHERE user_id=? AND id=? AND state='queued'",(self.user_id, 'brief_workout_'+op['id'])).rowcount:
                         self.wake(db, 'conversation')
