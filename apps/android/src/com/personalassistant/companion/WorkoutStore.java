@@ -32,10 +32,44 @@ final class WorkoutStore {
     private static void apply(Context c,String kind,String id,int revision,boolean deleted,JSONObject data)throws JSONException{JSONObject all=cache(c).getJSONObject("entities"),group=all.optJSONObject(kind);if(group==null)all.put(kind,group=new JSONObject());group.put(id,new JSONObject().put("revision",revision).put("deleted",deleted).put("data",data==null?new JSONObject():data));}
 
     /** Saves an edit locally and queues it; the same mutation ID is reused for every retry. */
-    static synchronized void put(Context c,String kind,String id,JSONObject data){queue(c,kind,id,data,false);}
-    static synchronized void delete(Context c,String kind,String id){queue(c,kind,id,data(c,kind,id),true);}
-    private static void queue(Context c,String kind,String id,JSONObject data,boolean deleted){try{JSONObject group=cache(c).getJSONObject("entities").optJSONObject(kind),row=group==null?null:group.optJSONObject(id);int revision=row==null?0:row.optInt("revision");
-        outbox(c).put(new JSONObject().put("mutation_id",id()).put("kind",kind).put("id",id).put("base_revision",revision).put("deleted",deleted).put("data",data==null?new JSONObject():new JSONObject(data.toString())));saveOutbox(c);apply(c,kind,id,revision,deleted,data);saveCache(c);}catch(JSONException e){throw new IllegalStateException(e);}}
+    static synchronized void put(Context c,String kind,String id,JSONObject data){queue(c,kind,id,data,false,null);}
+    static synchronized void finishWithProof(Context c,String id,JSONObject data,byte[] photo,boolean share){
+        try{queue(c,"workout",id,data,false,proof(photo,share));}
+        catch(JSONException e){throw new IllegalStateException(e);}
+    }
+
+    private static JSONObject proof(byte[] photo,boolean share)throws JSONException{
+        if(photo==null||photo.length==0||photo.length>WorkoutProofCamera.MAX_JPEG)throw new IllegalStateException("Invalid workout photo");
+        return new JSONObject().put("photo_base64",android.util.Base64.encodeToString(photo,android.util.Base64.NO_WRAP))
+                .put("share",share);
+    }
+
+    /** Upgrade a rejected pre-camera outbox entry without losing any of its workout data. */
+    static synchronized void addMissingProof(Context c,String mutation,byte[] photo,boolean share)throws JSONException{
+        JSONArray queued=outbox(c);
+        for(int i=0;i<queued.length();i++){
+            JSONObject row=queued.optJSONObject(i);
+            if(!mutation.equals(row.optString("mutation_id"))||!row.optBoolean("needs_photo"))continue;
+            JSONObject replacement=new JSONObject(row.toString());
+            replacement.put("mutation_id",id()).put("workout_proof",proof(photo,share));
+            replacement.remove("sent");
+            replacement.remove("conflict");
+            replacement.remove("needs_photo");
+            queued.put(i,replacement);
+            try{saveOutbox(c);}catch(IllegalStateException error){queued.put(i,row);throw error;}
+            return;
+        }
+        throw new IllegalStateException("Workout is no longer waiting for a photo");
+    }
+    static synchronized void delete(Context c,String kind,String id){queue(c,kind,id,data(c,kind,id),true,null);}
+    private static void queue(Context c,String kind,String id,JSONObject data,boolean deleted,JSONObject proof){try{JSONObject group=cache(c).getJSONObject("entities").optJSONObject(kind),row=group==null?null:group.optJSONObject(id);int revision=row==null?0:row.optInt("revision");
+        JSONObject operation=new JSONObject().put("mutation_id",id()).put("kind",kind).put("id",id)
+                .put("base_revision",revision).put("deleted",deleted)
+                .put("data",data==null?new JSONObject():new JSONObject(data.toString()));
+        if(proof!=null)operation.put("workout_proof",proof);
+        JSONArray queued=outbox(c);queued.put(operation);
+        try{saveOutbox(c);}catch(IllegalStateException e){queued.remove(queued.length()-1);throw e;}
+        apply(c,kind,id,revision,deleted,data);saveCache(c);}catch(JSONException e){throw new IllegalStateException(e);}}
     static synchronized int waiting(Context c){return outbox(c).length();}
     static synchronized List<JSONObject> conflicts(Context c){ArrayList<JSONObject> out=new ArrayList<>();JSONArray q=outbox(c);for(int i=0;i<q.length();i++)if(q.optJSONObject(i).optBoolean("conflict"))out.add(q.optJSONObject(i));return out;}
     /** The owner's choice on a rejected edit: keep it on top of the latest cloud revision, or drop it and take the cloud's. */
@@ -46,10 +80,17 @@ final class WorkoutStore {
     /** Pushes the outbox in order, then pulls changes and the overview. Returns an owner-readable problem or "". */
     static String sync(Context c){synchronized(syncing){try{
             while(true){JSONObject op=null;synchronized(WorkoutStore.class){JSONArray q=outbox(c);for(int i=0;i<q.length();i++){JSONObject row=q.optJSONObject(i);if(!row.optBoolean("conflict")){op=row;break;}}if(op==null)break;op.put("sent",true);saveOutbox(c);}
-                JSONObject wire=new JSONObject(op.toString());wire.remove("sent");wire.remove("conflict");
-                try{JSONObject result=(JSONObject)Cloud.call(c,"workout/sync",new JSONObject().put("operations",new JSONArray().put(wire)),true);JSONObject r=result.getJSONArray("results").getJSONObject(0);
+                JSONObject wire=new JSONObject(op.toString());wire.remove("sent");wire.remove("conflict");wire.remove("needs_photo");
+                JSONObject proof=wire.optJSONObject("workout_proof");wire.remove("workout_proof");
+                try{JSONObject result=proof==null
+                            ?(JSONObject)Cloud.call(c,"workout/sync",new JSONObject().put("operations",new JSONArray().put(wire)),true)
+                            :(JSONObject)Cloud.call(c,"workout/workout-finish",new JSONObject(proof.toString()).put("operation",wire),true);JSONObject r=result.getJSONArray("results").getJSONObject(0);
                     synchronized(WorkoutStore.class){JSONArray q=outbox(c);for(int i=0;i<q.length();i++)if(op.optString("mutation_id").equals(q.optJSONObject(i).optString("mutation_id"))){q.remove(i);break;}for(int i=0;i<q.length();i++){JSONObject later=q.optJSONObject(i);if(later.optString("kind").equals(op.optString("kind"))&&later.optString("id").equals(op.optString("id")))later.put("base_revision",r.optInt("revision"));}saveOutbox(c);if(!pending(c,op.optString("kind"),op.optString("id"))){apply(c,r.optString("kind"),r.optString("id"),r.optInt("revision"),r.optBoolean("deleted"),r.optJSONObject("data"));saveCache(c);}}
-                }catch(Cloud.HttpError e){if(e.status==409||e.status==422){synchronized(WorkoutStore.class){op.put("conflict",true);saveOutbox(c);}}else throw e;}}
+                }catch(Cloud.HttpError e){if(e.status==409||e.status==422||e.status==428){synchronized(WorkoutStore.class){
+                    op.put("conflict",true);
+                    if(e.status==428)op.put("needs_photo",true);
+                    saveOutbox(c);
+                }}else throw e;}}
             int cursor=cache(c).optInt("cursor");while(true){JSONObject page=(JSONObject)Cloud.call(c,"workout/changes?after="+cursor+"&limit=100",null,true);JSONArray items=page.optJSONArray("items");
                 synchronized(WorkoutStore.class){for(int i=0;items!=null&&i<items.length();i++){JSONObject row=items.getJSONObject(i);if(!pending(c,row.optString("kind"),row.optString("id")))apply(c,row.optString("kind"),row.optString("id"),row.optInt("revision"),row.optBoolean("deleted"),row.optJSONObject("data"));}cursor=page.optInt("cursor",cursor);cache.put("cursor",cursor);saveCache(c);}if(!page.optBoolean("has_more"))break;}
             JSONObject summary=(JSONObject)Cloud.call(c,"workout/overview",null,true);synchronized(WorkoutStore.class){cache.put("overview",summary);saveCache(c);}return "";
