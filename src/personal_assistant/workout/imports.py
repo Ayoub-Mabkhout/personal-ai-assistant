@@ -61,6 +61,22 @@ def exercise(name):
                                   aliases=[],load_convention=convention,mode='cardio' if cardio else 'strength'))
 
 
+STARTER_EXERCISES = (
+    'Bench Press (Barbell)', 'Squat (Barbell)', 'Deadlift (Barbell)', 'Overhead Press (Barbell)',
+    'Pull Up', 'Push Up', 'Bent Over Row (Barbell)', 'Lat Pulldown (Cable)',
+    'Bench Press (Dumbbell)', 'Lateral Raise (Dumbbell)', 'Bicep Curl (Dumbbell)',
+    'Leg Press (Machine)', 'Leg Curl (Machine)', 'Running (Treadmill)', 'Walking',
+)
+
+
+def seed_starter_exercises(store, db):
+    store.mutate([
+        {'kind': 'exercise', 'id': identity('train-exercise', label), 'base_revision': 0,
+         'mutation_id': identity('train-seed', label), 'data': exercise(label)}
+        for label in STARTER_EXERCISES
+    ], actor='starter_catalog', db=db)
+
+
 def strong(raw, timezone='UTC'):
     try: ZoneInfo(timezone)
     except (ZoneInfoNotFoundError,ValueError): raise ValueError('Unknown import timezone') from None

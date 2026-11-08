@@ -16,6 +16,8 @@ import threading
 import unicodedata
 from uuid import uuid4
 
+from .imports import seed_starter_exercises
+
 
 CLIENT_KDF_VERSION = 'pbkdf2sha256_600k_hkdfsha256_v1'
 CLIENT_KDF_ITERATIONS = 600000
@@ -196,6 +198,7 @@ class Identity:
                 if self._profiles(db,key) or db.execute('SELECT 1 FROM train_credentials WHERE login_name=?',(key,)).fetchone():
                     raise EnrollmentDenied()
                 db.execute('INSERT INTO train_users(id,name,setup_complete) VALUES(?,?,0)',(identifier,display))
+                seed_starter_exercises(self.workouts.for_user(identifier),db)
             if reset:
                 db.execute('''UPDATE train_credentials SET verifier=?,client_salt=?,revision=revision+1,updated=?
                     WHERE user_id=?''',(verifier,client_salt,self.clock(),identifier))

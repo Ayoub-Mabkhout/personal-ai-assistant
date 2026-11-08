@@ -13,19 +13,14 @@ from pydantic import Field
 from ..relay.store import Conflict, Missing
 from .analytics import overview
 from .api import install, install_worker
-from .imports import exercise, identity
+from .imports import seed_starter_exercises
 from .models import Model
 from .scheduled import MISSED_AFTER, timed_slots
 from .schema import OWNER
 
 COOKIE = 'train_session'
 SESSION_SECONDS = 180 * 86400
-STARTER_EXERCISES = (
-    'Bench Press (Barbell)', 'Squat (Barbell)', 'Deadlift (Barbell)', 'Overhead Press (Barbell)',
-    'Pull Up', 'Push Up', 'Bent Over Row (Barbell)', 'Lat Pulldown (Cable)',
-    'Bench Press (Dumbbell)', 'Lateral Raise (Dumbbell)', 'Bicep Curl (Dumbbell)',
-    'Leg Press (Machine)', 'Leg Curl (Machine)', 'Running (Treadmill)', 'Walking',
-)
+
 
 
 def digest(value):
@@ -108,11 +103,7 @@ class Accounts:
             if user_id == OWNER:
                 db.execute("UPDATE train_users SET name=? WHERE id=? AND name=''", (name, OWNER))
             if created and user_id != OWNER:
-                self.workouts.for_user(user_id).mutate([
-                    {'kind': 'exercise', 'id': identity('train-exercise', label), 'base_revision': 0,
-                     'mutation_id': identity('train-seed', label), 'data': exercise(label)}
-                    for label in STARTER_EXERCISES
-                ], actor='starter_catalog', db=db)
+                seed_starter_exercises(self.workouts.for_user(user_id), db)
             db.execute('DELETE FROM train_sessions WHERE expires<=?', (self.clock(),))
             db.execute('INSERT INTO train_sessions VALUES(?,?,?)',
                        (digest(session), user_id, self.clock() + SESSION_SECONDS))
