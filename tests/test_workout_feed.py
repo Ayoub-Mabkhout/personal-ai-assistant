@@ -81,7 +81,7 @@ class WorkoutFeedTests(unittest.TestCase):
         client = self.client('Athlete')
         self.assertEqual(client.get(WEB + '/workout-proof-policy').json(), {'required': True})
         op = workout()
-        self.assertEqual(client.post(WEB + '/sync', json={'operations': [op]}).status_code, 409)
+        self.assertEqual(client.post(WEB + '/sync', json={'operations': [op]}).status_code, 428)
         self.assertEqual(client.get(WEB + '/entities/workout/workout').status_code, 404)
         self.assertEqual(self.finish(client, op, photo='broken!').status_code, 422)
         self.assertEqual(client.get(WEB + '/entities/workout/workout').status_code, 404)

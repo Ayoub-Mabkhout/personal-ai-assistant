@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from .models import Model, Mutation
 from .analytics import overview
 from .imports import reconcile
+from .proofs import ProofRequired
 
 
 class Sync(Model):
@@ -94,7 +95,11 @@ def install(router, get_store, *, browser=False, attachments=None, device=None, 
     def entity(kind: str,identifier: str, store=Depends(get_store)): return store.get(kind,identifier)
 
     @router.post('/sync')
-    def sync(body: Sync, store=Depends(get_store)): return {'results':store.mutate([m.model_dump() for m in body.operations])}
+    def sync(body: Sync, store=Depends(get_store)):
+        try:
+            return {'results':store.mutate([m.model_dump() for m in body.operations])}
+        except ProofRequired as error:
+            raise HTTPException(428, str(error), headers={'Cache-Control':'no-store'}) from None
 
     if proof_routes:
         @router.get('/workout-proof-policy')

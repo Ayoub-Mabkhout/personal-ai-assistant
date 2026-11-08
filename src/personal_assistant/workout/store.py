@@ -11,7 +11,7 @@ import time
 from ..relay.store import Conflict, Missing
 from ..relay.wakeups import Wakeups, log_phases
 from .models import MODELS, Mutation, validate
-from .proofs import clean_photo, delete_proof, save_proof
+from .proofs import ProofRequired, clean_photo, delete_proof, save_proof
 from .schema import OWNER, initialize
 
 
@@ -133,7 +133,7 @@ class Workouts:
                     if share_photo:
                         save_proof(db, self.user_id, op['id'], revision, photo_body)
                 elif completed and not was_completed and self.require_proof and not actor.startswith('import:'):
-                    raise Conflict('Take a camera photo to finish this workout.')
+                    raise ProofRequired()
                 if not completed and was_completed and delete_proof(db, self.user_id, op['id']):
                     self._scrub.add(id(db))
                 if op['deleted']:

@@ -13,6 +13,11 @@ PHOTO_LIMIT = 1024 * 1024
 PHOTO_QUOTA = 512 * 1024 * 1024
 
 
+class ProofRequired(Conflict):
+    def __init__(self):
+        super().__init__('Take a camera photo to finish this workout.')
+
+
 def clean_photo(value):
     from PIL import Image, ImageOps, UnidentifiedImageError
 
