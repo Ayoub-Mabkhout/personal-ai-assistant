@@ -82,9 +82,18 @@ class WorkoutPrivateVaultTests(unittest.TestCase):
         self.assertEqual(client.post('/train/api/auth/logout').status_code,200)
         self.assertEqual(client.get('/train/api/me').status_code,401)
 
-    def test_registration_needs_a_single_use_invite(self):
+    def test_registration_allows_a_new_name_without_an_invite(self):
+        body={'name':'New Athlete','auth_secret':AUTH,'client_salt':SALT}
+        client=self.client()
+        response=client.post('/train/api/auth/register',json=body)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(client.get('/train/api/me').json()['id'],response.json()['id'])
+        for taken in ('new  athlete','Legacy Athlete'):
+            if taken == 'Legacy Athlete': self.accounts.join(taken)
+            self.assertEqual(self.client().post('/train/api/auth/register',json={**body,'name':taken}).status_code,409)
+
+    def test_optional_invite_is_single_use(self):
         client=self.client();body={'name':'Open Door','auth_secret':AUTH,'client_salt':SALT}
-        self.assertEqual(client.post('/train/api/auth/register',json=body).status_code,422)
         self.assertEqual(client.post('/train/api/auth/register',json={**body,'invite':'x'*43}).status_code,403)
         invite=self.invite()
         self.assertEqual(client.post('/train/api/auth/register',json={**body,'invite':invite}).status_code,200)

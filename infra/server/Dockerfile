@@ -1,10 +1,10 @@
 ARG PYTHON_IMAGE=library/python@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
 FROM ${PYTHON_IMAGE} AS iron-league
 # Pin the source revision and check the archive before extracting the static files.
-ADD https://codeload.github.com/Ayoub-Mabkhout/iron-league/tar.gz/eb47af494e85438ef05b4630f3255213dbdc8925 /tmp/iron-league.tar.gz
-RUN echo '0ced6fe02bb1060e8e1e8346cc8a4ad45522ea73655d9ac05117438ed4dcb24a  /tmp/iron-league.tar.gz' | sha256sum -c - \
+ADD https://codeload.github.com/Ayoub-Mabkhout/iron-league/tar.gz/99ef8e848dc738e13c03be7def754e7a199d2670 /tmp/iron-league.tar.gz
+RUN echo '5641cec3d1553c0543d11d7cf0072a776880a710dc5140f052fbf1a6cfdda871  /tmp/iron-league.tar.gz' | sha256sum -c - \
     && mkdir /web \
-    && tar -xzf /tmp/iron-league.tar.gz -C /web --strip-components=2 iron-league-eb47af494e85438ef05b4630f3255213dbdc8925/web \
+    && tar -xzf /tmp/iron-league.tar.gz -C /web --strip-components=2 iron-league-99ef8e848dc738e13c03be7def754e7a199d2670/web \
     && test -s /web/index.html
 
 FROM ${PYTHON_IMAGE}

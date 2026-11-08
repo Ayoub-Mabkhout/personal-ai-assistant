@@ -173,7 +173,7 @@ class Identity:
     def register(self,name,auth_secret,client_salt,client_id,*,invite_hash=None,on_enroll=None):
         """A new profile, or with an invite for an existing profile, a password for it. An invite made for a profile that
         already has a password replaces it and signs out its other sessions: that is how the owner's sign-in link
-        resets a forgotten password. The web route always passes an invite; registration is never open."""
+        resets a forgotten password. Registration without an invite can only create an unused name."""
         display,key=normalized_name(name);unb64(client_salt,16);unb64(auth_secret,32)
         self._reserve(key,client_id);verifier=hash_auth_secret(auth_secret);identifier=uuid4().hex
         with self.workouts.db() as db:

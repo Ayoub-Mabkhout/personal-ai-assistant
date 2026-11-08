@@ -172,9 +172,8 @@ class WorkoutPasskeyTests(PasskeyCase):
         response=self.client().post('/train/api/auth/passkey/login',json={'credential_id':CREDENTIAL,'auth_secret':PASSKEY_SECRET})
         self.assertEqual(response.status_code,401)
 
-    def test_registration_and_invite_rules_are_unchanged(self):
+    def test_passkey_addition_requires_password_enrolled_session(self):
         client=self.client()
-        self.assertEqual(client.post('/train/api/auth/register',json={'name':'No Invite','auth_secret':AUTH,'client_salt':SALT}).status_code,422)
         self.assertEqual(client.post('/train/api/join',json={'name':'Link Only'}).status_code,403)
         # A passkey can't be added without a signed-in, password-enrolled profile.
         self.assertEqual(self.add(client).status_code,401)

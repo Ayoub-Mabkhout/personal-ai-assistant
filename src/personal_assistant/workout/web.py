@@ -179,7 +179,7 @@ class PasswordEnrollment(PasswordLogin):
 
 
 class PasswordRegistration(PasswordEnrollment):
-    invite: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    invite: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{43}$')
 
 
 class PasskeyCredential(Model):
@@ -360,7 +360,7 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
     def password_register(body:PasswordRegistration,request:Request,response:Response):
         issued,cookie=issue_session(response)
         identifier=auth_call(identities.register,body.name,body.auth_secret,body.client_salt,client_id(request),
-                             invite_hash=digest(body.invite),on_enroll=issued)
+                             invite_hash=digest(body.invite) if body.invite else None,on_enroll=issued)
         cookie();return {**accounts.profile(identifier,own=True),**vault.status(identifier)}
 
     @browser.post('/auth/login',dependencies=[Depends(identity_enabled)])
