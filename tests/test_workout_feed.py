@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from personal_assistant.relay.api import BodyLimit
 from personal_assistant.relay.store import Conflict, Missing
 from personal_assistant.workout.api import routers
 from personal_assistant.workout.identity import b64
@@ -26,7 +27,7 @@ SALT = b64(b'b' * 16)
 
 def image():
     with BytesIO() as output:
-        with Image.new('RGB', (32, 24), color='purple') as jpeg:
+        with Image.effect_noise((384, 384), 75) as jpeg:
             exif = jpeg.getexif()
             exif[270] = 'location metadata'
             jpeg.save(output, format='JPEG', exif=exif)
@@ -49,6 +50,7 @@ class WorkoutFeedTests(unittest.TestCase):
         root = Path(tmp.name)
         self.store = Workouts(root / 'workout.db', require_proof=True)
         self.app = FastAPI()
+        self.app.add_middleware(BodyLimit)
         for error, status in ((Conflict, 409), (Missing, 404), (ValueError, 422)):
             async def handle(request, exc, code=status):
                 return JSONResponse({'detail': str(exc)}, status_code=code)

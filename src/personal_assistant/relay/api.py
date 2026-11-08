@@ -54,6 +54,11 @@ class BodyLimit:
             limit=24*1024*1024  # bounded ciphertext envelope for a 16 MiB private object
         if path.endswith('/workout/sync') or path == '/train/api/sync':
             limit=2*1024*1024
+        if scope.get('method') == 'POST' and path in (
+            '/train/api/workout-finish', '/groceries/v1/mobile/workout/workout-finish',
+            '/v1/workout/workout-finish',
+        ):
+            limit=4*1024*1024  # A workout mutation plus a 1 MiB JPEG encoded as base64.
         while True:
             message = await receive()
             if message['type'] == 'http.disconnect':
