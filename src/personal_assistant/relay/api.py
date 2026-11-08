@@ -139,7 +139,7 @@ def timings_of(value):
     return value.timings.model_dump(exclude_none=True) if value.timings else None
 
 
-def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False,server_worker_token=None,server_default=False):
+def create_app(path, submit_token, worker_token, clock=None, groceries=None, notifications=None,task_links=None,voice=None,release_publish_token_file=None,mobile_settings_file=None,owner_credentials_file=None,file_drops=None,train_assets=None,train_push=None,train_require_identity=False,server_worker_token=None,server_default=False,train_require_proof=False):
     if len(submit_token) < 32 or len(worker_token) < 32 or submit_token == worker_token:
         raise ValueError('Use distinct service tokens of at least 32 characters.')
     if server_worker_token is not None and (len(server_worker_token) < 32 or server_worker_token in (submit_token, worker_token)):
@@ -276,7 +276,8 @@ def create_app(path, submit_token, worker_token, clock=None, groceries=None, not
     if groceries: app.include_router(banking_phone)
     from personal_assistant.workout.store import Workouts
     from personal_assistant.workout.api import routers as workout_routers
-    workouts=Workouts(Path(path).with_name('workout.sqlite3'),**({'clock':clock} if clock else {}))
+    workouts=Workouts(Path(path).with_name('workout.sqlite3'),require_proof=train_require_proof,
+                     **({'clock':clock} if clock else {}))
     app.state.workouts=workouts
     for routes in workout_routers(workouts,submit,device_auth(groceries_api.devices) if groceries else None,task_attachments):
         app.include_router(routes)
@@ -448,5 +449,6 @@ def from_environment():
                       file_drops=file_drop_settings(), train_push=train_push,
                       # Iron League name and password sign-in: on while this marker sits next to the queue database.
                       train_require_identity=Path(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3')).with_name('train-require-identity').is_file(),
+                      train_require_proof=Path(os.environ.get('ASSISTANT_QUEUE_DB', '/data/queue.sqlite3')).with_name('train-require-proof').is_file(),
                       train_assets=os.environ.get('ASSISTANT_TRAIN_ASSETS') or (
                           '/app/apps/train-web' if Path('/app/apps/train-web/index.html').is_file() else None))
