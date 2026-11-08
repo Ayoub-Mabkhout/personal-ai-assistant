@@ -137,7 +137,33 @@ final class WorkoutLive {
             JSONObject b=new JSONObject().put("id","b"+i+"-"+d.optString("workout_id")).put("kind",WorkoutStore.cardio(a,id)?"run":"exercise").put("exercise_id",id).put("planned_seconds",Math.min(86400,e.optInt("planned")));if(e.optLong("started_ms")>0){b.put("started_at",iso(e.optLong("started_ms")));if(e.optLong("ended_ms")>=e.optLong("started_ms"))b.put("ended_at",iso(e.optLong("ended_ms")));}blocks.put(b);extras.put(id,new JSONObject().put("note",e.optString("note")).put("rest",e.optInt("rest")).put("group",e.optString("group")));}
         JSONObject o=new JSONObject().put("name",d.optString("name")).put("started_at",iso(d.optLong("started_ms"))).put("timezone",d.optString("timezone")).put("duration_seconds",elapsed()/1000).put("status",status).put("sets",sets).put("blocks",blocks).put("session_changes",d.optJSONArray("changes")).put("notes",d.optString("notes")).put("source",new JSONObject().put("companion",new JSONObject().put("scheduled_date",d.optString("scheduled_date")).put("exercises",extras)));if(!d.isNull("sprint_id"))o.put("sprint_id",d.optString("sprint_id"));if(!d.isNull("template_id"))o.put("template_id",d.optString("template_id"));return o;}
 
-    void finish(){int open=0;JSONArray ex=exercises();for(int i=0;i<ex.length();i++)open+=open(ex.optJSONObject(i));new AlertDialog.Builder(a).setTitle("Finish workout?").setMessage(open>0?open+(open==1?" unticked set":" unticked sets")+" will be left out.":"All sets are ticked.").setPositiveButton("Finish",(x,i)->{main.removeCallbacks(save);try{JSONObject w=workout("completed");JSONObject before=WorkoutStore.overview(a);WorkoutStore.put(a,"workout",d.optString("workout_id"),w);WorkoutStore.clearDraft(a);JSONObject structure=d.isNull("template_id")?null:WorkoutStore.data(a,"template",d.optString("template_id"));JSONArray used=exercises();closed=true;dialog.setOnDismissListener(null);main.removeCallbacks(tick);dialog.dismiss();screen.finished(d.optString("workout_id"),w,before,structure,d.isNull("template_id")?null:d.optString("template_id"),used);}catch(JSONException e){Toast.makeText(a,"Couldn't finish: "+e.getMessage(),Toast.LENGTH_LONG).show();}}).setNegativeButton("Keep going",null).show();}
+    void finish(){
+        int unticked=0;
+        JSONArray ex=exercises();
+        for(int i=0;i<ex.length();i++)unticked+=open(ex.optJSONObject(i));
+        String sets=unticked>0?unticked+(unticked==1?" unticked set":" unticked sets")+" will be left out.":"All sets are ticked.";
+        new AlertDialog.Builder(a).setTitle("Finish workout?")
+                .setMessage(sets+" Take a photo of yourself training to finish.")
+                .setPositiveButton("Open camera",(x,i)->WorkoutProofCamera.open(a,ui,this::complete))
+                .setNegativeButton("Keep going",null).show();
+    }
+
+    private void complete(byte[] photo,boolean share){
+        if(closed)return;
+        main.removeCallbacks(save);
+        try{
+            String id=d.optString("workout_id");
+            JSONObject w=workout("completed"),before=WorkoutStore.overview(a);
+            WorkoutStore.finishWithProof(a,id,w,photo,share);
+            WorkoutStore.clearDraft(a);
+            String template=d.isNull("template_id")?null:d.optString("template_id");
+            JSONObject structure=template==null?null:WorkoutStore.data(a,"template",template);
+            closed=true;dialog.setOnDismissListener(null);main.removeCallbacks(tick);dialog.dismiss();
+            screen.finished(id,w,before,structure,template,exercises());
+        }catch(JSONException|IllegalStateException error){
+            Toast.makeText(a,"Couldn't finish the workout. Your draft is still here.",Toast.LENGTH_LONG).show();
+        }
+    }
     private void cancel(){if(historical){new AlertDialog.Builder(a).setTitle("Discard changes?").setMessage("The saved workout stays as it was.").setPositiveButton("Discard",(x,i)->dialog.dismiss()).setNegativeButton("Keep editing",null).show();return;}new AlertDialog.Builder(a).setTitle("Cancel workout?").setMessage("Nothing from this session will be kept.").setPositiveButton("Cancel workout",(x,i)->{main.removeCallbacks(save);WorkoutStore.clearDraft(a);if(WorkoutStore.data(a,"workout",d.optString("workout_id"))!=null)WorkoutStore.delete(a,"workout",d.optString("workout_id"));closed=true;dialog.setOnDismissListener(null);dialog.dismiss();screen.liveClosed();}).setNegativeButton("Keep going",null).show();}
     private void trainer(){if(historical){try{screen.coach.open(new JSONObject().put("workout_id",d.optString("workout_id")).put("purpose","historical_correction"),null);}catch(JSONException ignored){}return;}try{JSONObject w=workout("active");WorkoutStore.put(a,"workout",d.optString("workout_id"),w);}catch(JSONException ignored){}JSONObject context=new JSONObject();try{context.put("workout_id",d.optString("workout_id"));}catch(JSONException ignored){}screen.coach.open(context,this);}
     /** A locally changed set must be sent to the coach again before an older proposal can be applied. */

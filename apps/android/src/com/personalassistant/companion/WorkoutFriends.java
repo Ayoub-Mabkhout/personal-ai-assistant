@@ -47,8 +47,9 @@ final class WorkoutFriends {
     private void showStandings(WorkoutViews.Sheet sheet, JSONArray items, JSONObject preferences) {
         if (!sheet.dialog.isShowing()) return;
         sheet.body.removeAllViews();
+        sheet.body.addView(WorkoutViews.row(ui,"Workout feed","Check-ins from your league",()->new WorkoutFeed(screen).open()),WorkoutViews.gap(ui,10));
         sheet.body.addView(alerts(sheet, items, preferences), WorkoutViews.gap(ui, 10));
-        sheet.body.addView(ui.quietButton("Invite a friend", () -> shareInvite(null, null)), WorkoutViews.gap(ui, 14));
+        sheet.body.addView(ui.quietButton("Share Iron League", this::shareLeague), WorkoutViews.gap(ui, 14));
         if (items == null || items.length() == 0) {
             sheet.body.addView(ui.detail("No members on the standings yet."));
             return;
@@ -83,23 +84,27 @@ final class WorkoutFriends {
         }
     }
 
-    /** A one-use, seven-day Iron League link through the share sheet. With a member, it lets that member set a password
-     * again (for a new phone or a forgotten sign-in); without one, it creates a new member's profile. */
+    private void shareLeague(){
+        String origin=Cloud.prefs(screen.a).getString("origin","");
+        Intent send=new Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT,"Join me on Iron League: "+origin+"/train/");
+        screen.a.startActivity(Intent.createChooser(send,"Share Iron League"));
+    }
+
+    /** An existing profile can set a password again with its one-use, seven-day recovery link. */
     private void shareInvite(String userId, String name) {
-        if (userId != null && !userId.matches("owner|[a-f0-9]{32}")) return;
+        if (userId == null || !userId.matches("owner|[a-f0-9]{32}")) return;
         new Thread(() -> {
             try {
                 JSONObject made = (JSONObject) Cloud.call(screen.a, PATH + "/invites",
-                        new JSONObject().put("user_id", userId == null ? JSONObject.NULL : userId), true);
+                        new JSONObject().put("user_id", userId), true);
                 String origin = Cloud.prefs(screen.a).getString("origin", "");
                 String link = origin + "/train/?invite=" + made.getString("invite");
-                String text = name == null
-                        ? "Join me on Iron League: " + link + "\nThe link works once, for " + made.optInt("expires_in_days", 7) + " days."
-                        : name + ", here's your Iron League sign-in link: " + link + "\nOpen it, enter your name as it appears in Friends, and choose a password. It works once, for " + made.optInt("expires_in_days", 7) + " days.";
+                String text = name + ", here's your Iron League sign-in link: " + link + "\nOpen it, enter your name as it appears in Friends, and choose a password. It works once, for " + made.optInt("expires_in_days", 7) + " days.";
                 Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
-                screen.a.runOnUiThread(() -> screen.a.startActivity(Intent.createChooser(send, name == null ? "Invite a friend" : "Send " + name + " a sign-in link")));
+                screen.a.runOnUiThread(() -> screen.a.startActivity(Intent.createChooser(send, "Send " + name + " a sign-in link")));
             } catch (Exception error) {
-                screen.a.runOnUiThread(() -> Toast.makeText(screen.a, "Couldn't create an invite. Check the connection and try again.", Toast.LENGTH_SHORT).show());
+                screen.a.runOnUiThread(() -> Toast.makeText(screen.a, "Couldn't create a sign-in link. Check the connection and try again.", Toast.LENGTH_SHORT).show());
             }
         }).start();
     }

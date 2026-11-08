@@ -282,7 +282,7 @@ def shared_profile(account, stats, store, share_schedule):
 
 def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobile_events=None,require_identity=False):
     from .competition import Competition
-    from .reminder import TrainReminders, install_reminders
+    from .reminder import Preferences, TrainReminders, install_reminders
     accounts = Accounts(workouts)
     if require_identity:
         from .identity import Identity
@@ -496,6 +496,14 @@ def mount_train(app, workouts, owner_auth, assets, push=None, device=None, mobil
         @native.post('/me')
         def native_update(body: AccountUpdate):
             return accounts.update(OWNER, body)
+
+        @native.get('/reminders')
+        def native_reminder_settings():
+            return reminders.settings(OWNER)
+
+        @native.post('/reminders')
+        def native_update_reminders(body: Preferences):
+            return reminders.settings(OWNER, body.model_dump(exclude_unset=True))
 
         @native.post('/invites')
         def native_invite(body: Invite):
