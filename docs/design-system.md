@@ -166,6 +166,21 @@ the horizon (−0.833°); only the sky follows the sun continuously.
   fog and a spruce treeline, rain with splashes or snow, and a fade into the
   page. "Companion" sits in white over the sky with a weather pill (icon ·
   condition · temperature · place) and today's daylight line under the orb.
+- **Munich.** When the Daylight place is Munich (the geocoded place name, or a
+  phone or configured location within 20 km of Marienplatz), `MunichScene`
+  replaces the ridges with the old town, arranged to frame the orb: the Neues
+  Rathaus with its Glockenspiel and Münchner Kindl on the left; the
+  Frauenkirche, its nave and Alter Peter on the right; and behind the orb the
+  Theatinerkirche, gabled Altstadt houses, a maypole, the Mariensäule and the
+  square. The same sky lights it: faces turned to the sun's side, distance
+  haze, floodlights and lit windows after dark, snow on roofs and ledges in
+  snowfall or a frosty winter, and wet paving that mirrors the city in rain.
+  The season sets the trees (blossom, green, orange, bare with lights), window
+  boxes and the square (café umbrellas or fallen leaves), with the
+  Christkindlmarkt and its tree from 24 November to Christmas Eve. It is drawn
+  off the main thread into a bitmap whenever the sun moves half a degree or the
+  weather or season changes, then faded in; only the Christmas lights and
+  falling leaves or petals animate. Elsewhere the Alps remain.
 - **Other tabs** get a short sky strip with the sun or moon; every page shows
   quiet weather in its gaps: beads of rain with an occasional running drop,
   mist, drifting snow with frost above the navigation, a warm glow on clear
@@ -184,6 +199,8 @@ the horizon (−0.833°); only the sky follows the sun continuously.
 - **Previews.** Launching `MainActivity` with the integer extras
   `meridian_minute` (minute of the day) and `meridian_weather` (WMO code, −1
   for no reading) shows another hour or weather until the app process ends.
+  The string extras `meridian_scene` (`munich` or `alps`) and `meridian_season`
+  (`spring`, `summer`, `autumn`, `winter` or `advent`) preview the Munich scene.
 
 ## App icon and notifications
 

@@ -37,6 +37,10 @@ final class MeridianBackdrop extends Drawable implements android.view.Choreograp
     private float sunX,sunY,stripX,stripY;
     // Page-gap shaders are built at the origin once per size and placed with a canvas translation.
     private int gapW=-1,gapH=-1;private Shader[] beadShaders;private Shader mistShader,frostShader,warmShader;private final Path trail=new Path();
+    // Munich: the city is rendered off the main thread whenever its light, weather or season changes, then faded in.
+    private static final java.util.concurrent.ExecutorService SCENE=java.util.concurrent.Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"munich-scene");t.setPriority(Thread.MIN_PRIORITY);return t;});
+    private volatile MunichScene.Rendered town;private volatile boolean drawingTown;private volatile long townAt;private String townKey;
+    private final android.os.Handler mainThread=new android.os.Handler(android.os.Looper.getMainLooper());private final Paint townPaint=new Paint(Paint.FILTER_BITMAP_FLAG);
     private Bitmap[] shaded;private BitmapShader[] tileShaders;private final Matrix tileMatrix=new Matrix();private final Paint tilePaint=new Paint(Paint.FILTER_BITMAP_FLAG);
 
     MeridianBackdrop(AppUi ui){
@@ -117,7 +121,9 @@ final class MeridianBackdrop extends Drawable implements android.view.Choreograp
         }else{add.setShader(moonGlow);c.drawRect(0,0,w,h,add);add.setShader(null);
             fill.setShader(moonShader);c.drawCircle(w*MOON_X,h*MOON_Y,11*density,fill);fill.setShader(null);}
         clouds(c,w,h*.62f,1,sx/w,sy/(h*.62f));
-        for(int li=0;li<4;li++){
+        boolean munich=MunichScene.applies(sky);MunichScene.Rendered city=munich?town(w,h):null;
+        if(city!=null){float in=AppUi.motion()?Math.min(1,(SystemClock.uptimeMillis()-townAt)/600f):1;townPaint.setAlpha(Math.round(255*in));c.drawBitmap(city.city,0,0,townPaint);MunichScene.live(c,city,time,fill);fill.setShader(null);}
+        for(int li=0;li<4&&!munich;li++){
             fill.setShader(ridgeShaders[li]);c.drawPath(ridgePaths[li],fill);fill.setShader(null);
             if(snowShaders[li]!=null){c.save();c.clipPath(ridgePaths[li]);fill.setShader(snowShaders[li]);c.drawRect(0,0,w,h,fill);fill.setShader(null);c.restore();}
             if(sun||li<3){float a=sun?(.18f+.35f*low)*(1-li*.2f)*(clear?1:.4f):.16f*(1-li*.3f)*(clear?1:.5f);line.setColor(AppUi.alpha(s[3],Math.min(1,a)));line.setStrokeWidth((1.3f-li*.2f)*density);c.drawPath(rimPaths[li],line);}
@@ -125,6 +131,16 @@ final class MeridianBackdrop extends Drawable implements android.view.Choreograp
         }
         precipitation(c,w,h,1);
         fill.setShader(fadeShader);c.drawRect(0,h*.84f,w,h,fill);fill.setShader(null);
+    }
+
+    /** The Munich scene for this size and sky, or null while the first rendering is still being drawn. */
+    private MunichScene.Rendered town(int w,int h){
+        String key=MunichScene.key(sky,w,h);
+        if(!key.equals(townKey)&&!drawingTown){townKey=key;drawingTown=true;final MeridianSky at=sky;
+            SCENE.execute(()->{try{MunichScene.Rendered r=MunichScene.render(at,w,h);MunichScene.Rendered old=town;if(old==null||old.w!=w||old.h!=h)townAt=SystemClock.uptimeMillis();town=r;}
+                catch(RuntimeException|OutOfMemoryError e){android.util.Log.w("MeridianBackdrop","Munich scene not drawn",e);}
+                finally{drawingTown=false;mainThread.post(this::invalidateSelf);}});}
+        MunichScene.Rendered r=town;return r!=null&&r.w==w&&r.h==h?r:null;
     }
 
     private void paintStrip(Canvas c,int w,int h){

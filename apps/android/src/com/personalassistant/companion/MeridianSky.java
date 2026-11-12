@@ -20,9 +20,11 @@ final class MeridianSky {
     final int kind;final float cover,threshold,opacity,darkness,desaturate;final String condition,icon,temperature,place;
     /** Sunrise and sunset today in epoch milliseconds, or -1 during polar day or night. */
     final long sunrise,sunset;final float sunX;
+    /** The place's coordinates, whether they came from the phone or the deployment (not a time-zone guess), and the temperature in Celsius (NaN if unknown). */
+    final double latitude,longitude;final boolean located;final float tempC;
 
-    private MeridianSky(long at,double[] place,int code,float cloud,float temp,boolean fresh,String locality){
-        this.at=at;double[] s=DaylightPalette.sun(at,place[0],place[1]);elevation=s[0];morning=s[1]<0;sun=elevation>-3;
+    private MeridianSky(long at,double[] place,int code,float cloud,float temp,boolean fresh,String locality,boolean located){
+        this.at=at;latitude=place[0];longitude=place[1];this.located=located;double[] s=DaylightPalette.sun(at,place[0],place[1]);elevation=s[0];morning=s[1]<0;sun=elevation>-3;
         long[] day=sunTimes(at,place[0],place[1]);sunrise=day[0];sunset=day[1];
         if(sunrise>0&&sunset>sunrise){float f=(float)(at-sunrise+3600000L)/(sunset-sunrise+7200000L);sunX=Math.max(.08f,Math.min(.92f,f));}else sunX=.5f;
         known=fresh&&code>=0;kind=!known?CLEAR:kindOf(code);
@@ -32,7 +34,7 @@ final class MeridianSky {
         else{threshold=.74f-.34f*c;opacity=.75f+.20f*c;darkness=.15f*c*c;desaturate=c>.55f?.5f*(c-.55f)/.45f:0;}
         sky=tint(skyAt(elevation,morning),kind,desaturate);
         condition=known?label(code):"";icon=!known?"":kind==RAIN?"weather-rain":kind==SNOW?"weather-snow":code==45||code==48?"weather-fog":kind==CLOUDY||code==2?"weather-cloud":sun?"weather-sun":"weather-moon";
-        temperature=known&&!Float.isNaN(temp)?Math.round(temp)+"°":"";this.place=locality==null?"":locality;
+        temperature=known&&!Float.isNaN(temp)?Math.round(temp)+"°":"";tempC=known?temp:Float.NaN;this.place=locality==null?"":locality;
     }
 
     /** A look at another hour or weather, from the launcher intent extras meridian_minute and meridian_weather; cosmetic only. */
@@ -46,12 +48,12 @@ final class MeridianSky {
     static MeridianSky now(Context c){return at(c,clock(System.currentTimeMillis()));}
     static MeridianSky at(Context c,long at){
         SharedPreferences p=Cloud.prefs(c);
-        if(previewCode>=-1){double[] place=AppUi.meridianPlace(c);int code=previewCode;return new MeridianSky(at,place,code,Float.NaN,code>=71&&code<=86?-1:code>=51?9:14,code>=0,p.getString("daylight_locality",""));}long when=p.getLong("daylight_weather_at",0);boolean fresh=DaylightWeather.enabled(c)&&when>0&&at>=when&&at-when<=DaylightWeather.STALE;
-        double[] place=AppUi.meridianPlace(c);
-        return new MeridianSky(at,place,fresh?p.getInt("daylight_weather_code",-1):-1,p.getFloat("daylight_weather_cover",Float.NaN),p.getFloat("daylight_weather_temp_c",Float.NaN),fresh,AppUi.daylightPlace(c)==null?"":p.getString("daylight_locality",""));
+        if(previewCode>=-1){double[] place=AppUi.meridianPlace(c);int code=previewCode;return new MeridianSky(at,place,code,Float.NaN,code>=71&&code<=86?-1:code>=51?9:14,code>=0,p.getString("daylight_locality",""),AppUi.daylightPlace(c)!=null);}long when=p.getLong("daylight_weather_at",0);boolean fresh=DaylightWeather.enabled(c)&&when>0&&at>=when&&at-when<=DaylightWeather.STALE;
+        double[] place=AppUi.meridianPlace(c);boolean located=AppUi.daylightPlace(c)!=null;
+        return new MeridianSky(at,place,fresh?p.getInt("daylight_weather_code",-1):-1,p.getFloat("daylight_weather_cover",Float.NaN),p.getFloat("daylight_weather_temp_c",Float.NaN),fresh,located?p.getString("daylight_locality",""):"",located);
     }
     /** For previews and tests: a fixed place, weather code, cloud cover and temperature. */
-    static MeridianSky of(long at,double latitude,double longitude,int code,float cloud,float temp,String locality){return new MeridianSky(at,new double[]{latitude,longitude},code,cloud,temp,code>=0,locality);}
+    static MeridianSky of(long at,double latitude,double longitude,int code,float cloud,float temp,String locality){return new MeridianSky(at,new double[]{latitude,longitude},code,cloud,temp,code>=0,locality,true);}
 
     /** Pages switch between the Light and Dark palettes as the sun's upper limb crosses the horizon. */
     boolean darkPage(){return elevation<DaylightPalette.HANDOFF;}
